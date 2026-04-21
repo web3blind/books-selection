@@ -1,6 +1,14 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const {
+  BOOK_STATUSES,
+  BOOK_REASONS,
+  ANNOTATION_MISSING_TEXT,
+  BOOK_FILE_NOT_FOUND_TITLE,
+  BOOK_FILE_NOT_FOUND_ANNOTATION,
+  BOOK_READ_ERROR_TITLE,
+} = require('./constants');
 const { readBookInfo } = require('./fb2');
 
 const collator = new Intl.Collator(['ru', 'en'], {
@@ -39,9 +47,11 @@ async function scanBooks(rootPath) {
       results.push({
         folderName,
         fileName: null,
-        title: 'Файл книги не найден',
-        annotation: 'В этой папке не найдено ни одного файла .fb2 или .fb2.zip.',
-        status: 'missing',
+        title: BOOK_FILE_NOT_FOUND_TITLE,
+        annotation: BOOK_FILE_NOT_FOUND_ANNOTATION,
+        status: BOOK_STATUSES.MISSING,
+        reason: BOOK_REASONS.BOOK_FILE_NOT_FOUND,
+        hasAnnotation: false,
       });
       continue;
     }
@@ -55,15 +65,19 @@ async function scanBooks(rootPath) {
         fileName,
         title: info.title,
         annotation: info.annotation,
-        status: 'ok',
+        status: BOOK_STATUSES.OK,
+        reason: info.annotation === ANNOTATION_MISSING_TEXT ? BOOK_REASONS.ANNOTATION_MISSING : BOOK_REASONS.OK,
+        hasAnnotation: info.annotation !== ANNOTATION_MISSING_TEXT,
       });
     } catch (error) {
       results.push({
         folderName,
         fileName,
-        title: 'Ошибка чтения книги',
+        title: BOOK_READ_ERROR_TITLE,
         annotation: error.message,
-        status: 'error',
+        status: BOOK_STATUSES.ERROR,
+        reason: BOOK_REASONS.BOOK_READ_ERROR,
+        hasAnnotation: false,
       });
     }
   }

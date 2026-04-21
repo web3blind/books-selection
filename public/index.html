@@ -147,6 +147,19 @@
       }
     };
 
+    const BOOK_STATUSES = {
+      OK: 'ok',
+      MISSING: 'missing',
+      ERROR: 'error'
+    };
+
+    const BOOK_REASONS = {
+      OK: 'ok',
+      ANNOTATION_MISSING: 'annotation_missing',
+      BOOK_FILE_NOT_FOUND: 'book_file_not_found',
+      BOOK_READ_ERROR: 'book_read_error'
+    };
+
     let currentLanguage = queryLang || savedLanguage;
     if (!messages[currentLanguage]) {
       currentLanguage = 'en';
@@ -191,23 +204,20 @@
       let title = book.title;
       let annotation = book.annotation;
 
-      if (title === messages.ru.missingFileTitle) {
+      if (book.reason === BOOK_REASONS.BOOK_FILE_NOT_FOUND) {
         title = t('missingFileTitle');
-      } else if (title === messages.ru.readErrorTitle) {
-        title = t('readErrorTitle');
-      }
-
-      if (annotation === messages.ru.annotationMissing) {
-        annotation = t('annotationMissing');
-      } else if (annotation === messages.ru.missingFileAnnotation) {
         annotation = t('missingFileAnnotation');
+      } else if (book.reason === BOOK_REASONS.BOOK_READ_ERROR) {
+        title = t('readErrorTitle');
+      } else if (book.reason === BOOK_REASONS.ANNOTATION_MISSING) {
+        annotation = t('annotationMissing');
       }
 
       return { ...book, title, annotation };
     }
 
     function hasRealAnnotation(book) {
-      return book.annotation && book.annotation !== messages.ru.annotationMissing && book.annotation !== messages.en.annotationMissing;
+      return book.hasAnnotation === true;
     }
 
     function renderBooks() {
@@ -215,7 +225,7 @@
       const showReadyOnly = showReadyOnlyInput.checked;
 
       const books = currentBooks.filter((book) => {
-        if (showReadyOnly && (book.status !== 'ok' || !hasRealAnnotation(book))) {
+        if (showReadyOnly && (book.status !== BOOK_STATUSES.OK || !hasRealAnnotation(book))) {
           return false;
         }
 
@@ -234,7 +244,7 @@
           <h2>${escapeHtml(book.folderName)}</h2>
           <p><strong>${escapeHtml(t('titleLabel'))}</strong> ${escapeHtml(book.title)}</p>
           <p class="muted"><strong>${escapeHtml(t('fileLabel'))}</strong> ${escapeHtml(book.fileName || t('fileMissing'))}</p>
-          <p class="${book.status === 'error' ? 'error' : ''}">${escapeHtml(book.annotation)}</p>
+          <p class="${book.status === BOOK_STATUSES.ERROR ? 'error' : ''}">${escapeHtml(book.annotation)}</p>
         </article>
       `;
       }).join('') || `<p>${escapeHtml(t('nothingFound'))}</p>`;

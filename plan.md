@@ -1,78 +1,36 @@
 # books-selection plan
 
-## Goal
-Собрать минимальное локальное приложение для выбора книг по аннотациям из каталога с папками книг.
+## Status
+Основной план выполнен.
 
-## Scope
-- Сканировать корневую папку с книгами.
-- Для каждой вложенной папки искать `.fb2` или `.fb2.zip`.
-- Извлекать аннотацию из FB2.
-- Показывать список книг и аннотаций в локальной веб-странице.
-- Добавить поиск по названию папки, названию книги и аннотации.
-- Дать простой CLI-способ запуска.
-- Добавить базовые тесты на извлечение аннотации.
+## Delivered
+- Локальный Node.js tool без внешних npm-зависимостей.
+- Сканирование корневой папки с подпапками книг.
+- Поиск первого `.fb2` или `.fb2.zip` в каждой подпапке.
+- Извлечение `book-title` и `annotation` из FB2.
+- Чтение `.fb2.zip` через встроенный ZIP parser на Node.js, без `python3`.
+- Локальный HTTP server с `GET /api/books`.
+- Простой доступный web UI с поиском, reload, выбором языка RU/EN и fallback на ручной ввод пути.
+- Базовые тесты на FB2 parsing и scan behavior.
 
-## Non-goals
-- Полноценная библиотека с БД.
-- Автоматическое чтение самих книг.
-- Редактирование метаданных.
-- Сложный фронтенд или внешние зависимости.
+## Current Architecture
+- `src/fb2.js`: parsing FB2/XML, decoding encoding, чтение `.fb2.zip`.
+- `src/scan.js`: обход каталога, natural sort, формирование записей со `status`, `reason`, `hasAnnotation`.
+- `src/server.js`: локальный HTTP server и раздача `public/index.html`.
+- `public/index.html`: single-file UI без framework.
+- `tests/fb2.test.js`: тесты парсинга FB2 и zip.
+- `tests/scan.test.js`: тесты scanning logic и edge cases.
 
-## Architecture
-- Node.js без внешних npm-зависимостей.
-- `src/fb2.js`:
-  - чтение `.fb2`
-  - чтение `.fb2.zip` через `python3` и `zipfile` из стандартной библиотеки Python
-  - определение encoding из XML header
-  - извлечение title и annotation
-- `src/scan.js`:
-  - обход каталога книг
-  - поиск первого подходящего файла
-  - сбор массива записей
-- `src/server.js`:
-  - локальный HTTP server
-  - `GET /api/books`
-  - раздача статической страницы
-- `public/index.html`:
-  - доступный список книг
-  - поиск
-  - кнопка обновления
-  - семантическая разметка без тяжёлого JS
-- `tests/fb2.test.js`:
-  - TDD на извлечение annotation/title и очистку текста
+## Validation
+- `npm test`
+- ручной запуск: `npm start -- /path/to/Books 3210`
+- smoke check API: `http://127.0.0.1:3210/api/books?root=/path/to/Books`
 
-## Planned files
-- `package.json`
-- `README.md`
-- `src/fb2.js`
-- `src/scan.js`
-- `src/server.js`
-- `public/index.html`
-- `tests/fb2.test.js`
+## Notes
+- UI больше не должен опираться на точные fallback-строки backend, а должен использовать machine-readable поля `status`, `reason`, `hasAnnotation`.
+- Архитектура намеренно остаётся простой: без БД, без внешнего frontend framework, без облачной синхронизации.
 
-## Implementation tasks
-1. Создать проект и команды запуска.
-2. Написать падающие тесты для parsing/cleaning FB2 annotation.
-3. Реализовать parser `.fb2`.
-4. Добавить поддержку `.fb2.zip`.
-5. Реализовать scanner каталога.
-6. Реализовать HTTP API и статическую страницу.
-7. Прогнать тесты и smoke-check сервера.
-
-## Validation strategy
-- `node --test tests/fb2.test.js`
-- smoke test через запуск сервера и запрос `curl http://127.0.0.1:<port>/api/books?root=...`
-- ручная проверка HTML структуры
-
-## Risks / assumptions
-- Предполагаю, что `python3` доступен в системе для чтения `.zip` без npm-зависимостей.
-- У части книг может не быть `<annotation>`.
-- В zip может лежать несколько файлов, берём первый `.fb2`.
-- Путь к каталогу книг пользователь передаст при запуске.
-
-## Definition of done
-- Приложение запускается локально.
-- Список папок с книгами отображается.
-- Для `.fb2` и `.fb2.zip` извлекаются title и annotation.
-- Есть поиск по списку.
-- Тесты на парсер проходят.
+## Next Ideas
+- Добавить больше тестов на экзотические ZIP cases, если такие файлы реально встретятся.
+- При желании добавить более явные machine-readable error codes и на уровне `fb2.js`.
+- Если появятся большие каталоги, можно подумать о потоковом чтении или pagination, но сейчас это не требуется.
