@@ -3,9 +3,18 @@ const path = require('node:path');
 
 const { readBookInfo } = require('./fb2');
 
+const collator = new Intl.Collator(['ru', 'en'], {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+function naturalSort(a, b) {
+  return collator.compare(a, b);
+}
+
 async function listDirectories(rootPath) {
   const entries = await fs.readdir(rootPath, { withFileTypes: true });
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((a, b) => a.localeCompare(b, 'ru'));
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(naturalSort);
 }
 
 async function findBookFile(folderPath) {
@@ -13,7 +22,7 @@ async function findBookFile(folderPath) {
   const files = entries
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b, 'ru'));
+    .sort(naturalSort);
 
   return files.find((name) => /\.fb2(\.zip)?$/i.test(name)) || null;
 }
