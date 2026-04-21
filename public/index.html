@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Books Selection</title>
+  <style>
+    body { font-family: sans-serif; line-height: 1.5; max-width: 980px; margin: 0 auto; padding: 16px; }
+    label, input, button, select { font: inherit; }
+    input, select { width: 100%; padding: 8px; margin: 6px 0 12px; }
+    button { padding: 8px 12px; margin-right: 8px; }
+     .toolbar { max-width: 220px; margin-bottom: 16px; }
+    .meta { color: #444; margin: 8px 0 16px; }
+    .book { border: 1px solid #ccc; padding: 12px; margin: 0 0 12px; border-radius: 6px; }
+    .book h2 { font-size: 1.1rem; margin: 0 0 8px; }
+    .muted { color: #555; }
+    .error { color: #8a1f11; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <label for="languageSelect">Language</label>
+    <select id="languageSelect" aria-label="Language">
+      <option value="ru">Русский</option>
+      <option value="en">English</option>
+    </select>
+  </div>
+
+  <h1 id="pageTitle">Выбор книги по аннотации</h1>
+  <p id="introText">Можно выбрать папку через браузер. Если это не сработает, ниже остаётся обычный ввод пути.</p>
+
+  <div>
+    <button id="pickFolderButton" type="button">Выбрать папку через браузер</button>
+    <button id="loadButton" type="button">Загрузить список</button>
+    <button id="reloadButton" type="button">Обновить</button>
+  </div>
+
+  <p id="fallbackText" class="meta">Fallback: если браузер не умеет отдавать путь к папке, просто вставь путь вручную.</p>
+
+  <label id="rootLabel" for="root">Путь к папке книг</label>
+  <input id="root" name="root" type="text" placeholder="Например: /home/denis/Книги" autocomplete="off">
+
+  <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
+
+  <label id="searchLabel" for="search">Поиск по папке, названию и аннотации</label>
+  <input id="search" name="search" type="text" placeholder="Например: попаданец, гоблины, клан">
+
+  <div>
+    <label id="showReadyOnlyLabel"><input id="showReadyOnly" type="checkbox" checked> <span id="showReadyOnlyText">Показывать только книги с аннотацией и без ошибок</span></label>
+  </div>
+
+  <div id="status" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
+  <main id="results"></main>
+
+  <script>
+    const languageSelect = document.getElementById('languageSelect');
+    const pageTitle = document.getElementById('pageTitle');
+    const introText = document.getElementById('introText');
+    const fallbackText = document.getElementById('fallbackText');
+    const rootLabel = document.getElementById('rootLabel');
+    const rootInput = document.getElementById('root');
+    const searchLabel = document.getElementById('searchLabel');
+    const searchInput = document.getElementById('search');
+    const pickFolderButton = document.getElementById('pickFolderButton');
+    const loadButton = document.getElementById('loadButton');
+    const reloadButton = document.getElementById('reloadButton');
+    const folderPicker = document.getElementById('folderPicker');
+    const showReadyOnlyInput = document.getElementById('showReadyOnly');
+    const showReadyOnlyText = document.getElementById('showReadyOnlyText');
+    const statusNode = document.getElementById('status');
+    const resultsNode = document.getElementById('results');
+
+    const storageKey = 'books-selection:last-root';
+    const languageKey = 'books-selection:language';
+    const queryParams = new URLSearchParams(location.search);
+    const queryRoot = queryParams.get('root') || '';
+    const queryLang = queryParams.get('lang') || '';
+    const savedRoot = localStorage.getItem(storageKey) || '';
+    const savedLanguage = localStorage.getItem(languageKey) || 'ru';
+
+    if (queryRoot) {
+      rootInput.value = queryRoot;
+    } else if (savedRoot) {
+      rootInput.value = savedRoot;
+    }
+
+    const messages = {
+      ru: {
+        pageTitle: 'Выбор книги по аннотации',
+        introText: 'Можно выбрать папку через браузер. Если это не сработает, ниже остаётся обычный ввод пути.',
+        pickFolderButton: 'Выбрать папку через браузер',
+        loadButton: 'Загрузить список',
+        reloadButton: 'Обновить',
+        fallbackText: 'Fallback: если браузер не умеет отдавать путь к папке, просто вставь путь вручную.',
+        rootLabel: 'Путь к папке книг',
+        rootPlaceholder: 'Например: /home/denis/Книги',
+        searchLabel: 'Поиск по папке, названию и аннотации',
+        searchPlaceholder: 'Например: попаданец, гоблины, клан',
+        showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
+        statusShown: (shown, total, hidden) => `Показано ${shown} из ${total}, скрыто ${hidden}`,
+        titleLabel: 'Название:',
+        fileLabel: 'Файл:',
+        fileMissing: 'не найден',
+        nothingFound: 'Ничего не найдено.',
+        annotationMissing: 'Аннотация не найдена.',
+        missingFileTitle: 'Файл книги не найден',
+        missingFileAnnotation: 'В этой папке не найдено ни одного файла .fb2 или .fb2.zip.',
+        readErrorTitle: 'Ошибка чтения книги',
+        noRoot: 'Сначала выбери папку через браузер или укажи путь к папке книг вручную.',
+        loading: 'Загружаю список книг...',
+        loadError: 'Ошибка загрузки',
+        pickerHintModern: 'Откроется выбор папки. Если браузер не передаст полный путь, ниже останется ручной ввод.',
+        pickerHintBasic: 'Откроется выбор папки через браузер. Если путь не подставится, вставь его вручную в поле ниже.',
+        folderNotChosen: 'Папка не выбрана.',
+        folderChosen: (path) => `Папка выбрана: ${path}. Сразу загружаю список книг.`,
+        folderChosenNoPath: (name) => `Папка «${name}» выбрана, но браузер не отдал полный локальный путь. Вставь путь вручную в поле ниже, затем нажми «Загрузить список».`
+      },
+      en: {
+        pageTitle: 'Choose a book by annotation',
+        introText: 'You can try selecting a folder in the browser. If that does not work, use the manual path field below.',
+        pickFolderButton: 'Choose folder in browser',
+        loadButton: 'Load list',
+        reloadButton: 'Reload',
+        fallbackText: 'Fallback: if the browser cannot provide the local folder path, paste it manually.',
+        rootLabel: 'Books folder path',
+        rootPlaceholder: 'For example: /home/denis/Books',
+        searchLabel: 'Search by folder, title, and annotation',
+        searchPlaceholder: 'For example: goblins, clan, portal fantasy',
+        showReadyOnly: 'Show only books with annotations and without errors',
+        statusShown: (shown, total, hidden) => `Showing ${shown} of ${total}, hidden ${hidden}`,
+        titleLabel: 'Title:',
+        fileLabel: 'File:',
+        fileMissing: 'not found',
+        nothingFound: 'Nothing found.',
+        annotationMissing: 'Annotation not found.',
+        missingFileTitle: 'Book file not found',
+        missingFileAnnotation: 'No .fb2 or .fb2.zip file was found in this folder.',
+        readErrorTitle: 'Book read error',
+        noRoot: 'First choose a folder in the browser or enter the books folder path manually.',
+        loading: 'Loading book list...',
+        loadError: 'Loading error',
+        pickerHintModern: 'A folder picker will open. If the browser does not provide the full path, manual input will remain available below.',
+        pickerHintBasic: 'A browser folder picker will open. If the path is not filled in, paste it manually into the field below.',
+        folderNotChosen: 'No folder selected.',
+        folderChosen: (path) => `Folder selected: ${path}. Loading books now.`,
+        folderChosenNoPath: (name) => `Folder “${name}” was selected, but the browser did not expose the full local path. Paste the path manually below, then press “Load list”.`
+      }
+    };
+
+    let currentLanguage = queryLang || savedLanguage;
+    if (!messages[currentLanguage]) {
+      currentLanguage = 'ru';
+    }
+    languageSelect.value = currentLanguage;
+
+    let currentBooks = [];
+
+    function t(key, ...args) {
+      const value = messages[currentLanguage][key];
+      return typeof value === 'function' ? value(...args) : value;
+    }
+
+    function applyLanguage() {
+      document.documentElement.lang = currentLanguage;
+      pageTitle.textContent = t('pageTitle');
+      introText.textContent = t('introText');
+      pickFolderButton.textContent = t('pickFolderButton');
+      loadButton.textContent = t('loadButton');
+      reloadButton.textContent = t('reloadButton');
+      fallbackText.textContent = t('fallbackText');
+      rootLabel.textContent = t('rootLabel');
+      rootInput.placeholder = t('rootPlaceholder');
+      searchLabel.textContent = t('searchLabel');
+      searchInput.placeholder = t('searchPlaceholder');
+      showReadyOnlyText.textContent = t('showReadyOnly');
+      localStorage.setItem(languageKey, currentLanguage);
+    }
+
+    function setStatus(message) {
+      statusNode.textContent = message;
+    }
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    }
+
+    function localizeBook(book) {
+      let title = book.title;
+      let annotation = book.annotation;
+
+      if (title === messages.ru.missingFileTitle) {
+        title = t('missingFileTitle');
+      } else if (title === messages.ru.readErrorTitle) {
+        title = t('readErrorTitle');
+      }
+
+      if (annotation === messages.ru.annotationMissing) {
+        annotation = t('annotationMissing');
+      } else if (annotation === messages.ru.missingFileAnnotation) {
+        annotation = t('missingFileAnnotation');
+      }
+
+      return { ...book, title, annotation };
+    }
+
+    function hasRealAnnotation(book) {
+      return book.annotation && book.annotation !== messages.ru.annotationMissing && book.annotation !== messages.en.annotationMissing;
+    }
+
+    function renderBooks() {
+      const query = searchInput.value.trim().toLowerCase();
+      const showReadyOnly = showReadyOnlyInput.checked;
+
+      const books = currentBooks.filter((book) => {
+        if (showReadyOnly && (book.status !== 'ok' || !hasRealAnnotation(book))) {
+          return false;
+        }
+
+        if (!query) return true;
+        const haystack = [book.folderName, book.fileName || '', book.title, book.annotation].join('\n').toLowerCase();
+        return haystack.includes(query);
+      });
+
+      const hiddenCount = currentBooks.length - books.length;
+      setStatus(t('statusShown', books.length, currentBooks.length, hiddenCount));
+
+      resultsNode.innerHTML = books.map((item) => {
+        const book = localizeBook(item);
+        return `
+        <article class="book" aria-label="${escapeHtml(book.folderName)}">
+          <h2>${escapeHtml(book.folderName)}</h2>
+          <p><strong>${escapeHtml(t('titleLabel'))}</strong> ${escapeHtml(book.title)}</p>
+          <p class="muted"><strong>${escapeHtml(t('fileLabel'))}</strong> ${escapeHtml(book.fileName || t('fileMissing'))}</p>
+          <p class="${book.status === 'error' ? 'error' : ''}">${escapeHtml(book.annotation)}</p>
+        </article>
+      `;
+      }).join('') || `<p>${escapeHtml(t('nothingFound'))}</p>`;
+    }
+
+    function guessRootFromFiles(files) {
+      if (!files || files.length === 0) {
+        return '';
+      }
+
+      const first = files[0];
+      const relative = first.webkitRelativePath || first.name;
+      const parts = relative.split('/').filter(Boolean);
+
+      if (parts.length < 2) {
+        return '';
+      }
+
+      if (typeof first.path === 'string' && first.path) {
+        const suffix = relative.replaceAll('/', '\\');
+        if (first.path.endsWith(suffix)) {
+          return first.path.slice(0, first.path.length - suffix.length - 1);
+        }
+      }
+
+      return '';
+    }
+
+    async function loadBooks() {
+      const root = rootInput.value.trim();
+      if (!root) {
+        setStatus(t('noRoot'));
+        return;
+      }
+
+      setStatus(t('loading'));
+      resultsNode.innerHTML = '';
+
+      const url = `/api/books?root=${encodeURIComponent(root)}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setStatus(data.error || t('loadError'));
+        return;
+      }
+
+      currentBooks = data.books;
+      localStorage.setItem(storageKey, root);
+      const pageUrl = new URL(location.href);
+      pageUrl.searchParams.set('root', root);
+      pageUrl.searchParams.set('lang', currentLanguage);
+      history.replaceState(null, '', pageUrl);
+      renderBooks();
+    }
+
+    pickFolderButton.addEventListener('click', async () => {
+      if (window.showDirectoryPicker) {
+        setStatus(t('pickerHintModern'));
+      } else {
+        setStatus(t('pickerHintBasic'));
+      }
+      folderPicker.click();
+    });
+
+    folderPicker.addEventListener('change', () => {
+      const files = [...folderPicker.files];
+      if (files.length === 0) {
+        setStatus(t('folderNotChosen'));
+        return;
+      }
+
+      const guessedRoot = guessRootFromFiles(files);
+      if (guessedRoot) {
+        rootInput.value = guessedRoot;
+        setStatus(t('folderChosen', guessedRoot));
+        loadBooks();
+        return;
+      }
+
+      const topLevelName = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
+      setStatus(t('folderChosenNoPath', topLevelName));
+    });
+
+    loadButton.addEventListener('click', loadBooks);
+    reloadButton.addEventListener('click', loadBooks);
+    searchInput.addEventListener('input', renderBooks);
+    showReadyOnlyInput.addEventListener('change', renderBooks);
+    languageSelect.addEventListener('change', () => {
+      currentLanguage = languageSelect.value;
+      applyLanguage();
+      const pageUrl = new URL(location.href);
+      pageUrl.searchParams.set('lang', currentLanguage);
+      if (rootInput.value.trim()) {
+        pageUrl.searchParams.set('root', rootInput.value.trim());
+      }
+      history.replaceState(null, '', pageUrl);
+      renderBooks();
+    });
+
+    applyLanguage();
+
+    if (rootInput.value) {
+      loadBooks();
+    }
+  </script>
+</body>
+</html>

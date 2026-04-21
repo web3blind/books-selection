@@ -1,0 +1,23 @@
+{
+  "name": "books-selection",
+  "version": "0.1.0",
+  "description": "Local tool for browsing FB2 book folders by annotation.",
+  "private": false,
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "keywords": [
+    "fb2",
+    "books",
+    "ebook",
+    "library",
+    "accessibility",
+    "nodejs"
+  ]
+}
