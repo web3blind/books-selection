@@ -21,8 +21,8 @@
   <div class="toolbar">
     <label for="languageSelect">Language</label>
     <select id="languageSelect" aria-label="Language">
-      <option value="ru">Русский</option>
       <option value="en">English</option>
+      <option value="ru">Русский</option>
     </select>
   </div>
 
@@ -76,7 +76,7 @@
     const queryRoot = queryParams.get('root') || '';
     const queryLang = queryParams.get('lang') || '';
     const savedRoot = localStorage.getItem(storageKey) || '';
-    const savedLanguage = localStorage.getItem(languageKey) || 'ru';
+    const savedLanguage = localStorage.getItem(languageKey) || 'en';
 
     if (queryRoot) {
       rootInput.value = queryRoot;
@@ -149,7 +149,7 @@
 
     let currentLanguage = queryLang || savedLanguage;
     if (!messages[currentLanguage]) {
-      currentLanguage = 'ru';
+      currentLanguage = 'en';
     }
     languageSelect.value = currentLanguage;
 

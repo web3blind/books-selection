@@ -20,7 +20,7 @@ Use it when you have a large folder with book series and want to quickly see whi
 - has one checkbox to show only books with annotations and without errors
 - can try folder selection in the browser, with manual path fallback
 - remembers the last successful folder path in the browser
-- supports Russian and English UI
+- supports English and Russian UI, with English as the default
 
 - сканирует корневую папку с книжными подпапками
 - ищет `.fb2` и `.fb2.zip` внутри каждой папки
@@ -30,7 +30,7 @@ Use it when you have a large folder with book series and want to quickly see whi
 - умеет одной галочкой показывать только книги с аннотацией и без ошибок
 - пытается выбрать папку через браузер, с fallback на ручной ввод пути
 - запоминает последний удачный путь в браузере
-- поддерживает русский и английский интерфейс
+- поддерживает английский и русский интерфейс, по умолчанию английский
 
 ## Requirements / Требования
 
