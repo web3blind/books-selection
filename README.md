@@ -35,8 +35,6 @@ Use it when you have a large folder with book series and want to quickly see whi
 ## Requirements / Требования
 
 - Node.js 18+
-- `python3` in the system, used to read `.fb2.zip` without extra npm dependencies
-- `python3` в системе, нужен для чтения `.fb2.zip` без лишних npm-зависимостей
 
 ## Run / Запуск
 
@@ -50,7 +48,11 @@ Arguments / Аргументы:
 - second argument / второй аргумент: optional port, default `3210`
 
 Open / Открыть:
-- `http://127.0.0.1:3210`
+- the app will try to open your browser automatically
+- if it cannot, open `http://127.0.0.1:3210` manually
+
+Приложение попробует открыть браузер автоматически.
+Если это не получится, открой `http://127.0.0.1:3210` вручную.
 
 You can also pass the root path in the URL / Также можно передать путь в URL:
 - `http://127.0.0.1:3210/?root=/path/to/Books`
@@ -69,6 +71,19 @@ Because of that, the app always keeps a manual path input as a reliable fallback
 
 ```bash
 npm test
+```
+
+To disable auto-open / Чтобы отключить автооткрытие браузера:
+
+```bash
+BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:BOOKS_SELECTION_NO_OPEN=1
+npm start -- "C:\path\to\Books" 3210
 ```
 
 ## Notes / Замечания
