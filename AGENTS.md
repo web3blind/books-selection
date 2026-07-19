@@ -12,9 +12,10 @@
 - `src/indexer.js`: локальная индексация просканированной библиотеки в SQLite и минимальный FTS search helper без AI/network calls.
 - `src/embeddings.js`: embeddings cache helpers, local cosine-similarity ranking over cached SQLite vectors, and no-key semantic-search setup fallback.
 - `src/embeddingIndexer.js`: service for bounded chunk embedding cache population. It selects chunks missing the current embeddings provider/model/content hash, returns `needs_embedding_provider_key` without network when no key is configured, and writes vectors to `chunk_embeddings` through the mockable embeddings provider path.
+- `src/retrieval.js`: hybrid Ask retrieval helper. It combines local FTS hits, optional cached semantic-vector hits, and cached derived facts with source labels (`fts`, `semantic`, `fact`), graceful no-key semantic fallback, dedupe/caps, and evidence rows compatible with `src/ask.js`.
 - `src/facts.js`: generic graph/fact helpers over SQLite: book-scoped entities, chunk-linked evidence, evidence-linked relations/events, cached derived facts, and evidence-only fact-extraction prompt scaffolding. Keep it generic; do not hardcode romance-specific cards.
 - `src/factExtractor.js`: generic model-backed fact extraction service. It uses provider config/client scaffolding, sends only supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, and upserts arbitrary `factKey`/`factType` results into `derived_facts`.
-- `src/ask.js`: Ask pipeline поверх локально найденных FTS snippets; строит evidence-only prompt, возвращает setup/evidence без provider key и не отправляет полный текст библиотеки.
+- `src/ask.js`: Ask pipeline поверх hybrid retrieved snippets/facts; строит evidence-only prompt, возвращает setup/evidence без provider key и не отправляет полный текст библиотеки.
 - `src/providerClient.js`: mockable OpenAI-compatible chat completion and embeddings scaffold с injectable `fetchImpl`; не логирует и не возвращает секреты.
 - `src/providerConfig.js`: безопасные provider defaults для будущих AI и embeddings вызовов; ключи только через env references, без сетевых вызовов.
 - `src/searchSchema.js`: SQLite schema SQL для books/chunks/chunk_embeddings/FTS5/entities/relations/events/evidence/derived facts.
@@ -26,6 +27,7 @@
 - `tests/ask.test.js`: node:test для evidence-only prompt, no-key fallback и mockable provider client behavior.
 - `tests/embeddings.test.js`: node:test для chunk_embeddings schema/cache, embeddings config/client, cosine ranking и no-key semantic fallback.
 - `tests/embeddingIndexer.test.js`: node:test для bounded chunk embedding cache population with mocked provider/no-key behavior; never make real provider calls.
+- `tests/retrieval.test.js`: node:test для hybrid Ask retrieval over FTS, cached semantic vectors, derived facts, dedupe/limits/source labels, and no-key fallback without real network calls.
 - `tests/facts.test.js`: node:test для generic fact graph helpers, evidence links, derived_fact upsert/query behavior и fact-extraction prompt scaffold.
 - `tests/factExtractor.test.js`: node:test для model-backed generic fact extraction service с mocked provider/no-key behavior и derived_facts cache upsert.
 - `tests/uiStatic.test.js`: static smoke assertions for the single-file UI: accessible labels/ids for index/search/Ask controls and no accidental API-key-looking values.
@@ -43,7 +45,7 @@
 - `/api/index` and `/api/search` require explicit `db` query parameter or `BOOKS_SELECTION_DB_PATH`; they must remain local, without AI/network calls and without reading API keys.
 - `/api/embed-index` requires `db`, accepts optional `limit` and `batchSize`, and only populates embeddings for chunks missing the current embeddings provider/model/content hash. Without an embeddings provider key it must return `needs_embedding_provider_key` and must not call provider/network.
 - `/api/semantic-search` requires `db` and `q`; it returns `needs_embedding_provider_key` with setup info without calling the network when the embeddings provider key is absent, and otherwise ranks only cached SQLite vectors by local cosine similarity.
-- `/api/ask` тоже требует `db` и `q`; сначала ищет локальные FTS snippets. Если active provider key не настроен, возвращает `needs_provider_key` с evidence/setup и не вызывает сеть. Если ключ есть, отправляет только retrieved snippets/evidence в provider client, не полный текст библиотеки.
+- `/api/ask` тоже требует `db` и `q`; использует hybrid retrieval из `src/retrieval.js`: FTS snippets, optional cached semantic hits if a query embedding can be produced, and cached derived facts for related books/fact filters. Missing embeddings key is a graceful semantic skip, not a hard Ask failure. Если active answer provider key не настроен, возвращает `needs_provider_key` с evidence/setup и не вызывает сеть. Если ключ есть, отправляет только retrieved snippets/evidence with source labels в provider client, не полный текст библиотеки.
 - `/api/extract-fact` требует `db`, `q`, `bookId`, `factKey`; `factType` optional/default `generic`. It retrieves local evidence for that book, then uses `src/factExtractor.js`: no provider key means `needs_provider_key` and no network; configured provider means only supplied excerpts/snippets are sent and the returned generic fact is cached in `derived_facts`.
 - Fact graph helpers are storage-only/prompt-only scaffolding for later enrichment. Tests must not make real OpenRouter/Hermes/local-model calls; evidence rows should point back to book/chunk context, and derived facts should remain queryable by book/cycle/type.
 - Для machine-readable поведения используй общие constants из `src/constants.js` и не завязывай UI или тесты на точные fallback-строки backend.

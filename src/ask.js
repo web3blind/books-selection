@@ -1,6 +1,6 @@
-const { searchChunks } = require('./indexer');
 const { getApiKey, loadProviderConfig } = require('./providerConfig');
 const { createOpenAiCompatibleClient } = require('./providerClient');
+const { collectHybridEvidence, createFtsQueryFromQuestion } = require('./retrieval');
 
 function stripMarkup(value) {
   return String(value || '').replace(/<[^>]+>/g, '');
@@ -16,19 +16,9 @@ function normalizeEvidence(rows) {
     cycle: row.cycle_name,
     book: row.title,
     chunkIndex: row.chunk_index,
+    source: row.source || 'fts',
     excerpt: stripMarkup(row.snippet || '').trim(),
   }));
-}
-
-function createFtsQueryFromQuestion(question) {
-  const terms = String(question || '')
-    .match(/[\p{L}\p{N}_-]+/gu) || [];
-  const quoted = terms
-    .filter((term) => term.length >= 2)
-    .slice(0, 12)
-    .map((term) => `"${term.replace(/"/g, '""')}"`);
-
-  return quoted.length > 0 ? quoted.join(' OR ') : String(question || '').trim();
 }
 
 function groupEvidence(evidence) {
@@ -52,7 +42,7 @@ function buildEvidencePrompt(question, rows) {
   const evidence = normalizeEvidence(rows);
   const sections = groupEvidence(evidence).map((group) => {
     const excerpts = group.excerpts.map((item) => (
-      `- Фрагмент ${item.chunkIndex}: ${item.excerpt}`
+      `- [${item.source}] Фрагмент ${item.chunkIndex}: ${item.excerpt}`
     )).join('\n');
     return `Цикл: ${group.cycle}\nКнига: ${group.book}\n${excerpts}`;
   }).join('\n\n');
@@ -97,7 +87,7 @@ function createFallbackResult({ providerName, provider, evidence, question }) {
     status: 'needs_provider_key',
     answer: 'AI provider is not configured; returning local evidence candidates.',
     confidence: 'unknown',
-    uncertainty: 'Only local FTS evidence was retrieved; no answer model was called.',
+    uncertainty: 'Only local retrieved evidence was returned; no answer model was called.',
     question,
     evidence,
     checked: createChecked(evidence),
@@ -114,8 +104,11 @@ async function answerLibraryQuestion({
   question,
   providerOverrides = {},
   env = process.env,
-  searchFn = searchChunks,
+  searchFn,
+  retrievalFn = collectHybridEvidence,
   providerClient,
+  fetchImpl,
+  factFilters,
   limit = 12,
 } = {}) {
   const trimmedQuestion = String(question || '').trim();
@@ -124,7 +117,19 @@ async function answerLibraryQuestion({
   }
 
   const retrievalQuery = createFtsQueryFromQuestion(trimmedQuestion);
-  const rows = searchFn(db, retrievalQuery, { limit });
+  const retrievalResult = searchFn
+    ? { evidence: searchFn(db, retrievalQuery, { limit }) }
+    : await retrievalFn({
+      db,
+      question: trimmedQuestion,
+      providerOverrides,
+      env,
+      fetchImpl,
+      providerClient,
+      factFilters,
+      limit,
+    });
+  const rows = retrievalResult.evidence || [];
   const evidence = normalizeEvidence(rows);
   const checked = createChecked(evidence);
   const config = loadProviderConfig(providerOverrides, env);

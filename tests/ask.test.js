@@ -70,37 +70,68 @@ test('answerLibraryQuestion returns evidence and setup status without provider k
   assert.equal(result.setup.apiKeyEnv, 'OPENROUTER_API_KEY');
 });
 
-test('answerLibraryQuestion sends only retrieved evidence to a mocked provider and returns grounded answer shape', async () => {
+test('answerLibraryQuestion sends hybrid FTS semantic and fact evidence only to a mocked provider', async () => {
   let sentMessages;
+  const hybridRows = [
+    {
+      book_id: 1,
+      cycle_name: 'Dragon Cycle',
+      title: 'Lantern Book',
+      chunk_index: 0,
+      source: 'fts',
+      snippet: 'Героиня нашла фонарь в башне.',
+      text: 'UNRELATED FULL FTS CHUNK TEXT MUST NOT BE SENT',
+    },
+    {
+      book_id: 1,
+      cycle_name: 'Dragon Cycle',
+      title: 'Lantern Book',
+      chunk_index: 2,
+      source: 'semantic',
+      snippet: 'Дракон и героиня действуют вместе.',
+      text: 'UNRELATED FULL SEMANTIC CHUNK TEXT MUST NOT BE SENT',
+    },
+    {
+      book_id: 1,
+      cycle_name: 'Dragon Cycle',
+      title: 'Lantern Book',
+      chunk_index: 'fact:survives_finale',
+      source: 'fact',
+      snippet: 'Derived fact survives_finale: yes. Evidence: В эпилоге героиня жива.',
+      text: 'UNRELATED FACT BACKING TEXT MUST NOT BE SENT',
+    },
+  ];
   const result = await answerLibraryQuestion({
     db: {},
     question: 'Где есть фонарь?',
     env: { OPENROUTER_API_KEY: 'test-key' },
-    searchFn: () => sampleHits,
+    retrievalFn: async () => ({ evidence: hybridRows, semantic: { status: 'searched' } }),
     providerClient: {
       chatCompletion: async ({ messages }) => {
         sentMessages = messages;
         return {
-          answer: 'Фонарь есть в двух кандидатах, сильнее всего подходит Lantern Book.',
+          answer: 'Lantern Book подходит по фрагментам и факту.',
           confidence: 'medium',
-          uncertainty: 'Проверены только найденные FTS-фрагменты.',
+          uncertainty: 'Проверены только найденные hybrid evidence.',
         };
       },
     },
   });
 
   const sentText = JSON.stringify(sentMessages);
-  assert.match(sentText, /Героиня нашла фонарь в башне/);
-  assert.match(sentText, /В лесу есть фонарь/);
-  assert.doesNotMatch(sentText, /Полный текст первого релевантного фрагмента/);
-  assert.doesNotMatch(sentText, /Дракон помогает героине пройти через библиотеку/);
+  assert.match(sentText, /\[fts\] Фрагмент 0: Героиня нашла фонарь в башне/);
+  assert.match(sentText, /\[semantic\] Фрагмент 2: Дракон и героиня действуют вместе/);
+  assert.match(sentText, /\[fact\] Фрагмент fact:survives_finale: Derived fact survives_finale: yes/);
+  assert.doesNotMatch(sentText, /UNRELATED FULL FTS CHUNK TEXT/);
+  assert.doesNotMatch(sentText, /UNRELATED FULL SEMANTIC CHUNK TEXT/);
+  assert.doesNotMatch(sentText, /UNRELATED FACT BACKING TEXT/);
   assert.equal(result.status, 'answered');
-  assert.equal(result.answer, 'Фонарь есть в двух кандидатах, сильнее всего подходит Lantern Book.');
+  assert.equal(result.answer, 'Lantern Book подходит по фрагментам и факту.');
   assert.equal(result.confidence, 'medium');
-  assert.equal(result.uncertainty, 'Проверены только найденные FTS-фрагменты.');
+  assert.equal(result.uncertainty, 'Проверены только найденные hybrid evidence.');
   assert.equal(result.evidence.length, 3);
-  assert.deepEqual(result.checked.books, ['Lantern Book', 'Forest Book']);
-  assert.deepEqual(result.checked.cycles, ['Dragon Cycle', 'Forest Cycle']);
+  assert.deepEqual(result.checked.books, ['Lantern Book']);
+  assert.deepEqual(result.checked.cycles, ['Dragon Cycle']);
 });
 
 test('answerLibraryQuestion converts a natural-language question into a safe FTS retrieval query', async () => {
