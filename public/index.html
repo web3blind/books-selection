@@ -6,8 +6,8 @@
   <title>Books Selection</title>
   <style>
     body { font-family: sans-serif; line-height: 1.5; max-width: 980px; margin: 0 auto; padding: 16px; }
-    label, input, button, select { font: inherit; }
-    input, select { width: 100%; padding: 8px; margin: 6px 0 12px; }
+    label, input, button, select, textarea { font: inherit; }
+    input, select, textarea { width: 100%; padding: 8px; margin: 6px 0 12px; box-sizing: border-box; }
     button { padding: 8px 12px; margin-right: 8px; margin-bottom: 8px; }
      .toolbar { max-width: 220px; margin-bottom: 16px; }
     .meta { color: #444; margin: 8px 0 16px; }
@@ -53,23 +53,21 @@
   </div>
 
   <section class="panel" aria-labelledby="aiSearchTitle">
-    <h2 id="aiSearchTitle">Локальный индекс и AI-поиск</h2>
-    <p id="aiSearchIntro" class="meta">FTS-поиск работает локально по SQLite. Ask использует только найденные фрагменты и покажет setup-статус, если provider key не настроен.</p>
+    <h2 id="aiSearchTitle">Вопрос по циклам</h2>
+    <p id="aiSearchIntro" class="meta">Сначала одной кнопкой подготовь локальный индекс и семантический кэш. Потом задай вопрос по циклам и нажми «Найти ответ».</p>
 
     <label id="dbPathLabel" for="dbPath">Путь к SQLite базе</label>
     <input id="dbPath" name="dbPath" type="text" placeholder="Например: /home/denis/books-selection.sqlite" autocomplete="off">
 
     <div class="actions">
-      <button id="buildIndexButton" type="button">Построить/обновить FTS index</button>
-      <button id="embedIndexButton" type="button">Опционально: подготовить semantic embeddings</button>
+      <button id="buildIndexButton" type="button">Подготовить индекс для вопросов</button>
     </div>
 
-    <label id="ftsQuestionLabel" for="ftsQuestion">Поисковый запрос или вопрос</label>
-    <input id="ftsQuestion" name="ftsQuestion" type="text" placeholder="Например: где герои путешествуют вместе">
+    <label id="ftsQuestionLabel" for="ftsQuestion">Вопрос по циклам</label>
+    <textarea id="ftsQuestion" name="ftsQuestion" rows="5" placeholder="Например: найди цикл, где герои любят друг друга, действуют вместе и оба живы в финале"></textarea>
 
     <div class="actions">
-      <button id="localSearchButton" type="button">Локальный FTS поиск</button>
-      <button id="askButton" type="button">Ask по найденным фрагментам</button>
+      <button id="askButton" type="button">Найти ответ</button>
     </div>
 
     <div id="aiStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -93,10 +91,8 @@
     const dbPathLabel = document.getElementById('dbPathLabel');
     const dbPathInput = document.getElementById('dbPath');
     const buildIndexButton = document.getElementById('buildIndexButton');
-    const embedIndexButton = document.getElementById('embedIndexButton');
     const ftsQuestionLabel = document.getElementById('ftsQuestionLabel');
     const ftsQuestionInput = document.getElementById('ftsQuestion');
-    const localSearchButton = document.getElementById('localSearchButton');
     const askButton = document.getElementById('askButton');
     const aiStatusNode = document.getElementById('aiStatus');
     const aiResultsNode = document.getElementById('aiResults');
@@ -142,28 +138,23 @@
         searchLabel: 'Поиск по папке, названию и аннотации',
         searchPlaceholder: 'Например: попаданец, гоблины, клан',
         showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
-        aiSearchTitle: 'Локальный индекс и AI-поиск',
-        aiSearchIntro: 'FTS-поиск работает локально по SQLite. Ask использует только найденные фрагменты и покажет setup-статус, если provider key не настроен.',
+        aiSearchTitle: 'Вопрос по циклам',
+        aiSearchIntro: 'Сначала одной кнопкой подготовь локальный индекс и семантический кэш. Потом задай вопрос по циклам и нажми «Найти ответ».',
         dbPathLabel: 'Путь к SQLite базе',
         dbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
-        buildIndexButton: 'Построить/обновить FTS index',
-        embedIndexButton: 'Опционально: подготовить semantic embeddings',
-        ftsQuestionLabel: 'Поисковый запрос или вопрос',
-        ftsQuestionPlaceholder: 'Например: где герои путешествуют вместе',
-        localSearchButton: 'Локальный FTS поиск',
-        askButton: 'Ask по найденным фрагментам',
+        buildIndexButton: 'Подготовить индекс для вопросов',
+        ftsQuestionLabel: 'Вопрос по циклам',
+        ftsQuestionPlaceholder: 'Например: найди цикл, где герои любят друг друга, действуют вместе и оба живы в финале',
+        askButton: 'Найти ответ',
         noDbPath: 'Укажи путь к SQLite базе для локального индекса.',
         noAiQuery: 'Введи поисковый запрос или вопрос.',
-        indexing: 'Строю или обновляю локальный FTS index...',
-        embedIndexing: 'Проверяю optional semantic embeddings setup...',
-        searchingFts: 'Ищу в локальном FTS index...',
+        indexing: 'Готовлю локальный индекс: читаю книги, создаю SQLite и проверяю семантический кэш...',
         asking: 'Собираю evidence и запускаю Ask mode...',
         indexDone: (result) => `Индекс готов: обработано ${result.total}, обновлено ${result.indexed}, пропущено ${result.skipped}, ошибок ${result.errors}.`,
-        embedDone: (result) => result.status === 'needs_embedding_provider_key'
-          ? `Semantic setup нужен: добавь ${result.setup.apiKeyEnv} для provider ${result.setup.provider}. Embedded: ${result.embedded}, осталось: ${result.remaining}.`
-          : `Semantic embeddings готовы: добавлено ${result.embedded}, пропущено ${result.skipped}, осталось ${result.remaining}.`,
-        searchDone: (count) => `Найдено FTS результатов: ${count}.`,
-        askDone: 'Ask mode вернул ответ.',
+        semanticStepDone: (result) => result.status === 'needs_embedding_provider_key'
+          ? `Базовый индекс готов. Для семантического поиска добавь ${result.setup.apiKeyEnv} для provider ${result.setup.provider}. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
+          : `Индекс и semantic cache готовы: embedded ${result.embedded}, пропущено ${result.skipped}, осталось ${result.remaining}.`,
+        askDone: 'Ответ готов.',
         providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
         resultHeading: 'Результаты',
         evidenceHeading: 'Доказательные фрагменты',
@@ -201,28 +192,23 @@
         searchLabel: 'Search by folder, title, and annotation',
         searchPlaceholder: 'For example: goblins, clan, portal fantasy',
         showReadyOnly: 'Show only books with annotations and without errors',
-        aiSearchTitle: 'Local index and AI search',
-        aiSearchIntro: 'FTS search works locally in SQLite. Ask uses only retrieved snippets and shows setup status when a provider key is not configured.',
+        aiSearchTitle: 'Question about series',
+        aiSearchIntro: 'First prepare the local index and semantic cache with one button. Then enter a question about series and press “Find answer”.',
         dbPathLabel: 'SQLite database path',
         dbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
-        buildIndexButton: 'Build/update FTS index',
-        embedIndexButton: 'Optional: prepare semantic embeddings',
-        ftsQuestionLabel: 'Search query or question',
-        ftsQuestionPlaceholder: 'For example: where do the heroes travel together',
-        localSearchButton: 'Local FTS search',
-        askButton: 'Ask over retrieved snippets',
+        buildIndexButton: 'Prepare index for questions',
+        ftsQuestionLabel: 'Question about series',
+        ftsQuestionPlaceholder: 'For example: find a series where the heroes love each other, act together, and both survive the finale',
+        askButton: 'Find answer',
         noDbPath: 'Enter the SQLite database path for the local index.',
         noAiQuery: 'Enter a search query or question.',
-        indexing: 'Building or updating the local FTS index...',
-        embedIndexing: 'Checking optional semantic embeddings setup...',
-        searchingFts: 'Searching the local FTS index...',
+        indexing: 'Preparing the local index: reading books, creating SQLite, and checking semantic cache...',
         asking: 'Collecting evidence and running Ask mode...',
         indexDone: (result) => `Index ready: processed ${result.total}, updated ${result.indexed}, skipped ${result.skipped}, errors ${result.errors}.`,
-        embedDone: (result) => result.status === 'needs_embedding_provider_key'
-          ? `Semantic setup needed: add ${result.setup.apiKeyEnv} for provider ${result.setup.provider}. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
-          : `Semantic embeddings ready: embedded ${result.embedded}, skipped ${result.skipped}, remaining ${result.remaining}.`,
-        searchDone: (count) => `FTS results found: ${count}.`,
-        askDone: 'Ask mode returned a response.',
+        semanticStepDone: (result) => result.status === 'needs_embedding_provider_key'
+          ? `Base index is ready. Add ${result.setup.apiKeyEnv} for provider ${result.setup.provider} to enable semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
+          : `Index and semantic cache are ready: embedded ${result.embedded}, skipped ${result.skipped}, remaining ${result.remaining}.`,
+        askDone: 'Answer ready.',
         providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
         resultHeading: 'Results',
         evidenceHeading: 'Evidence snippets',
@@ -294,10 +280,8 @@
       dbPathLabel.textContent = t('dbPathLabel');
       dbPathInput.placeholder = t('dbPathPlaceholder');
       buildIndexButton.textContent = t('buildIndexButton');
-      embedIndexButton.textContent = t('embedIndexButton');
       ftsQuestionLabel.textContent = t('ftsQuestionLabel');
       ftsQuestionInput.placeholder = t('ftsQuestionPlaceholder');
-      localSearchButton.textContent = t('localSearchButton');
       askButton.textContent = t('askButton');
       localStorage.setItem(languageKey, currentLanguage);
     }
@@ -308,6 +292,11 @@
 
     function setAiStatus(message) {
       aiStatusNode.textContent = message;
+    }
+
+    function setControlBusy(control, isBusy) {
+      control.disabled = isBusy;
+      control.setAttribute('aria-busy', isBusy ? 'true' : 'false');
     }
 
     function escapeHtml(value) {
@@ -497,59 +486,28 @@
 
       setAiStatus(t('indexing'));
       aiResultsNode.innerHTML = '';
+      setControlBusy(buildIndexButton, true);
+      setControlBusy(askButton, true);
       try {
-        const data = await fetchJson(`/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`, { method: 'POST' });
-        setAiStatus(t('indexDone', data.result));
+        const indexData = await fetchJson(`/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`, { method: 'POST' });
+        setAiStatus(t('indexDone', indexData.result));
+        const semanticData = await fetchJson(`/api/embed-index?db=${encodeURIComponent(dbPath)}&limit=100&batchSize=16`, { method: 'POST' });
+        setAiStatus(t('semanticStepDone', semanticData.result));
         aiResultsNode.innerHTML = `
           <h3>${escapeHtml(t('resultHeading'))}</h3>
           <ul>
-            <li>DB: ${escapeHtml(data.db)}</li>
-            <li>Root: ${escapeHtml(data.root)}</li>
+            <li>DB: ${escapeHtml(indexData.db)}</li>
+            <li>Root: ${escapeHtml(indexData.root)}</li>
+            <li>${escapeHtml(t('indexDone', indexData.result))}</li>
+            <li>${escapeHtml(t('semanticStepDone', semanticData.result))}</li>
           </ul>
+          ${renderSetupStatus(semanticData.result.setup)}
         `;
       } catch (error) {
         setAiStatus(error.message);
-      }
-    }
-
-    async function embedIndex() {
-      const dbPath = getDbPath();
-      if (!dbPath) {
-        setAiStatus(t('noDbPath'));
-        return;
-      }
-
-      setAiStatus(t('embedIndexing'));
-      aiResultsNode.innerHTML = '';
-      try {
-        const data = await fetchJson(`/api/embed-index?db=${encodeURIComponent(dbPath)}&limit=100&batchSize=16`, { method: 'POST' });
-        setAiStatus(t('embedDone', data.result));
-        aiResultsNode.innerHTML = renderSetupStatus(data.result.setup);
-      } catch (error) {
-        setAiStatus(error.message);
-      }
-    }
-
-    async function runLocalSearch() {
-      const dbPath = getDbPath();
-      const query = ftsQuestionInput.value.trim();
-      if (!dbPath) {
-        setAiStatus(t('noDbPath'));
-        return;
-      }
-      if (!query) {
-        setAiStatus(t('noAiQuery'));
-        return;
-      }
-
-      setAiStatus(t('searchingFts'));
-      aiResultsNode.innerHTML = '';
-      try {
-        const data = await fetchJson(`/api/search?q=${encodeURIComponent(query)}&db=${encodeURIComponent(dbPath)}`);
-        setAiStatus(t('searchDone', data.count));
-        renderFtsResults(data.results || []);
-      } catch (error) {
-        setAiStatus(error.message);
+      } finally {
+        setControlBusy(buildIndexButton, false);
+        setControlBusy(askButton, false);
       }
     }
 
@@ -612,8 +570,6 @@
     loadButton.addEventListener('click', loadBooks);
     reloadButton.addEventListener('click', loadBooks);
     buildIndexButton.addEventListener('click', buildIndex);
-    embedIndexButton.addEventListener('click', embedIndex);
-    localSearchButton.addEventListener('click', runLocalSearch);
     askButton.addEventListener('click', askLibrary);
     searchInput.addEventListener('input', renderBooks);
     showReadyOnlyInput.addEventListener('change', renderBooks);
