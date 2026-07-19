@@ -5,7 +5,13 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
-const { extractBookInfoFromXml, decodeXmlBuffer, readBookInfo } = require('../src/fb2');
+const {
+  chunkText,
+  decodeXmlBuffer,
+  extractBookInfoFromXml,
+  extractBodyTextFromXml,
+  readBookInfo,
+} = require('../src/fb2');
 
 function createZipBuffer(fileName, content) {
   const nameBuffer = Buffer.from(fileName, 'utf8');
@@ -100,6 +106,45 @@ test('decodes windows-1251 buffers using xml declaration', () => {
   const result = decodeXmlBuffer(bytes);
 
   assert.match(result, /encoding="windows-1251"/i);
+});
+
+test('extracts normalized full body text from fb2 sections without annotation text', () => {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  <FictionBook>
+    <description>
+      <title-info>
+        <book-title>Тело книги</book-title>
+        <annotation><p>Это аннотация, не текст книги.</p></annotation>
+      </title-info>
+    </description>
+    <body>
+      <section>
+        <title><p>Глава 1</p></title>
+        <p>Первый абзац &amp; знак.</p>
+        <p>Второй абзац.</p>
+      </section>
+      <section>
+        <title><p>Глава 2</p></title>
+        <p>Финальный абзац.</p>
+      </section>
+    </body>
+  </FictionBook>`;
+
+  const result = extractBodyTextFromXml(xml);
+
+  assert.equal(result, 'Глава 1\n\nПервый абзац & знак.\n\nВторой абзац.\n\nГлава 2\n\nФинальный абзац.');
+  assert.doesNotMatch(result, /аннотация/i);
+});
+
+test('chunkText creates stable bounded chunks with offsets and hashes', () => {
+  const text = 'Альфа бета гамма. Дельта эпсилон дзета. Эта тета йота.';
+
+  const chunks = chunkText(text, { maxChars: 26 });
+
+  assert.deepEqual(chunks.map((chunk) => chunk.index), [0, 1, 2]);
+  assert.deepEqual(chunks.map((chunk) => chunk.text), ['Альфа бета гамма.', 'Дельта эпсилон дзета.', 'Эта тета йота.']);
+  assert.deepEqual(chunks.map((chunk) => text.slice(chunk.startOffset, chunk.endOffset)), chunks.map((chunk) => chunk.text));
+  assert.ok(chunks.every((chunk) => /^[a-f0-9]{64}$/.test(chunk.contentHash)));
 });
 
 test('reads fb2 from zip without python', async () => {

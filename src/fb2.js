@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -67,6 +68,56 @@ function extractBookInfoFromXml(xml) {
     : 'Аннотация не найдена.';
 
   return { title, annotation };
+}
+
+function extractBodyTextFromXml(xml) {
+  const bodyRaw = extractTagContent(xml, 'body');
+  return bodyRaw ? extractParagraphs(bodyRaw) : '';
+}
+
+function hashText(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function splitSentences(text) {
+  return text.match(/[^.!?。！？]+[.!?。！？]?/gu)?.map((part) => part.trim()).filter(Boolean) || [];
+}
+
+function chunkText(text, options = {}) {
+  const maxChars = options.maxChars || 4000;
+  const normalized = normalizeWhitespace(text);
+  const sentences = splitSentences(normalized);
+  const chunkTexts = [];
+  let current = '';
+
+  for (const sentence of sentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    if (current && candidate.length > maxChars) {
+      chunkTexts.push(current);
+      current = sentence;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) {
+    chunkTexts.push(current);
+  }
+
+  let searchFrom = 0;
+  return chunkTexts.map((chunk, index) => {
+    const startOffset = normalized.indexOf(chunk, searchFrom);
+    const endOffset = startOffset + chunk.length;
+    searchFrom = endOffset;
+
+    return {
+      index,
+      text: chunk,
+      contentHash: hashText(chunk),
+      startOffset,
+      endOffset,
+    };
+  });
 }
 
 function findEndOfCentralDirectory(buffer) {
@@ -159,14 +210,25 @@ async function readFb2FromZip(filePath) {
   return decodeXmlBuffer(xmlBuffer);
 }
 
-async function readBookInfo(filePath) {
+async function readBookDocument(filePath) {
   const lower = filePath.toLowerCase();
   const xml = lower.endsWith('.fb2.zip') ? await readFb2FromZip(filePath) : await readFb2File(filePath);
-  return extractBookInfoFromXml(xml);
+  return {
+    ...extractBookInfoFromXml(xml),
+    bodyText: extractBodyTextFromXml(xml),
+  };
+}
+
+async function readBookInfo(filePath) {
+  const { title, annotation } = await readBookDocument(filePath);
+  return { title, annotation };
 }
 
 module.exports = {
+  chunkText,
   decodeXmlBuffer,
   extractBookInfoFromXml,
+  extractBodyTextFromXml,
+  readBookDocument,
   readBookInfo,
 };

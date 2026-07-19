@@ -21,6 +21,7 @@ Use it when you have a large folder with book series and want to quickly see whi
 - can try folder selection in the browser, with manual path fallback
 - remembers the last successful folder path in the browser
 - supports English and Russian UI, with English as the default
+- includes first AI-search foundation modules: provider config defaults, FB2 body extraction/chunking helpers, a local SQLite schema/adapter scaffold with FTS5/fact tables, indexing service, and minimal local FTS endpoints
 
 - сканирует корневую папку с книжными подпапками
 - ищет `.fb2` и `.fb2.zip` внутри каждой папки
@@ -34,7 +35,8 @@ Use it when you have a large folder with book series and want to quickly see whi
 
 ## Requirements / Требования
 
-- Node.js 18+
+- Node.js 18+ for annotation browsing / для просмотра аннотаций
+- Node.js runtime with `node:sqlite` support for local FTS index endpoints / runtime с `node:sqlite` для локального FTS-индекса
 
 ## Run / Запуск
 
@@ -56,6 +58,18 @@ Open / Открыть:
 
 You can also pass the root path in the URL / Также можно передать путь в URL:
 - `http://127.0.0.1:3210/?root=/path/to/Books`
+
+## Local FTS index API / Локальный FTS index API
+
+Annotation browsing still works through `/api/books` without a database. For local full-text search, use a user-local SQLite file with a Node.js runtime that supports `node:sqlite`:
+
+```bash
+BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210
+curl -X POST "http://127.0.0.1:3210/api/index?root=/path/to/Books&db=/tmp/books-selection.sqlite"
+curl "http://127.0.0.1:3210/api/search?q=фонарь&db=/tmp/books-selection.sqlite"
+```
+
+The index stores extracted FB2 body chunks locally and uses SQLite FTS5 only; these endpoints do not make AI/network calls and do not read provider API keys.
 
 ## Folder selection / Выбор папки
 
@@ -90,11 +104,11 @@ npm start -- "C:\path\to\Books" 3210
 
 - if an FB2 file has no annotation, the app shows a fallback message
 - if a folder has no `.fb2` or `.fb2.zip`, it can be hidden by the default filter
-- the project is intentionally simple: no database, no external frontend framework, no cloud sync
+- the project is still local-first: annotation browsing requires no database, cloud, or AI API; AI-search foundation adds local SQLite/FTS5 modules and provider config scaffolding without network calls
 
 - если в FB2 нет аннотации, приложение показывает fallback-сообщение
 - если в папке нет `.fb2` или `.fb2.zip`, её можно скрыть фильтром по умолчанию
-- проект специально сделан простым: без базы данных, без внешнего frontend framework, без облачной синхронизации
+- проект всё ещё локальный: annotation browsing не требует базы, облака или AI API; AI-search foundation добавляет только конфигурационные и SQLite/FTS5 scaffold-модули без сетевых вызовов
 
 ## License / Лицензия
 

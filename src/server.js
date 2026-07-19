@@ -4,7 +4,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
+const { indexLibrary, searchChunks } = require('./indexer');
 const { scanBooks } = require('./scan');
+const { initializeSearchDatabase } = require('./searchDb');
 
 const publicDir = path.join(__dirname, '..', 'public');
 const defaultRoot = process.argv[2] || '';
@@ -49,6 +51,19 @@ function openBrowser(url) {
   }
 }
 
+function getDbPath(url) {
+  return url.searchParams.get('db') || process.env.BOOKS_SELECTION_DB_PATH || '';
+}
+
+async function withSearchDatabase(databasePath, callback) {
+  const db = initializeSearchDatabase(databasePath);
+  try {
+    return await callback(db);
+  } finally {
+    db.close();
+  }
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
@@ -62,6 +77,38 @@ const server = http.createServer(async (request, response) => {
 
       const books = await scanBooks(root);
       return sendJson(response, 200, { root, count: books.length, books });
+    }
+
+    if (url.pathname === '/api/index' && request.method === 'POST') {
+      const root = url.searchParams.get('root') || defaultRoot;
+      const databasePath = getDbPath(url);
+
+      if (!root) {
+        return sendJson(response, 400, { error: 'Нужен путь к папке с книгами.' });
+      }
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, (db) => indexLibrary(db, root));
+      return sendJson(response, 200, { root, db: databasePath, result });
+    }
+
+    if (url.pathname === '/api/search') {
+      const query = url.searchParams.get('q') || '';
+      const databasePath = getDbPath(url);
+
+      if (!query.trim()) {
+        return sendJson(response, 400, { error: 'Нужен поисковый запрос q.' });
+      }
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+
+      const results = await withSearchDatabase(databasePath, (db) => searchChunks(db, query));
+      return sendJson(response, 200, { query, count: results.length, results });
     }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {

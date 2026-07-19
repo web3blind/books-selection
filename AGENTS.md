@@ -2,15 +2,21 @@
 
 ## Project Context
 - Что это: локальный Node.js tool для выбора FB2-книг по аннотациям из каталога с подпапками.
-- Стек: CommonJS, без внешних npm-зависимостей, Node.js 18+.
+- Стек: CommonJS, без внешних npm-зависимостей. Annotation browsing работает на Node.js 18+; локальные FTS endpoints требуют runtime с `node:sqlite`.
 - Главные entrypoints: `src/server.js` для HTTP-сервера, `public/index.html` для всего UI.
 
 ## Structure
-- `src/server.js`: локальный HTTP server, раздача `public/index.html`, API `GET /api/books`.
+- `src/server.js`: локальный HTTP server, раздача `public/index.html`, API `GET /api/books`, `POST /api/index`, `GET /api/search`.
 - `src/scan.js`: обход корневой папки, natural sort, поиск первого `.fb2` или `.fb2.zip` в каждой подпапке.
-- `src/fb2.js`: чтение FB2/XML, decoding по XML encoding, извлечение `book-title` и `annotation`, чтение `.fb2.zip` через встроенный ZIP parser на Node.js.
+- `src/fb2.js`: чтение FB2/XML, decoding по XML encoding, извлечение `book-title` и `annotation`, извлечение body text/chunks для будущего индекса, чтение `.fb2.zip` через встроенный ZIP parser на Node.js.
+- `src/indexer.js`: локальная индексация просканированной библиотеки в SQLite и минимальный FTS search helper без AI/network calls.
+- `src/providerConfig.js`: безопасные provider defaults для будущих AI вызовов; ключи только через env references, без сетевых вызовов.
+- `src/searchSchema.js`: SQLite schema SQL для books/chunks/FTS5/entities/relations/events/evidence/derived facts.
+- `src/searchDb.js`: тонкий optional adapter на `node:sqlite`; normal annotation browsing не должен от него зависеть.
 - `src/constants.js`: общие status/reason constants и fallback-тексты для scan layer.
-- `tests/fb2.test.js`: node:test для парсинга XML, fallback-логики и чтения zip.
+- `tests/fb2.test.js`: node:test для парсинга XML, fallback-логики, body extraction/chunking и чтения zip.
+- `tests/indexer.test.js`: node:test для SQLite indexing service, FTS population/search и unchanged-file skip behavior.
+- `tests/serverApi.test.js`: node:test smoke для `/api/books`, `/api/index`, `/api/search`.
 - `plan.md`: продуктовый план, его нужно держать в соответствии с реальной реализацией.
 
 ## Run And Validation
@@ -22,6 +28,7 @@
 - Сканируется только один уровень подпапок внутри переданного root path.
 - На папку берётся первый подходящий файл по natural sort (`.fb2` или `.fb2.zip`).
 - API возвращает записи со status: `ok`, `missing`, `error`; UI и фильтры опираются на `status`, `reason`, `hasAnnotation`.
+- `/api/index` и `/api/search` требуют явный `db` query parameter или `BOOKS_SELECTION_DB_PATH`; они должны оставаться локальными, без AI/network calls и без чтения API keys.
 - Для machine-readable поведения используй общие constants из `src/constants.js` и не завязывай UI или тесты на точные fallback-строки backend.
 - UI intentionally single-file: вся клиентская логика, тексты и локализация лежат в `public/index.html` без frontend framework.
 
@@ -32,5 +39,5 @@
 - Не добавляй тяжёлые зависимости или frontend framework без явной причины: текущая архитектура намеренно минимальная.
 
 ## Config And Secrets
-- Секретов и внешних сервисов нет.
+- Секреты не коммитятся. Provider config хранит только имена env-переменных (`OPENROUTER_API_KEY`, `LOCAL_OPENAI_API_KEY`), не значения.
 - Основные runtime inputs: CLI args `root` и `port`, env `PORT`, env `BOOKS_SELECTION_NO_OPEN`.
