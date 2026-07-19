@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
 const { answerLibraryQuestion, createFtsQueryFromQuestion } = require('./ask');
+const { indexMissingChunkEmbeddings } = require('./embeddingIndexer');
 const { semanticSearchIfConfigured } = require('./embeddings');
 const { extractFactFromEvidence } = require('./factExtractor');
 const { indexLibrary, searchChunks } = require('./indexer');
@@ -144,6 +145,19 @@ const server = http.createServer(async (request, response) => {
 
       const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({ db, query }));
       return sendJson(response, 200, { query, result });
+    }
+
+    if (url.pathname === '/api/embed-index' && request.method === 'POST') {
+      const databasePath = getDbPath(url);
+      const limit = Number(url.searchParams.get('limit') || 100);
+      const batchSize = Number(url.searchParams.get('batchSize') || 16);
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({ db, limit, batchSize }));
+      return sendJson(response, 200, { db: databasePath, result });
     }
 
     if (url.pathname === '/api/extract-fact') {

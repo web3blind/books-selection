@@ -26,6 +26,7 @@
 - SQLite schema, indexer and FTS endpoints delivered in commit `73ec214`.
 - Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `GET /api/ask?q=...&db=...`.
 - Embeddings cache / semantic scaffold increment delivered: durable `chunk_embeddings` table, embedding model config defaults, mockable OpenAI-compatible `/embeddings` client, local cosine ranking over cached vectors, no-key semantic setup fallback, and `GET /api/semantic-search?q=...&db=...` status endpoint.
+- Chunk embedding indexing increment delivered: `src/embeddingIndexer.js` selects chunks missing the current embeddings provider/model/content hash, returns `needs_embedding_provider_key` without network when the key is absent, writes mocked-provider vectors into `chunk_embeddings`, supports changed chunk re-embedding and bounded `limit`/`batchSize` runs, and exposes `POST /api/embed-index?db=...&limit=...&batchSize=...`.
 - Generic fact graph helper increment delivered: `src/facts.js` storage helpers for book-scoped entities, chunk-linked evidence, evidence-linked relations/events, derived fact upsert/query by book/cycle/type, plus an evidence-only fact-extraction prompt scaffold.
 - Generic model-backed fact extraction increment delivered: `src/factExtractor.js` builds generic prompts from supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, uses injectable/mockable provider clients, upserts arbitrary `factKey`/`factType` results into `derived_facts`, and exposes a small `GET /api/extract-fact` setup/cache endpoint.
 
@@ -54,6 +55,8 @@ Expected behavior:
 - Keep the annotation UI working.
 
 ### Stage 2 — Semantic search / embeddings
+
+Status: cache/schema/search scaffold and bounded chunk embedding cache population are implemented. Semantic search can rank cached vectors; `/api/embed-index` fills missing cache rows when an embeddings provider key is configured and returns setup status without network otherwise.
 
 Add vector/semantic search over chunks.
 
