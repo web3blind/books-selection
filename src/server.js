@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
 const { answerLibraryQuestion } = require('./ask');
+const { semanticSearchIfConfigured } = require('./embeddings');
 const { indexLibrary, searchChunks } = require('./indexer');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
@@ -125,6 +126,22 @@ const server = http.createServer(async (request, response) => {
       }
 
       const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({ db, question: query }));
+      return sendJson(response, 200, { query, result });
+    }
+
+    if (url.pathname === '/api/semantic-search') {
+      const query = url.searchParams.get('q') || '';
+      const databasePath = getDbPath(url);
+
+      if (!query.trim()) {
+        return sendJson(response, 400, { error: 'Нужен поисковый запрос q.' });
+      }
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({ db, query }));
       return sendJson(response, 200, { query, result });
     }
 

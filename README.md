@@ -21,7 +21,7 @@ Use it when you have a large folder with book series and want to quickly see whi
 - can try folder selection in the browser, with manual path fallback
 - remembers the last successful folder path in the browser
 - supports English and Russian UI, with English as the default
-- includes first AI-search foundation modules: provider config defaults, FB2 body extraction/chunking helpers, a local SQLite schema/adapter scaffold with FTS5/fact tables, indexing service, and minimal local FTS endpoints
+- includes first AI-search foundation modules: provider config defaults, FB2 body extraction/chunking helpers, a local SQLite schema/adapter scaffold with FTS5/fact tables, indexing service, minimal local FTS endpoints, embeddings cache schema/helpers, and a semantic-search setup endpoint
 
 - сканирует корневую папку с книжными подпапками
 - ищет `.fb2` и `.fb2.zip` внутри каждой папки
@@ -67,10 +67,11 @@ Annotation browsing still works through `/api/books` without a database. For loc
 BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210
 curl -X POST "http://127.0.0.1:3210/api/index?root=/path/to/Books&db=/tmp/books-selection.sqlite"
 curl "http://127.0.0.1:3210/api/search?q=фонарь&db=/tmp/books-selection.sqlite"
+curl "http://127.0.0.1:3210/api/semantic-search?q=фонарь&db=/tmp/books-selection.sqlite"
 curl "http://127.0.0.1:3210/api/ask?q=фонарь&db=/tmp/books-selection.sqlite"
 ```
 
-The index stores extracted FB2 body chunks locally and uses SQLite FTS5. `/api/search` does not make AI/network calls and does not read provider API keys. `/api/ask` first retrieves local FTS evidence and, if the active provider key such as `OPENROUTER_API_KEY` is not configured, returns candidate evidence plus setup status instead of calling the network. When a key is configured, Ask mode sends only retrieved snippets/evidence to the OpenAI-compatible chat provider scaffold, not the full library text.
+The index stores extracted FB2 body chunks locally and uses SQLite FTS5. `/api/search` does not make AI/network calls and does not read provider API keys. `/api/semantic-search` is the first embeddings scaffold: it uses cached vectors from local SQLite when a query embedding can be produced; if no embeddings provider key is configured, it returns `needs_embedding_provider_key` with setup fields instead of calling the network. `/api/ask` first retrieves local FTS evidence and, if the active provider key such as `OPENROUTER_API_KEY` is not configured, returns candidate evidence plus setup status instead of calling the network. When a key is configured, Ask mode sends only retrieved snippets/evidence to the OpenAI-compatible chat provider scaffold, not the full library text.
 
 ## Folder selection / Выбор папки
 
@@ -105,11 +106,11 @@ npm start -- "C:\path\to\Books" 3210
 
 - if an FB2 file has no annotation, the app shows a fallback message
 - if a folder has no `.fb2` or `.fb2.zip`, it can be hidden by the default filter
-- the project is still local-first: annotation browsing requires no database, cloud, or AI API; AI-search foundation adds local SQLite/FTS5 modules, evidence-only Ask mode, and provider config/client scaffolding; Ask mode falls back to local evidence when no provider key is configured
+- the project is still local-first: annotation browsing requires no database, cloud, or AI API; AI-search foundation adds local SQLite/FTS5 modules, semantic-search scaffolding, evidence-only Ask mode, and provider config/client scaffolding; Ask mode and semantic search fall back to local evidence/setup status when provider keys are not configured
 
 - если в FB2 нет аннотации, приложение показывает fallback-сообщение
 - если в папке нет `.fb2` или `.fb2.zip`, её можно скрыть фильтром по умолчанию
-- проект всё ещё локальный: annotation browsing не требует базы, облака или AI API; AI-search foundation добавляет SQLite/FTS5, evidence-only Ask mode и provider config/client scaffold; Ask mode возвращает локальные доказательства, если provider key не настроен
+- проект всё ещё локальный: annotation browsing не требует базы, облака или AI API; AI-search foundation добавляет SQLite/FTS5, semantic-search scaffold, evidence-only Ask mode и provider config/client scaffold; Ask mode и semantic search возвращают локальные доказательства/setup status, если provider keys не настроены
 
 ## License / Лицензия
 

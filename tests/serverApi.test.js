@@ -90,6 +90,7 @@ test('server preserves /api/books and exposes local index/search/ask endpoints',
     const indexed = await requestJson(port, 'POST', `/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`);
     const hits = await requestJson(port, 'GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
     const answer = await requestJson(port, 'GET', `/api/ask?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
+    const semantic = await requestJson(port, 'GET', `/api/semantic-search?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
 
     assert.equal(books.statusCode, 200);
     assert.equal(books.body.books[0].title, 'API Indexed Book');
@@ -105,6 +106,11 @@ test('server preserves /api/books and exposes local index/search/ask endpoints',
     assert.equal(answer.body.result.status, 'needs_provider_key');
     assert.equal(answer.body.result.evidence.length, 1);
     assert.equal(answer.body.result.checked.books[0], 'API Indexed Book');
+    assert.equal(semantic.statusCode, 200);
+    assert.equal(semantic.body.query, 'Где есть фонарь?');
+    assert.equal(semantic.body.result.status, 'needs_embedding_provider_key');
+    assert.deepEqual(semantic.body.result.results, []);
+    assert.equal(semantic.body.result.setup.apiKeyEnv, 'OPENROUTER_API_KEY');
   } finally {
     child.kill();
     await fs.rm(root, { recursive: true, force: true });

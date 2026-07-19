@@ -51,6 +51,35 @@ function createOpenAiCompatibleClient({ provider, apiKey, fetchImpl = globalThis
       const payload = await response.json();
       return parseJsonContent(payload?.choices?.[0]?.message?.content || '');
     },
+
+    async createEmbedding({ input }) {
+      if (!provider.embeddingModel) {
+        throw new Error('OpenAI-compatible provider requires embeddingModel for embeddings.');
+      }
+
+      const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/embeddings`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: provider.embeddingModel,
+          input,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Provider embeddings request failed with HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const embedding = payload?.data?.[0]?.embedding;
+      if (!Array.isArray(embedding)) {
+        throw new Error('Provider embeddings response did not include an embedding vector.');
+      }
+      return embedding;
+    },
   };
 }
 

@@ -25,6 +25,7 @@
 
 - SQLite schema, indexer and FTS endpoints delivered in commit `73ec214`.
 - Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `GET /api/ask?q=...&db=...`.
+- Embeddings cache / semantic scaffold increment delivered: durable `chunk_embeddings` table, embedding model config defaults, mockable OpenAI-compatible `/embeddings` client, local cosine ranking over cached vectors, no-key semantic setup fallback, and `GET /api/semantic-search?q=...&db=...` status endpoint.
 
 ## Current Architecture
 

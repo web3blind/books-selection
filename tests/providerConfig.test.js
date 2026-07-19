@@ -43,5 +43,5 @@ test('api key lookup reads configured environment variable without exposing all 
   const result = getApiKey(config.providers.openrouter, { OPENROUTER_API_KEY: 'secret-value', OTHER_SECRET: 'do-not-leak' });
 
   assert.equal(result, 'secret-value');
-  assert.deepEqual(Object.keys(config.providers.openrouter).sort(), ['apiKeyEnv', 'baseUrl', 'model', 'type'].sort());
+  assert.deepEqual(Object.keys(config.providers.openrouter).sort(), ['apiKeyEnv', 'baseUrl', 'embeddingModel', 'model', 'type'].sort());
 });

@@ -27,6 +27,17 @@ CREATE TABLE IF NOT EXISTS chunks (
   UNIQUE(book_id, chunk_index)
 );
 
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+  id INTEGER PRIMARY KEY,
+  chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  embedding_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(chunk_id, provider, model, content_hash)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   text,
   content='chunks',
@@ -83,6 +94,8 @@ CREATE TABLE IF NOT EXISTS derived_facts (
 
 CREATE INDEX IF NOT EXISTS idx_books_hash_mtime ON books(content_hash, mtime_ms);
 CREATE INDEX IF NOT EXISTS idx_chunks_book ON chunks(book_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_provider_model_hash ON chunk_embeddings(provider, model, content_hash);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_chunk ON chunk_embeddings(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_entities_book_name ON entities(book_id, normalized_name);
 CREATE INDEX IF NOT EXISTS idx_derived_facts_book_key ON derived_facts(book_id, fact_key);
 `;

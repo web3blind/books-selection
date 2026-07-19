@@ -7,7 +7,7 @@ const { createSchemaSql } = require('../src/searchSchema');
 test('search schema defines durable books, chunks, graph fact, and FTS tables', () => {
   const sql = createSchemaSql();
 
-  for (const tableName of ['books', 'chunks', 'entities', 'relations', 'events', 'evidence', 'derived_facts']) {
+  for (const tableName of ['books', 'chunks', 'chunk_embeddings', 'entities', 'relations', 'events', 'evidence', 'derived_facts']) {
     assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName}\\b`, 'i'));
   }
 
@@ -39,6 +39,7 @@ test('search schema can initialize an in-memory SQLite database when node sqlite
   const names = JSON.parse(child.stdout.trim());
   assert.ok(names.includes('books'));
   assert.ok(names.includes('chunks'));
+  assert.ok(names.includes('chunk_embeddings'));
   assert.ok(names.includes('chunks_fts'));
   assert.ok(names.includes('entities'));
   assert.ok(names.includes('relations'));

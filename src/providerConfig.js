@@ -1,16 +1,19 @@
 const DEFAULT_CONFIG = {
   activeProvider: 'openrouter',
+  activeEmbeddingsProvider: 'openrouter',
   providers: {
     openrouter: {
       type: 'openai-compatible',
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'openai/gpt-4.1-nano',
+      embeddingModel: 'openai/text-embedding-3-small',
       apiKeyEnv: 'OPENROUTER_API_KEY',
     },
     local: {
       type: 'openai-compatible',
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'local-model',
+      embeddingModel: 'local-embedding-model',
       apiKeyEnv: 'LOCAL_OPENAI_API_KEY',
     },
     hermes: {
@@ -33,6 +36,7 @@ function loadProviderConfig(overrides = {}, env = process.env) {
 
   return {
     activeProvider: overrides.activeProvider || DEFAULT_CONFIG.activeProvider,
+    activeEmbeddingsProvider: overrides.activeEmbeddingsProvider || DEFAULT_CONFIG.activeEmbeddingsProvider,
     providers: {
       openrouter: mergeProvider(DEFAULT_CONFIG.providers.openrouter, overrides.providers?.openrouter),
       local: mergeProvider(DEFAULT_CONFIG.providers.local, overrides.providers?.local),
