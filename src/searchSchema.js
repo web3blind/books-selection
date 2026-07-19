@@ -49,26 +49,8 @@ CREATE TABLE IF NOT EXISTS entities (
   book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   kind TEXT NOT NULL,
-  normalized_name TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS relations (
-  id INTEGER PRIMARY KEY,
-  book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
-  source_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
-  target_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
-  relation_type TEXT NOT NULL,
-  confidence REAL,
-  evidence_id INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY,
-  book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
-  event_type TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  confidence REAL,
-  evidence_id INTEGER
+  normalized_name TEXT NOT NULL,
+  UNIQUE(book_id, kind, normalized_name)
 );
 
 CREATE TABLE IF NOT EXISTS evidence (
@@ -79,10 +61,30 @@ CREATE TABLE IF NOT EXISTS evidence (
   source TEXT NOT NULL DEFAULT 'chunk'
 );
 
+CREATE TABLE IF NOT EXISTS relations (
+  id INTEGER PRIMARY KEY,
+  book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+  source_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+  target_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+  relation_type TEXT NOT NULL,
+  confidence REAL,
+  evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY,
+  book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  confidence REAL,
+  evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS derived_facts (
   id INTEGER PRIMARY KEY,
   book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
   fact_key TEXT NOT NULL,
+  fact_type TEXT NOT NULL DEFAULT 'generic',
   fact_value TEXT NOT NULL,
   confidence REAL,
   evidence_json TEXT NOT NULL DEFAULT '[]',
@@ -96,8 +98,12 @@ CREATE INDEX IF NOT EXISTS idx_books_hash_mtime ON books(content_hash, mtime_ms)
 CREATE INDEX IF NOT EXISTS idx_chunks_book ON chunks(book_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_provider_model_hash ON chunk_embeddings(provider, model, content_hash);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_chunk ON chunk_embeddings(chunk_id);
-CREATE INDEX IF NOT EXISTS idx_entities_book_name ON entities(book_id, normalized_name);
+CREATE INDEX IF NOT EXISTS idx_entities_book_name ON entities(book_id, kind, normalized_name);
+CREATE INDEX IF NOT EXISTS idx_evidence_book_chunk ON evidence(book_id, chunk_id);
+CREATE INDEX IF NOT EXISTS idx_relations_book_type ON relations(book_id, relation_type);
+CREATE INDEX IF NOT EXISTS idx_events_book_type ON events(book_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_derived_facts_book_key ON derived_facts(book_id, fact_key);
+CREATE INDEX IF NOT EXISTS idx_derived_facts_type ON derived_facts(fact_type);
 `;
 }
 

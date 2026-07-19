@@ -11,6 +11,7 @@
 - `src/fb2.js`: чтение FB2/XML, decoding по XML encoding, извлечение `book-title` и `annotation`, извлечение body text/chunks для будущего индекса, чтение `.fb2.zip` через встроенный ZIP parser на Node.js.
 - `src/indexer.js`: локальная индексация просканированной библиотеки в SQLite и минимальный FTS search helper без AI/network calls.
 - `src/embeddings.js`: embeddings cache helpers, local cosine-similarity ranking over cached SQLite vectors, and no-key semantic-search setup fallback.
+- `src/facts.js`: generic graph/fact helpers over SQLite: book-scoped entities, chunk-linked evidence, evidence-linked relations/events, cached derived facts, and evidence-only fact-extraction prompt scaffolding. Keep it generic; do not hardcode romance-specific cards.
 - `src/ask.js`: Ask pipeline поверх локально найденных FTS snippets; строит evidence-only prompt, возвращает setup/evidence без provider key и не отправляет полный текст библиотеки.
 - `src/providerClient.js`: mockable OpenAI-compatible chat completion and embeddings scaffold с injectable `fetchImpl`; не логирует и не возвращает секреты.
 - `src/providerConfig.js`: безопасные provider defaults для будущих AI и embeddings вызовов; ключи только через env references, без сетевых вызовов.
@@ -22,6 +23,7 @@
 - `tests/serverApi.test.js`: node:test smoke для `/api/books`, `/api/index`, `/api/search`, `/api/ask`.
 - `tests/ask.test.js`: node:test для evidence-only prompt, no-key fallback и mockable provider client behavior.
 - `tests/embeddings.test.js`: node:test для chunk_embeddings schema/cache, embeddings config/client, cosine ranking и no-key semantic fallback.
+- `tests/facts.test.js`: node:test для generic fact graph helpers, evidence links, derived_fact upsert/query behavior и fact-extraction prompt scaffold.
 - `plan.md`: продуктовый план, его нужно держать в соответствии с реальной реализацией.
 
 ## Run And Validation
@@ -36,6 +38,7 @@
 - `/api/index` and `/api/search` require explicit `db` query parameter or `BOOKS_SELECTION_DB_PATH`; they must remain local, without AI/network calls and without reading API keys.
 - `/api/semantic-search` requires `db` and `q`; it returns `needs_embedding_provider_key` with setup info without calling the network when the embeddings provider key is absent, and otherwise ranks only cached SQLite vectors by local cosine similarity.
 - `/api/ask` тоже требует `db` и `q`; сначала ищет локальные FTS snippets. Если active provider key не настроен, возвращает `needs_provider_key` с evidence/setup и не вызывает сеть. Если ключ есть, отправляет только retrieved snippets/evidence в provider client, не полный текст библиотеки.
+- Fact graph helpers are storage-only/prompt-only scaffolding for later enrichment. Tests must not make real OpenRouter/Hermes/local-model calls; evidence rows should point back to book/chunk context, and derived facts should remain queryable by book/cycle/type.
 - Для machine-readable поведения используй общие constants из `src/constants.js` и не завязывай UI или тесты на точные fallback-строки backend.
 - UI intentionally single-file: вся клиентская логика, тексты и локализация лежат в `public/index.html` без frontend framework.
 

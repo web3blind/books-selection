@@ -26,6 +26,7 @@
 - SQLite schema, indexer and FTS endpoints delivered in commit `73ec214`.
 - Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `GET /api/ask?q=...&db=...`.
 - Embeddings cache / semantic scaffold increment delivered: durable `chunk_embeddings` table, embedding model config defaults, mockable OpenAI-compatible `/embeddings` client, local cosine ranking over cached vectors, no-key semantic setup fallback, and `GET /api/semantic-search?q=...&db=...` status endpoint.
+- Generic fact graph helper increment delivered: `src/facts.js` storage helpers for book-scoped entities, chunk-linked evidence, evidence-linked relations/events, derived fact upsert/query by book/cycle/type, plus an evidence-only fact-extraction prompt scaffold without model calls.
 
 ## Current Architecture
 
@@ -252,6 +253,7 @@ Ask Denis before:
    - add schema and helpers;
    - store entities/relations/events/derived facts with evidence links;
    - do not overfit to romance.
+   - Status: delivered as storage/prompt scaffold; no network/model extraction yet.
 
 8. **UI integration**
    - accessible controls for index/search/ask/provider status;

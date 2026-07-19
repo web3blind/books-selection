@@ -22,7 +22,15 @@ function initializeSearchDatabase(databasePath) {
   }
 
   const db = new sqlite.DatabaseSync(databasePath);
-  db.exec(createSchemaSql());
+  try {
+    db.exec(createSchemaSql());
+  } catch (error) {
+    if (!/no such column: fact_type/i.test(error.message || '')) {
+      throw error;
+    }
+    db.exec("ALTER TABLE derived_facts ADD COLUMN fact_type TEXT NOT NULL DEFAULT 'generic'");
+    db.exec(createSchemaSql());
+  }
   return db;
 }
 
