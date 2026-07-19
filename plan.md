@@ -31,6 +31,7 @@
 - Generic model-backed fact extraction increment delivered: `src/factExtractor.js` builds generic prompts from supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, uses injectable/mockable provider clients, upserts arbitrary `factKey`/`factType` results into `derived_facts`, and exposes a small `GET /api/extract-fact` setup/cache endpoint.
 - Minimal accessible UI controls increment delivered: `public/index.html` now exposes separate browser-persisted SQLite DB path input, a single prepare-index button that builds/updates SQLite FTS and attempts semantic cache setup, a multi-line question field, a single Find answer action, provider/setup live status, and list-based results/evidence rendering without a frontend framework.
 - Hybrid Ask retrieval increment delivered: `src/retrieval.js` combines local FTS snippets, optional cached semantic-vector hits, and cached derived facts with `fts`/`semantic`/`fact` source labels, dedupe/caps, graceful no-key semantic fallback, and evidence rows compatible with `answerLibraryQuestion`.
+- OpenRouter budget guard delivered: provider calls check OpenRouter `/credits` before chat and embeddings requests, default to a `$1` process-session spend cap, support `BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD` and optional baseline env override, and block the provider request when the cap is reached.
 
 ## Current Architecture
 

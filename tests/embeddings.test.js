@@ -142,10 +142,13 @@ test('embedQueryIfConfigured uses mocked embeddings provider when key is configu
   const result = await embedQueryIfConfigured({
     query: 'семантический фонарь',
     env: { OPENROUTER_API_KEY: 'secret-key' },
-    fetchImpl: async () => ({
+    fetchImpl: async (url) => ({
       ok: true,
       status: 200,
       async json() {
+        if (String(url).endsWith('/credits')) {
+          return { data: { total_credits: 10, total_usage: 0.2 } };
+        }
         return { data: [{ embedding: [0.7, 0.2] }] };
       },
     }),

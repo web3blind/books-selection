@@ -1,3 +1,5 @@
+const { checkProviderBudget } = require('./providerBudget');
+
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
 }
@@ -19,7 +21,13 @@ function parseJsonContent(content) {
   return { answer: content, confidence: 'unknown' };
 }
 
-function createOpenAiCompatibleClient({ provider, apiKey, fetchImpl = globalThis.fetch }) {
+function createOpenAiCompatibleClient({
+  provider,
+  apiKey,
+  fetchImpl = globalThis.fetch,
+  budgetGuard = checkProviderBudget,
+  budgetState,
+}) {
   if (!provider || !provider.baseUrl || !provider.model) {
     throw new Error('OpenAI-compatible provider requires baseUrl and model.');
   }
@@ -28,8 +36,16 @@ function createOpenAiCompatibleClient({ provider, apiKey, fetchImpl = globalThis
     throw new Error('OpenAI-compatible provider requires fetch support or injected fetchImpl.');
   }
 
+  async function assertBudgetAllowsRequest() {
+    if (typeof budgetGuard !== 'function') {
+      return { status: 'disabled' };
+    }
+    return budgetGuard({ provider, apiKey, fetchImpl, budgetState });
+  }
+
   return {
     async chatCompletion({ messages, temperature = 0.2 }) {
+      await assertBudgetAllowsRequest();
       const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -57,6 +73,7 @@ function createOpenAiCompatibleClient({ provider, apiKey, fetchImpl = globalThis
         throw new Error('OpenAI-compatible provider requires embeddingModel for embeddings.');
       }
 
+      await assertBudgetAllowsRequest();
       const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/embeddings`, {
         method: 'POST',
         headers: {

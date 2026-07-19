@@ -43,5 +43,19 @@ test('api key lookup reads configured environment variable without exposing all 
   const result = getApiKey(config.providers.openrouter, { OPENROUTER_API_KEY: 'secret-value', OTHER_SECRET: 'do-not-leak' });
 
   assert.equal(result, 'secret-value');
-  assert.deepEqual(Object.keys(config.providers.openrouter).sort(), ['apiKeyEnv', 'baseUrl', 'embeddingModel', 'model', 'type'].sort());
+  assert.deepEqual(Object.keys(config.providers.openrouter).sort(), ['apiKeyEnv', 'baseUrl', 'budget', 'embeddingModel', 'model', 'type'].sort());
+  assert.equal(config.providers.openrouter.budget.maxSessionUsageUsd, 1);
+  assert.equal(config.providers.openrouter.budget.maxSessionUsageEnv, 'BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD');
+});
+
+test('provider config lets env lower or raise the OpenRouter session budget without exposing secrets', () => {
+  const config = loadProviderConfig({}, {
+    OPENROUTER_API_KEY: 'secret-value',
+    BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD: '2',
+    BOOKS_SELECTION_OPENROUTER_USAGE_BASELINE_USD: '10.5',
+  });
+
+  assert.equal(config.providers.openrouter.budget.maxSessionUsageUsd, 2);
+  assert.equal(config.providers.openrouter.budget.baselineUsageUsd, 10.5);
+  assert.doesNotMatch(JSON.stringify(config), /secret-value/);
 });
