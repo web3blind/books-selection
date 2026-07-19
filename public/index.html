@@ -8,9 +8,12 @@
     body { font-family: sans-serif; line-height: 1.5; max-width: 980px; margin: 0 auto; padding: 16px; }
     label, input, button, select { font: inherit; }
     input, select { width: 100%; padding: 8px; margin: 6px 0 12px; }
-    button { padding: 8px 12px; margin-right: 8px; }
+    button { padding: 8px 12px; margin-right: 8px; margin-bottom: 8px; }
      .toolbar { max-width: 220px; margin-bottom: 16px; }
     .meta { color: #444; margin: 8px 0 16px; }
+    .panel { border: 1px solid #ddd; padding: 12px; margin: 20px 0; border-radius: 6px; }
+    .panel h2 { font-size: 1.15rem; margin: 0 0 8px; }
+    .actions { margin: 8px 0; }
     .book { border: 1px solid #ccc; padding: 12px; margin: 0 0 12px; border-radius: 6px; }
     .book h2 { font-size: 1.1rem; margin: 0 0 8px; }
     .muted { color: #555; }
@@ -49,6 +52,30 @@
     <label id="showReadyOnlyLabel"><input id="showReadyOnly" type="checkbox" checked> <span id="showReadyOnlyText">Показывать только книги с аннотацией и без ошибок</span></label>
   </div>
 
+  <section class="panel" aria-labelledby="aiSearchTitle">
+    <h2 id="aiSearchTitle">Локальный индекс и AI-поиск</h2>
+    <p id="aiSearchIntro" class="meta">FTS-поиск работает локально по SQLite. Ask использует только найденные фрагменты и покажет setup-статус, если provider key не настроен.</p>
+
+    <label id="dbPathLabel" for="dbPath">Путь к SQLite базе</label>
+    <input id="dbPath" name="dbPath" type="text" placeholder="Например: /home/denis/books-selection.sqlite" autocomplete="off">
+
+    <div class="actions">
+      <button id="buildIndexButton" type="button">Построить/обновить FTS index</button>
+      <button id="embedIndexButton" type="button">Опционально: подготовить semantic embeddings</button>
+    </div>
+
+    <label id="ftsQuestionLabel" for="ftsQuestion">Поисковый запрос или вопрос</label>
+    <input id="ftsQuestion" name="ftsQuestion" type="text" placeholder="Например: где герои путешествуют вместе">
+
+    <div class="actions">
+      <button id="localSearchButton" type="button">Локальный FTS поиск</button>
+      <button id="askButton" type="button">Ask по найденным фрагментам</button>
+    </div>
+
+    <div id="aiStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="aiResults" aria-live="polite"></div>
+  </section>
+
   <div id="status" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
   <main id="results"></main>
 
@@ -61,6 +88,18 @@
     const rootInput = document.getElementById('root');
     const searchLabel = document.getElementById('searchLabel');
     const searchInput = document.getElementById('search');
+    const aiSearchTitle = document.getElementById('aiSearchTitle');
+    const aiSearchIntro = document.getElementById('aiSearchIntro');
+    const dbPathLabel = document.getElementById('dbPathLabel');
+    const dbPathInput = document.getElementById('dbPath');
+    const buildIndexButton = document.getElementById('buildIndexButton');
+    const embedIndexButton = document.getElementById('embedIndexButton');
+    const ftsQuestionLabel = document.getElementById('ftsQuestionLabel');
+    const ftsQuestionInput = document.getElementById('ftsQuestion');
+    const localSearchButton = document.getElementById('localSearchButton');
+    const askButton = document.getElementById('askButton');
+    const aiStatusNode = document.getElementById('aiStatus');
+    const aiResultsNode = document.getElementById('aiResults');
     const pickFolderButton = document.getElementById('pickFolderButton');
     const loadButton = document.getElementById('loadButton');
     const reloadButton = document.getElementById('reloadButton');
@@ -71,17 +110,23 @@
     const resultsNode = document.getElementById('results');
 
     const storageKey = 'books-selection:last-root';
+    const dbStorageKey = 'books-selection:last-db';
     const languageKey = 'books-selection:language';
     const queryParams = new URLSearchParams(location.search);
     const queryRoot = queryParams.get('root') || '';
     const queryLang = queryParams.get('lang') || '';
     const savedRoot = localStorage.getItem(storageKey) || '';
+    const savedDbPath = localStorage.getItem(dbStorageKey) || '';
     const savedLanguage = localStorage.getItem(languageKey) || 'en';
 
     if (queryRoot) {
       rootInput.value = queryRoot;
     } else if (savedRoot) {
       rootInput.value = savedRoot;
+    }
+
+    if (savedDbPath) {
+      dbPathInput.value = savedDbPath;
     }
 
     const messages = {
@@ -97,6 +142,35 @@
         searchLabel: 'Поиск по папке, названию и аннотации',
         searchPlaceholder: 'Например: попаданец, гоблины, клан',
         showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
+        aiSearchTitle: 'Локальный индекс и AI-поиск',
+        aiSearchIntro: 'FTS-поиск работает локально по SQLite. Ask использует только найденные фрагменты и покажет setup-статус, если provider key не настроен.',
+        dbPathLabel: 'Путь к SQLite базе',
+        dbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
+        buildIndexButton: 'Построить/обновить FTS index',
+        embedIndexButton: 'Опционально: подготовить semantic embeddings',
+        ftsQuestionLabel: 'Поисковый запрос или вопрос',
+        ftsQuestionPlaceholder: 'Например: где герои путешествуют вместе',
+        localSearchButton: 'Локальный FTS поиск',
+        askButton: 'Ask по найденным фрагментам',
+        noDbPath: 'Укажи путь к SQLite базе для локального индекса.',
+        noAiQuery: 'Введи поисковый запрос или вопрос.',
+        indexing: 'Строю или обновляю локальный FTS index...',
+        embedIndexing: 'Проверяю optional semantic embeddings setup...',
+        searchingFts: 'Ищу в локальном FTS index...',
+        asking: 'Собираю evidence и запускаю Ask mode...',
+        indexDone: (result) => `Индекс готов: обработано ${result.total}, обновлено ${result.indexed}, пропущено ${result.skipped}, ошибок ${result.errors}.`,
+        embedDone: (result) => result.status === 'needs_embedding_provider_key'
+          ? `Semantic setup нужен: добавь ${result.setup.apiKeyEnv} для provider ${result.setup.provider}. Embedded: ${result.embedded}, осталось: ${result.remaining}.`
+          : `Semantic embeddings готовы: добавлено ${result.embedded}, пропущено ${result.skipped}, осталось ${result.remaining}.`,
+        searchDone: (count) => `Найдено FTS результатов: ${count}.`,
+        askDone: 'Ask mode вернул ответ.',
+        providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
+        resultHeading: 'Результаты',
+        evidenceHeading: 'Доказательные фрагменты',
+        answerHeading: 'Ответ',
+        checkedHeading: 'Проверенные книги',
+        providerStatusHeading: 'Provider/setup status',
+        confidenceLabel: 'Уверенность:',
         statusShown: (shown, total, hidden) => `Показано ${shown} из ${total}, скрыто ${hidden}`,
         titleLabel: 'Название:',
         fileLabel: 'Файл:',
@@ -127,6 +201,35 @@
         searchLabel: 'Search by folder, title, and annotation',
         searchPlaceholder: 'For example: goblins, clan, portal fantasy',
         showReadyOnly: 'Show only books with annotations and without errors',
+        aiSearchTitle: 'Local index and AI search',
+        aiSearchIntro: 'FTS search works locally in SQLite. Ask uses only retrieved snippets and shows setup status when a provider key is not configured.',
+        dbPathLabel: 'SQLite database path',
+        dbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
+        buildIndexButton: 'Build/update FTS index',
+        embedIndexButton: 'Optional: prepare semantic embeddings',
+        ftsQuestionLabel: 'Search query or question',
+        ftsQuestionPlaceholder: 'For example: where do the heroes travel together',
+        localSearchButton: 'Local FTS search',
+        askButton: 'Ask over retrieved snippets',
+        noDbPath: 'Enter the SQLite database path for the local index.',
+        noAiQuery: 'Enter a search query or question.',
+        indexing: 'Building or updating the local FTS index...',
+        embedIndexing: 'Checking optional semantic embeddings setup...',
+        searchingFts: 'Searching the local FTS index...',
+        asking: 'Collecting evidence and running Ask mode...',
+        indexDone: (result) => `Index ready: processed ${result.total}, updated ${result.indexed}, skipped ${result.skipped}, errors ${result.errors}.`,
+        embedDone: (result) => result.status === 'needs_embedding_provider_key'
+          ? `Semantic setup needed: add ${result.setup.apiKeyEnv} for provider ${result.setup.provider}. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
+          : `Semantic embeddings ready: embedded ${result.embedded}, skipped ${result.skipped}, remaining ${result.remaining}.`,
+        searchDone: (count) => `FTS results found: ${count}.`,
+        askDone: 'Ask mode returned a response.',
+        providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
+        resultHeading: 'Results',
+        evidenceHeading: 'Evidence snippets',
+        answerHeading: 'Answer',
+        checkedHeading: 'Checked books',
+        providerStatusHeading: 'Provider/setup status',
+        confidenceLabel: 'Confidence:',
         statusShown: (shown, total, hidden) => `Showing ${shown} of ${total}, hidden ${hidden}`,
         titleLabel: 'Title:',
         fileLabel: 'File:',
@@ -186,6 +289,16 @@
       searchLabel.textContent = t('searchLabel');
       searchInput.placeholder = t('searchPlaceholder');
       showReadyOnlyText.textContent = t('showReadyOnly');
+      aiSearchTitle.textContent = t('aiSearchTitle');
+      aiSearchIntro.textContent = t('aiSearchIntro');
+      dbPathLabel.textContent = t('dbPathLabel');
+      dbPathInput.placeholder = t('dbPathPlaceholder');
+      buildIndexButton.textContent = t('buildIndexButton');
+      embedIndexButton.textContent = t('embedIndexButton');
+      ftsQuestionLabel.textContent = t('ftsQuestionLabel');
+      ftsQuestionInput.placeholder = t('ftsQuestionPlaceholder');
+      localSearchButton.textContent = t('localSearchButton');
+      askButton.textContent = t('askButton');
       localStorage.setItem(languageKey, currentLanguage);
     }
 
@@ -193,11 +306,80 @@
       statusNode.textContent = message;
     }
 
+    function setAiStatus(message) {
+      aiStatusNode.textContent = message;
+    }
+
     function escapeHtml(value) {
-      return value
+      return String(value || '')
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;');
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function getDbPath() {
+      const dbPath = dbPathInput.value.trim();
+      if (dbPath) {
+        localStorage.setItem(dbStorageKey, dbPath);
+      }
+      return dbPath;
+    }
+
+    function renderSetupStatus(setup) {
+      if (!setup) return '';
+      const items = [
+        setup.provider ? `Provider: ${setup.provider}` : '',
+        setup.model ? `Model: ${setup.model}` : '',
+        setup.apiKeyEnv ? `API key env: ${setup.apiKeyEnv}` : '',
+      ].filter(Boolean);
+      return `
+        <h3>${escapeHtml(t('providerStatusHeading'))}</h3>
+        <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      `;
+    }
+
+    function renderFtsResults(results) {
+      aiResultsNode.innerHTML = `
+        <h3>${escapeHtml(t('resultHeading'))}</h3>
+        <ul>${results.map((item) => `
+          <li>
+            <strong>${escapeHtml(item.title || item.folder_name || item.file_name || 'Book')}</strong>
+            <div class="muted">${escapeHtml(item.cycle_name || item.folder_name || item.cycle || '')}</div>
+            <p>${escapeHtml(item.snippet || item.text || '')}</p>
+          </li>
+        `).join('')}</ul>
+      `;
+    }
+
+    function renderAskResult(result) {
+      const setup = result.setup || null;
+      const evidence = result.evidence || [];
+      const checkedBooks = (result.checked && result.checked.books) || [];
+      const answer = result.answer || result.message || '';
+      aiResultsNode.innerHTML = `
+        ${renderSetupStatus(setup)}
+        ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
+        ${result.confidence ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
+        <h3>${escapeHtml(t('evidenceHeading'))}</h3>
+        <ul>${evidence.map((item) => `
+          <li>
+            <strong>${escapeHtml(item.title || item.folder_name || item.book || 'Book')}</strong>
+            <div class="muted">${escapeHtml(item.cycle_name || item.folder_name || item.cycle || '')}</div>
+            <p>${escapeHtml(item.snippet || item.text || item.excerpt || '')}</p>
+          </li>
+        `).join('') || `<li>${escapeHtml(t('nothingFound'))}</li>`}</ul>
+        <h3>${escapeHtml(t('checkedHeading'))}</h3>
+        <ul>${checkedBooks.map((book) => `<li>${escapeHtml(book)}</li>`).join('') || `<li>${escapeHtml(t('nothingFound'))}</li>`}</ul>
+      `;
     }
 
     function localizeBook(book) {
@@ -301,6 +483,104 @@
       renderBooks();
     }
 
+    async function buildIndex() {
+      const root = rootInput.value.trim();
+      const dbPath = getDbPath();
+      if (!root) {
+        setAiStatus(t('noRoot'));
+        return;
+      }
+      if (!dbPath) {
+        setAiStatus(t('noDbPath'));
+        return;
+      }
+
+      setAiStatus(t('indexing'));
+      aiResultsNode.innerHTML = '';
+      try {
+        const data = await fetchJson(`/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`, { method: 'POST' });
+        setAiStatus(t('indexDone', data.result));
+        aiResultsNode.innerHTML = `
+          <h3>${escapeHtml(t('resultHeading'))}</h3>
+          <ul>
+            <li>DB: ${escapeHtml(data.db)}</li>
+            <li>Root: ${escapeHtml(data.root)}</li>
+          </ul>
+        `;
+      } catch (error) {
+        setAiStatus(error.message);
+      }
+    }
+
+    async function embedIndex() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setAiStatus(t('noDbPath'));
+        return;
+      }
+
+      setAiStatus(t('embedIndexing'));
+      aiResultsNode.innerHTML = '';
+      try {
+        const data = await fetchJson(`/api/embed-index?db=${encodeURIComponent(dbPath)}&limit=100&batchSize=16`, { method: 'POST' });
+        setAiStatus(t('embedDone', data.result));
+        aiResultsNode.innerHTML = renderSetupStatus(data.result.setup);
+      } catch (error) {
+        setAiStatus(error.message);
+      }
+    }
+
+    async function runLocalSearch() {
+      const dbPath = getDbPath();
+      const query = ftsQuestionInput.value.trim();
+      if (!dbPath) {
+        setAiStatus(t('noDbPath'));
+        return;
+      }
+      if (!query) {
+        setAiStatus(t('noAiQuery'));
+        return;
+      }
+
+      setAiStatus(t('searchingFts'));
+      aiResultsNode.innerHTML = '';
+      try {
+        const data = await fetchJson(`/api/search?q=${encodeURIComponent(query)}&db=${encodeURIComponent(dbPath)}`);
+        setAiStatus(t('searchDone', data.count));
+        renderFtsResults(data.results || []);
+      } catch (error) {
+        setAiStatus(error.message);
+      }
+    }
+
+    async function askLibrary() {
+      const dbPath = getDbPath();
+      const query = ftsQuestionInput.value.trim();
+      if (!dbPath) {
+        setAiStatus(t('noDbPath'));
+        return;
+      }
+      if (!query) {
+        setAiStatus(t('noAiQuery'));
+        return;
+      }
+
+      setAiStatus(t('asking'));
+      aiResultsNode.innerHTML = '';
+      try {
+        const data = await fetchJson(`/api/ask?q=${encodeURIComponent(query)}&db=${encodeURIComponent(dbPath)}`);
+        const result = data.result || {};
+        if (result.status === 'needs_provider_key' && result.setup) {
+          setAiStatus(t('providerNeeded', result.setup));
+        } else {
+          setAiStatus(t('askDone'));
+        }
+        renderAskResult(result);
+      } catch (error) {
+        setAiStatus(error.message);
+      }
+    }
+
     pickFolderButton.addEventListener('click', async () => {
       if (window.showDirectoryPicker) {
         setStatus(t('pickerHintModern'));
@@ -331,6 +611,10 @@
 
     loadButton.addEventListener('click', loadBooks);
     reloadButton.addEventListener('click', loadBooks);
+    buildIndexButton.addEventListener('click', buildIndex);
+    embedIndexButton.addEventListener('click', embedIndex);
+    localSearchButton.addEventListener('click', runLocalSearch);
+    askButton.addEventListener('click', askLibrary);
     searchInput.addEventListener('input', renderBooks);
     showReadyOnlyInput.addEventListener('change', renderBooks);
     languageSelect.addEventListener('change', () => {

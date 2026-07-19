@@ -29,6 +29,7 @@
 - Chunk embedding indexing increment delivered: `src/embeddingIndexer.js` selects chunks missing the current embeddings provider/model/content hash, returns `needs_embedding_provider_key` without network when the key is absent, writes mocked-provider vectors into `chunk_embeddings`, supports changed chunk re-embedding and bounded `limit`/`batchSize` runs, and exposes `POST /api/embed-index?db=...&limit=...&batchSize=...`.
 - Generic fact graph helper increment delivered: `src/facts.js` storage helpers for book-scoped entities, chunk-linked evidence, evidence-linked relations/events, derived fact upsert/query by book/cycle/type, plus an evidence-only fact-extraction prompt scaffold.
 - Generic model-backed fact extraction increment delivered: `src/factExtractor.js` builds generic prompts from supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, uses injectable/mockable provider clients, upserts arbitrary `factKey`/`factType` results into `derived_facts`, and exposes a small `GET /api/extract-fact` setup/cache endpoint.
+- Minimal accessible UI controls increment delivered: `public/index.html` now exposes separate browser-persisted SQLite DB path input, build/update index, local FTS search, Ask over retrieved evidence, optional semantic embeddings setup, provider/setup live status, and list-based results/evidence rendering without a frontend framework.
 
 ## Current Architecture
 
@@ -262,6 +263,7 @@ Ask Denis before:
 8. **UI integration**
    - accessible controls for index/search/ask/provider status;
    - preserve existing annotation workflow.
+   - Status: minimal accessible controls delivered for local FTS index/search, Ask setup/evidence, and optional semantic embedding setup; graph/fact UI remains intentionally out of scope.
 
 9. **Documentation**
    - README explains indexing, privacy, OpenRouter/local/Hermes provider modes, and costs.

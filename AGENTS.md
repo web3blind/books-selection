@@ -28,6 +28,7 @@
 - `tests/embeddingIndexer.test.js`: node:test для bounded chunk embedding cache population with mocked provider/no-key behavior; never make real provider calls.
 - `tests/facts.test.js`: node:test для generic fact graph helpers, evidence links, derived_fact upsert/query behavior и fact-extraction prompt scaffold.
 - `tests/factExtractor.test.js`: node:test для model-backed generic fact extraction service с mocked provider/no-key behavior и derived_facts cache upsert.
+- `tests/uiStatic.test.js`: static smoke assertions for the single-file UI: accessible labels/ids for index/search/Ask controls and no accidental API-key-looking values.
 - `plan.md`: продуктовый план, его нужно держать в соответствии с реальной реализацией.
 
 ## Run And Validation
@@ -47,6 +48,7 @@
 - Fact graph helpers are storage-only/prompt-only scaffolding for later enrichment. Tests must not make real OpenRouter/Hermes/local-model calls; evidence rows should point back to book/chunk context, and derived facts should remain queryable by book/cycle/type.
 - Для machine-readable поведения используй общие constants из `src/constants.js` и не завязывай UI или тесты на точные fallback-строки backend.
 - UI intentionally single-file: вся клиентская логика, тексты и локализация лежат в `public/index.html` без frontend framework.
+- AI search UI keeps the SQLite DB path separate from the books root path and persists it with browser `localStorage` key `books-selection:last-db`. Results/evidence should stay as accessible lists with normal labels/buttons/status regions, not custom widgets or tables.
 
 ## Change Rules
 - Если меняешь формат ответа `/api/books`, сразу проверяй совместимость с рендерингом и фильтрами в `public/index.html`.
