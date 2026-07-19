@@ -23,6 +23,9 @@
 - Простой доступный web UI с поиском, reload, выбором языка RU/EN и fallback на ручной ввод пути.
 - Базовые тесты на FB2 parsing и scan behavior.
 
+- SQLite schema, indexer and FTS endpoints delivered in commit `73ec214`.
+- Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `GET /api/ask?q=...&db=...`.
+
 ## Current Architecture
 
 - `src/fb2.js`: parsing FB2/XML, decoding encoding, чтение `.fb2.zip`.

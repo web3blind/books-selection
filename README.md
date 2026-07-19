@@ -67,9 +67,10 @@ Annotation browsing still works through `/api/books` without a database. For loc
 BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210
 curl -X POST "http://127.0.0.1:3210/api/index?root=/path/to/Books&db=/tmp/books-selection.sqlite"
 curl "http://127.0.0.1:3210/api/search?q=фонарь&db=/tmp/books-selection.sqlite"
+curl "http://127.0.0.1:3210/api/ask?q=фонарь&db=/tmp/books-selection.sqlite"
 ```
 
-The index stores extracted FB2 body chunks locally and uses SQLite FTS5 only; these endpoints do not make AI/network calls and do not read provider API keys.
+The index stores extracted FB2 body chunks locally and uses SQLite FTS5. `/api/search` does not make AI/network calls and does not read provider API keys. `/api/ask` first retrieves local FTS evidence and, if the active provider key such as `OPENROUTER_API_KEY` is not configured, returns candidate evidence plus setup status instead of calling the network. When a key is configured, Ask mode sends only retrieved snippets/evidence to the OpenAI-compatible chat provider scaffold, not the full library text.
 
 ## Folder selection / Выбор папки
 
@@ -104,11 +105,11 @@ npm start -- "C:\path\to\Books" 3210
 
 - if an FB2 file has no annotation, the app shows a fallback message
 - if a folder has no `.fb2` or `.fb2.zip`, it can be hidden by the default filter
-- the project is still local-first: annotation browsing requires no database, cloud, or AI API; AI-search foundation adds local SQLite/FTS5 modules and provider config scaffolding without network calls
+- the project is still local-first: annotation browsing requires no database, cloud, or AI API; AI-search foundation adds local SQLite/FTS5 modules, evidence-only Ask mode, and provider config/client scaffolding; Ask mode falls back to local evidence when no provider key is configured
 
 - если в FB2 нет аннотации, приложение показывает fallback-сообщение
 - если в папке нет `.fb2` или `.fb2.zip`, её можно скрыть фильтром по умолчанию
-- проект всё ещё локальный: annotation browsing не требует базы, облака или AI API; AI-search foundation добавляет только конфигурационные и SQLite/FTS5 scaffold-модули без сетевых вызовов
+- проект всё ещё локальный: annotation browsing не требует базы, облака или AI API; AI-search foundation добавляет SQLite/FTS5, evidence-only Ask mode и provider config/client scaffold; Ask mode возвращает локальные доказательства, если provider key не настроен
 
 ## License / Лицензия
 

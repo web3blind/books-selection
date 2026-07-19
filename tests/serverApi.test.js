@@ -72,14 +72,14 @@ function waitForServer(child) {
   });
 }
 
-test('server preserves /api/books and exposes local index/search endpoints', async () => {
+test('server preserves /api/books and exposes local index/search/ask endpoints', async () => {
   const root = await createTempRoot();
   await writeSampleBook(root);
   const dbPath = path.join(root, 'search.sqlite');
   const port = 33000 + (process.pid % 1000);
   const child = spawn(process.execPath, ['src/server.js', root, String(port)], {
     cwd: process.cwd(),
-    env: { ...process.env, BOOKS_SELECTION_NO_OPEN: '1' },
+    env: { ...process.env, BOOKS_SELECTION_NO_OPEN: '1', OPENROUTER_API_KEY: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -89,6 +89,7 @@ test('server preserves /api/books and exposes local index/search endpoints', asy
     const books = await requestJson(port, 'GET', `/api/books?root=${encodeURIComponent(root)}`);
     const indexed = await requestJson(port, 'POST', `/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`);
     const hits = await requestJson(port, 'GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
+    const answer = await requestJson(port, 'GET', `/api/ask?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
 
     assert.equal(books.statusCode, 200);
     assert.equal(books.body.books[0].title, 'API Indexed Book');
@@ -99,6 +100,11 @@ test('server preserves /api/books and exposes local index/search endpoints', asy
     assert.equal(hits.body.count, 1);
     assert.equal(hits.body.results[0].title, 'API Indexed Book');
     assert.match(hits.body.results[0].text, /фонарь/);
+    assert.equal(answer.statusCode, 200);
+    assert.equal(answer.body.query, 'Где есть фонарь?');
+    assert.equal(answer.body.result.status, 'needs_provider_key');
+    assert.equal(answer.body.result.evidence.length, 1);
+    assert.equal(answer.body.result.checked.books[0], 'API Indexed Book');
   } finally {
     child.kill();
     await fs.rm(root, { recursive: true, force: true });
