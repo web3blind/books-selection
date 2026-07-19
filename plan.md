@@ -26,7 +26,8 @@
 - SQLite schema, indexer and FTS endpoints delivered in commit `73ec214`.
 - Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `GET /api/ask?q=...&db=...`.
 - Embeddings cache / semantic scaffold increment delivered: durable `chunk_embeddings` table, embedding model config defaults, mockable OpenAI-compatible `/embeddings` client, local cosine ranking over cached vectors, no-key semantic setup fallback, and `GET /api/semantic-search?q=...&db=...` status endpoint.
-- Generic fact graph helper increment delivered: `src/facts.js` storage helpers for book-scoped entities, chunk-linked evidence, evidence-linked relations/events, derived fact upsert/query by book/cycle/type, plus an evidence-only fact-extraction prompt scaffold without model calls.
+- Generic fact graph helper increment delivered: `src/facts.js` storage helpers for book-scoped entities, chunk-linked evidence, evidence-linked relations/events, derived fact upsert/query by book/cycle/type, plus an evidence-only fact-extraction prompt scaffold.
+- Generic model-backed fact extraction increment delivered: `src/factExtractor.js` builds generic prompts from supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, uses injectable/mockable provider clients, upserts arbitrary `factKey`/`factType` results into `derived_facts`, and exposes a small `GET /api/extract-fact` setup/cache endpoint.
 
 ## Current Architecture
 
@@ -253,7 +254,7 @@ Ask Denis before:
    - add schema and helpers;
    - store entities/relations/events/derived facts with evidence links;
    - do not overfit to romance.
-   - Status: delivered as storage/prompt scaffold; no network/model extraction yet.
+   - Status: delivered as storage/prompt scaffold plus generic model-backed extraction/cache service; tests use mocked provider clients only and no real network calls.
 
 8. **UI integration**
    - accessible controls for index/search/ask/provider status;

@@ -21,7 +21,7 @@ Use it when you have a large folder with book series and want to quickly see whi
 - can try folder selection in the browser, with manual path fallback
 - remembers the last successful folder path in the browser
 - supports English and Russian UI, with English as the default
-- includes first AI-search foundation modules: provider config defaults, FB2 body extraction/chunking helpers, a local SQLite schema/adapter scaffold with FTS5/fact tables, indexing service, minimal local FTS endpoints, embeddings cache schema/helpers, generic evidence-linked fact graph helpers, and a semantic-search setup endpoint
+- includes first AI-search foundation modules: provider config defaults, FB2 body extraction/chunking helpers, a local SQLite schema/adapter scaffold with FTS5/fact tables, indexing service, minimal local FTS endpoints, embeddings cache schema/helpers, generic evidence-linked fact graph helpers, generic model-backed fact extraction with derived-fact caching, and semantic/fact setup endpoints
 
 - сканирует корневую папку с книжными подпапками
 - ищет `.fb2` и `.fb2.zip` внутри каждой папки
@@ -69,9 +69,10 @@ curl -X POST "http://127.0.0.1:3210/api/index?root=/path/to/Books&db=/tmp/books-
 curl "http://127.0.0.1:3210/api/search?q=фонарь&db=/tmp/books-selection.sqlite"
 curl "http://127.0.0.1:3210/api/semantic-search?q=фонарь&db=/tmp/books-selection.sqlite"
 curl "http://127.0.0.1:3210/api/ask?q=фонарь&db=/tmp/books-selection.sqlite"
+curl "http://127.0.0.1:3210/api/extract-fact?q=фонарь&bookId=1&factKey=has_lantern&factType=plot_trait&db=/tmp/books-selection.sqlite"
 ```
 
-The index stores extracted FB2 body chunks locally and uses SQLite FTS5. `/api/search` does not make AI/network calls and does not read provider API keys. `/api/semantic-search` is the first embeddings scaffold: it uses cached vectors from local SQLite when a query embedding can be produced; if no embeddings provider key is configured, it returns `needs_embedding_provider_key` with setup fields instead of calling the network. `/api/ask` first retrieves local FTS evidence and, if the active provider key such as `OPENROUTER_API_KEY` is not configured, returns candidate evidence plus setup status instead of calling the network. When a key is configured, Ask mode sends only retrieved snippets/evidence to the OpenAI-compatible chat provider scaffold, not the full library text. `src/facts.js` adds the first generic fact graph helper layer for later enrichment: book-scoped entities, evidence rows linked to chunks, evidence-linked relations/events, and cached `derived_facts` queryable by book/cycle/type. The helper layer is generic and does not hardcode romance-specific cards.
+The index stores extracted FB2 body chunks locally and uses SQLite FTS5. `/api/search` does not make AI/network calls and does not read provider API keys. `/api/semantic-search` is the first embeddings scaffold: it uses cached vectors from local SQLite when a query embedding can be produced; if no embeddings provider key is configured, it returns `needs_embedding_provider_key` with setup fields instead of calling the network. `/api/ask` first retrieves local FTS evidence and, if the active provider key such as `OPENROUTER_API_KEY` is not configured, returns candidate evidence plus setup status instead of calling the network. When a key is configured, Ask mode sends only retrieved snippets/evidence to the OpenAI-compatible chat provider scaffold, not the full library text. `src/facts.js` adds the generic fact graph helper layer for enrichment: book-scoped entities, evidence rows linked to chunks, evidence-linked relations/events, and cached `derived_facts` queryable by book/cycle/type. `src/factExtractor.js` adds a generic model-backed extraction service plus `/api/extract-fact`; it accepts arbitrary `factKey`/`factType`, sends only supplied evidence excerpts/snippets, and upserts model results into `derived_facts`. If no provider key is configured, it returns `needs_provider_key` with setup fields and does not call the network. The helper and extraction layers are generic and do not hardcode romance-specific cards.
 
 ## Folder selection / Выбор папки
 

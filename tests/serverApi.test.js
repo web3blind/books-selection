@@ -72,7 +72,7 @@ function waitForServer(child) {
   });
 }
 
-test('server preserves /api/books and exposes local index/search/ask endpoints', async () => {
+test('server preserves /api/books and exposes local index/search/ask/fact endpoints', async () => {
   const root = await createTempRoot();
   await writeSampleBook(root);
   const dbPath = path.join(root, 'search.sqlite');
@@ -90,6 +90,7 @@ test('server preserves /api/books and exposes local index/search/ask endpoints',
     const indexed = await requestJson(port, 'POST', `/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`);
     const hits = await requestJson(port, 'GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
     const answer = await requestJson(port, 'GET', `/api/ask?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
+    const extracted = await requestJson(port, 'GET', `/api/extract-fact?q=${encodeURIComponent('Есть ли фонарь?')}&bookId=1&factKey=${encodeURIComponent('has_lantern')}&factType=${encodeURIComponent('plot_trait')}&db=${encodeURIComponent(dbPath)}`);
     const semantic = await requestJson(port, 'GET', `/api/semantic-search?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
 
     assert.equal(books.statusCode, 200);
@@ -106,6 +107,13 @@ test('server preserves /api/books and exposes local index/search/ask endpoints',
     assert.equal(answer.body.result.status, 'needs_provider_key');
     assert.equal(answer.body.result.evidence.length, 1);
     assert.equal(answer.body.result.checked.books[0], 'API Indexed Book');
+    assert.equal(extracted.statusCode, 200);
+    assert.equal(extracted.body.query, 'Есть ли фонарь?');
+    assert.equal(extracted.body.result.status, 'needs_provider_key');
+    assert.equal(extracted.body.result.factKey, 'has_lantern');
+    assert.equal(extracted.body.result.factType, 'plot_trait');
+    assert.equal(extracted.body.result.evidence.length, 1);
+    assert.equal(extracted.body.result.setup.apiKeyEnv, 'OPENROUTER_API_KEY');
     assert.equal(semantic.statusCode, 200);
     assert.equal(semantic.body.query, 'Где есть фонарь?');
     assert.equal(semantic.body.result.status, 'needs_embedding_provider_key');

@@ -4,8 +4,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
-const { answerLibraryQuestion } = require('./ask');
+const { answerLibraryQuestion, createFtsQueryFromQuestion } = require('./ask');
 const { semanticSearchIfConfigured } = require('./embeddings');
+const { extractFactFromEvidence } = require('./factExtractor');
 const { indexLibrary, searchChunks } = require('./indexer');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
@@ -142,6 +143,38 @@ const server = http.createServer(async (request, response) => {
       }
 
       const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({ db, query }));
+      return sendJson(response, 200, { query, result });
+    }
+
+    if (url.pathname === '/api/extract-fact') {
+      const query = url.searchParams.get('q') || '';
+      const databasePath = getDbPath(url);
+      const bookId = Number(url.searchParams.get('bookId') || 0);
+      const factKey = url.searchParams.get('factKey') || '';
+      const factType = url.searchParams.get('factType') || 'generic';
+
+      if (!query.trim()) {
+        return sendJson(response, 400, { error: 'Нужен вопрос q.' });
+      }
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+
+      if (!bookId) {
+        return sendJson(response, 400, { error: 'Нужен числовой bookId.' });
+      }
+
+      if (!factKey.trim()) {
+        return sendJson(response, 400, { error: 'Нужен factKey.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, async (db) => {
+        const retrievalQuery = createFtsQueryFromQuestion(query);
+        const evidenceRows = searchChunks(db, retrievalQuery, { limit: 12 })
+          .filter((row) => row.book_id === bookId);
+        return extractFactFromEvidence({ db, bookId, factKey, factType, question: query, evidenceRows });
+      });
       return sendJson(response, 200, { query, result });
     }
 
