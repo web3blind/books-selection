@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-desktop/
 dist-pkg-test/
 .DS_Store
 Thumbs.db

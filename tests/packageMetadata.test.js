@@ -13,6 +13,18 @@ test('package metadata defines pkg-based cross-platform release build', () => {
   assert.match(packageJson.devDependencies['@yao-pkg/pkg'], /<7/);
 });
 
+test('package metadata defines Electron desktop release build', () => {
+  assert.equal(packageJson.main, 'desktop/main.js');
+  assert.equal(packageJson.scripts['desktop:start'], 'electron .');
+  assert.equal(packageJson.scripts['build:desktop'], 'electron-builder --linux tar.gz --win portable --mac zip --publish never');
+  assert.match(packageJson.devDependencies.electron, /<44/);
+  assert.match(packageJson.devDependencies['electron-builder'], /<27/);
+  assert.equal(packageJson.build.productName, 'Books Selection');
+  assert.deepEqual(packageJson.build.linux.target, ['tar.gz']);
+  assert.deepEqual(packageJson.build.win.target, ['portable']);
+  assert.deepEqual(packageJson.build.mac.target, ['zip']);
+});
+
 test('release build script creates Linux Windows and macOS bundles with data folders', () => {
   for (const marker of [
     'node22-linux-x64',

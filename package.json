@@ -1,6 +1,6 @@
 {
   "name": "books-selection",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local desktop-style web app for browsing FB2 book series, indexing full text, and asking questions with budget-guarded AI providers.",
   "private": false,
   "license": "MIT",
@@ -11,7 +11,9 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test tests/*.test.js",
-    "build:dist": "node scripts/build-dist.js"
+    "build:dist": "node scripts/build-dist.js",
+    "desktop:start": "electron .",
+    "build:desktop": "electron-builder --linux tar.gz --win portable --mac zip --publish never"
   },
   "keywords": [
     "fb2",
@@ -22,12 +24,56 @@
     "nodejs"
   ],
   "devDependencies": {
-    "@yao-pkg/pkg": ">=6.21.0 <7"
+    "@yao-pkg/pkg": ">=6.21.0 <7",
+    "electron": ">=43.1.1 <44",
+    "electron-builder": ">=26.15.3 <27"
   },
   "bin": "src/server.js",
   "pkg": {
     "assets": [
       "public/**/*"
     ]
+  },
+  "main": "desktop/main.js",
+  "build": {
+    "appId": "xyz.blinddev.books-selection",
+    "productName": "Books Selection",
+    "artifactName": "books-selection-desktop-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "desktop/**/*",
+      "src/**/*",
+      "public/**/*",
+      "package.json",
+      "data/.gitkeep"
+    ],
+    "extraResources": [
+      {
+        "from": "data",
+        "to": "data",
+        "filter": [
+          ".gitkeep"
+        ]
+      }
+    ],
+    "linux": {
+      "target": [
+        "tar.gz"
+      ],
+      "category": "Utility"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    }
   }
 }

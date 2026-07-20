@@ -2,11 +2,13 @@
 
 ## Project Context
 - Что это: локальный Node.js tool для выбора FB2-книг по аннотациям из каталога с подпапками.
-- Стек: CommonJS, без внешних npm-зависимостей. Annotation browsing работает на Node.js 18+; локальные FTS endpoints требуют runtime с `node:sqlite`.
-- Главные entrypoints: `src/server.js` для HTTP-сервера, `public/index.html` для всего UI.
+- Стек: CommonJS. Source/dev mode requires Node.js 22+ because local FTS uses `node:sqlite`. Desktop releases use Electron/electron-builder; lightweight server executables use `@yao-pkg/pkg`.
+- Главные entrypoints: `src/server.js` для HTTP-сервера/browser mode, `desktop/main.js` + `desktop/preload.js` для Electron desktop, `public/index.html` для всего UI.
 
 ## Structure
-- `src/server.js`: локальный HTTP server, раздача `public/index.html`, API `GET/POST /api/config`, `GET /api/books`, `POST /api/index`, `POST /api/embed-index`, `GET /api/search`, `GET /api/semantic-search`, `GET /api/ask`, `GET /api/extract-fact`.
+- `src/server.js`: local HTTP server module. When executed directly (`npm start`) it starts the server and opens the system browser. When imported by Electron, `startServer({ defaultRoot: '', port: 0, openBrowser: false })` starts the same backend inside the Electron main process without spawning a child process. APIs: `GET/POST /api/config`, `GET /api/books`, `POST /api/index`, `POST /api/embed-index`, `GET /api/search`, `GET /api/semantic-search`, `GET /api/ask`, `GET /api/extract-fact`.
+- `desktop/main.js`: Electron main process. Starts the backend in-process, opens `BrowserWindow`, sets default desktop SQLite path under Electron `userData`, and owns the native directory dialog IPC handler.
+- `desktop/preload.js`: narrow, context-isolated desktop bridge exposing only `booksSelectionDesktop.pickDirectory()` and `isDesktop`.
 - `src/scan.js`: обход корневой папки, natural sort, поиск первого `.fb2` или `.fb2.zip` в каждой подпапке.
 - `src/fb2.js`: чтение FB2/XML, decoding по XML encoding, извлечение `book-title` и `annotation`, извлечение body text/chunks для будущего индекса, чтение `.fb2.zip` через встроенный ZIP parser на Node.js.
 - `src/indexer.js`: локальная индексация просканированной библиотеки в SQLite и минимальный FTS search helper без AI/network calls.

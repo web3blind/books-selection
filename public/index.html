@@ -42,6 +42,9 @@
     <p class="meta">Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.</p>
 
     <label for="settingsBooksRoot">Путь к папке книг</label>
+    <div class="actions">
+      <button id="settingsPickBooksRootButton" type="button">Выбрать папку книг</button>
+    </div>
     <input id="settingsBooksRoot" type="text" autocomplete="off" placeholder="Например: /home/denis/Книги">
 
     <label for="settingsDbPath">Путь к SQLite базе</label>
@@ -153,6 +156,7 @@
     const saveSettingsButton = document.getElementById('saveSettingsButton');
     const settingsFields = {
       booksRoot: document.getElementById('settingsBooksRoot'),
+      pickBooksRoot: document.getElementById('settingsPickBooksRootButton'),
       dbPath: document.getElementById('settingsDbPath'),
       activeProvider: document.getElementById('settingsActiveProvider'),
       activeEmbeddingsProvider: document.getElementById('settingsEmbeddingProvider'),
@@ -219,7 +223,9 @@
       ru: {
         pageTitle: 'Выбор книги по аннотации',
         introText: 'Путь к папке книг и SQLite базе берётся из настроек. На главной странице остаются только загрузка, поиск и вопросы.',
-        pickFolderButton: 'Выбрать папку через браузер',
+        pickFolderButton: 'Выбрать папку книг',
+        settingsPickBooksRootButton: 'Выбрать папку книг',
+        nativePickerUnavailable: 'Нативный выбор папки доступен в desktop-приложении. В браузере укажи путь в настройках вручную.',
         loadButton: 'Загрузить список',
         reloadButton: 'Обновить',
         fallbackText: 'Папка книг берётся из настроек. Если нужно изменить путь, открой раздел «Настройки».',
@@ -261,19 +267,21 @@
         missingFileTitle: 'Файл книги не найден',
         missingFileAnnotation: 'В этой папке не найдено ни одного файла .fb2 или .fb2.zip.',
         readErrorTitle: 'Ошибка чтения книги',
-        noRoot: 'Сначала выбери папку через браузер или укажи путь к папке книг вручную.',
+        noRoot: 'Сначала укажи папку книг в настройках.',
         loading: 'Загружаю список книг...',
         loadError: 'Ошибка загрузки',
-        pickerHintModern: 'Откроется выбор папки. Если браузер не передаст полный путь, ниже останется ручной ввод.',
-        pickerHintBasic: 'Откроется выбор папки через браузер. Если путь не подставится, вставь его вручную в поле ниже.',
+        pickerHintModern: 'В desktop-приложении откроется системный выбор папки. В браузере укажи путь в настройках вручную.',
+        pickerHintBasic: 'В desktop-приложении откроется системный выбор папки. В браузере укажи путь в настройках вручную.',
         folderNotChosen: 'Папка не выбрана.',
         folderChosen: (path) => `Папка выбрана: ${path}. Сразу загружаю список книг.`,
-        folderChosenNoPath: (name) => `Папка «${name}» выбрана, но браузер не отдал полный локальный путь. Вставь путь вручную в поле ниже, затем нажми «Загрузить список».`
+        folderChosenNoPath: (name) => `Папка «${name}» выбрана, но браузер не отдал полный локальный путь. Укажи путь в настройках и нажми «Загрузить список».`
       },
       en: {
         pageTitle: 'Choose a book by annotation',
         introText: 'The books folder and SQLite database are loaded from Settings. The main page only keeps loading, search, and questions.',
-        pickFolderButton: 'Choose folder in browser',
+        pickFolderButton: 'Choose books folder',
+        settingsPickBooksRootButton: 'Choose books folder',
+        nativePickerUnavailable: 'Native folder selection is available in the desktop app. In the browser, enter the path manually in Settings.',
         loadButton: 'Load list',
         reloadButton: 'Reload',
         fallbackText: 'The books folder is loaded from Settings. To change it, open Settings.',
@@ -357,6 +365,7 @@
       pageTitle.textContent = t('pageTitle');
       introText.textContent = t('introText');
       pickFolderButton.textContent = t('pickFolderButton');
+      settingsFields.pickBooksRoot.textContent = t('settingsPickBooksRootButton');
       loadButton.textContent = t('loadButton');
       reloadButton.textContent = t('reloadButton');
       fallbackText.textContent = t('fallbackText');
@@ -513,6 +522,27 @@
         localStorage.setItem(dbStorageKey, dbPath);
       }
       return dbPath;
+    }
+
+    async function pickBooksRoot() {
+      const desktopApi = window.booksSelectionDesktop;
+      if (desktopApi?.pickDirectory) {
+        const result = await desktopApi.pickDirectory();
+        if (result?.canceled) {
+          setSettingsStatus(t('folderNotChosen'));
+          return;
+        }
+        if (result?.path) {
+          settingsFields.booksRoot.value = result.path;
+          rootInput.value = result.path;
+          localStorage.setItem(storageKey, result.path);
+          setSettingsStatus(t('folderChosen', result.path));
+          return;
+        }
+      }
+
+      setSettingsStatus(t('nativePickerUnavailable'));
+      showView('settings');
     }
 
     function renderSetupStatus(setup) {
@@ -732,6 +762,10 @@
     }
 
     pickFolderButton.addEventListener('click', async () => {
+      if (window.booksSelectionDesktop?.pickDirectory) {
+        await pickBooksRoot();
+        return;
+      }
       if (window.showDirectoryPicker) {
         setStatus(t('pickerHintModern'));
       } else {
@@ -739,6 +773,7 @@
       }
       folderPicker.click();
     });
+    settingsFields.pickBooksRoot.addEventListener('click', pickBooksRoot);
 
     folderPicker.addEventListener('change', () => {
       const files = [...folderPicker.files];

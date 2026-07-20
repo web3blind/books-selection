@@ -14,9 +14,7 @@ const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
 
 const publicDir = path.join(__dirname, '..', 'public');
-const defaultRoot = process.argv[2] || '';
-const port = Number(process.argv[3] || process.env.PORT || 3210);
-const shouldOpenBrowser = process.env.BOOKS_SELECTION_NO_OPEN !== '1';
+
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -82,7 +80,7 @@ function readJsonBody(request) {
   });
 }
 
-function getRootPath(url, appConfig) {
+function getRootPath(url, appConfig, defaultRoot = '') {
   return url.searchParams.get('root') || appConfig.booksRoot || defaultRoot;
 }
 
@@ -99,7 +97,10 @@ async function withSearchDatabase(databasePath, callback) {
   }
 }
 
-const server = http.createServer(async (request, response) => {
+function createRequestHandler(options = {}) {
+  const defaultRoot = options.defaultRoot || '';
+
+  return async function handleRequest(request, response) {
   try {
     const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
     const configState = await readAppConfig(process.env);
@@ -128,7 +129,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/books') {
-      const root = getRootPath(url, appConfig);
+      const root = getRootPath(url, appConfig, defaultRoot);
 
       if (!root) {
         return sendJson(response, 400, { error: 'Нужен путь к папке с книгами.' });
@@ -139,7 +140,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/index' && request.method === 'POST') {
-      const root = getRootPath(url, appConfig);
+      const root = getRootPath(url, appConfig, defaultRoot);
       const databasePath = getDbPath(url, appConfig);
 
       if (!root) {
@@ -256,20 +257,53 @@ const server = http.createServer(async (request, response) => {
   } catch (error) {
     sendJson(response, 500, { error: error.message });
   }
-});
+  };
+}
 
-server.listen(port, '127.0.0.1', () => {
-  const appUrl = `http://127.0.0.1:${port}`;
-  const rootText = defaultRoot ? `\nBooks folder: ${defaultRoot}` : '';
-  console.log(`Books Selection started: ${appUrl}${rootText}`);
+function startServer(options = {}) {
+  const defaultRoot = options.defaultRoot ?? process.argv[2] ?? '';
+  const requestedPort = options.port ?? process.env.PORT ?? process.argv[3] ?? 3210;
+  const port = Number(requestedPort);
+  const shouldOpenBrowser = options.openBrowser ?? (process.env.BOOKS_SELECTION_NO_OPEN !== '1');
+  const shouldLog = options.log ?? true;
+  const server = http.createServer(createRequestHandler({ defaultRoot }));
 
-  if (!shouldOpenBrowser) {
-    console.log('Browser auto-open is disabled by BOOKS_SELECTION_NO_OPEN=1');
-    return;
-  }
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      const address = server.address();
+      const actualPort = typeof address === 'object' && address ? address.port : port;
+      const appUrl = `http://127.0.0.1:${actualPort}`;
+      const rootText = defaultRoot ? `\nBooks folder: ${defaultRoot}` : '';
 
-  const opened = openBrowser(appUrl);
-  if (!opened) {
-    console.log(`Could not auto-open the browser. Open manually: ${appUrl}`);
-  }
-});
+      if (shouldLog) {
+        console.log(`Books Selection started: ${appUrl}${rootText}`);
+      }
+
+      if (shouldOpenBrowser) {
+        const opened = openBrowser(appUrl);
+        if (!opened && shouldLog) {
+          console.log(`Could not auto-open the browser. Open manually: ${appUrl}`);
+        }
+      } else if (shouldLog && process.env.BOOKS_SELECTION_NO_OPEN === '1') {
+        console.log('Browser auto-open is disabled by BOOKS_SELECTION_NO_OPEN=1');
+      }
+
+      resolve({ server, url: appUrl, port: actualPort });
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  createRequestHandler,
+  openBrowser,
+  startServer,
+};

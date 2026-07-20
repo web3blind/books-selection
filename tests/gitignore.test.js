@@ -8,6 +8,7 @@ const gitignore = fs.readFileSync(path.join(__dirname, '..', '.gitignore'), 'utf
 test('gitignore excludes local config files and generated SQLite databases', () => {
   for (const marker of [
     'dist/',
+    'dist-desktop/',
     '.books-selection/',
     'config.json',
     '*.local.json',

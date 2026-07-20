@@ -30,6 +30,9 @@ test('index page exposes simplified accessible AI question flow without committe
     'id="settingsOpenrouterApiKey"',
     'type="password"',
     'id="settingsOpenrouterBudget"',
+    'id="settingsPickBooksRootButton"',
+    'booksSelectionDesktop',
+    'pickDirectory',
     'id="openrouterSettings"',
     'id="localProviderSettings"',
     'loadAppConfig()'

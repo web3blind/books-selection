@@ -1,39 +1,79 @@
 # Books Selection
 
-Local app for choosing FB2 book series by annotation and asking questions over a local full-text index.
+Local desktop app for choosing FB2 book series by annotation and asking questions over a local full-text index.
 
-The app runs as a small local web server and opens in your browser. It is designed to work without requiring users to install Node.js, npm, or git when they download a release build.
+Books Selection can run in two modes:
 
-## Download executable builds
+- desktop release: opens its own application window and does not require Node.js, npm, or git;
+- developer/server mode: `npm start` keeps the old behavior and opens the web UI in your normal browser.
 
-Latest release downloads:
+## Download desktop builds
 
-- Linux x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-linux-x64.tar.gz
-- Windows x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-windows-x64.tar.gz
-- macOS x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-macos-x64.tar.gz
+Latest desktop release downloads:
+
+- Linux x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-linux-x64.tar.gz
+- Windows x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-win-x64.exe
+- macOS x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-mac-x64.zip
 
 These links point to `releases/latest`, so they keep working for future releases as long as release assets keep the same names.
 
-## Run a downloaded build
+## Run the desktop app
 
-1. Download the archive for your system.
-2. Extract it.
-3. Run the executable inside the extracted folder:
-   - Linux/macOS: `./books-selection`
-   - Windows: `books-selection.exe`
-4. If the browser does not open automatically, open `http://127.0.0.1:3210`.
-5. On first launch, open Settings and save at least the books folder path.
+### Linux
 
-Each bundle includes:
+```bash
+tar -xzf books-selection-desktop-linux-x64.tar.gz
+./books-selection
+```
 
-- the executable app;
-- `data/` folder for the default SQLite database;
-- `README.txt` with local launch notes.
+### Windows
+
+Run `books-selection-desktop-win-x64.exe`.
+
+### macOS
+
+Extract `books-selection-desktop-mac-x64.zip` and run Books Selection.
+
+macOS may show a warning for unsigned/not-notarized apps. If needed, allow the app in system security settings.
+
+## Desktop behavior
+
+In the desktop build:
+
+- Books Selection opens as a normal application window.
+- The backend/server code runs inside the Electron main process of the same app.
+- No separate backend child process is spawned.
+- The system browser is not opened.
+- The UI is still the same accessible web interface, rendered inside the app window.
+- Folder selection uses a native system directory dialog through a narrow preload API.
+
+The renderer page does not get full Node.js access:
+
+- `nodeIntegration` is disabled;
+- `contextIsolation` is enabled;
+- preload exposes only `booksSelectionDesktop.pickDirectory()` for native folder picking.
+
+## First-run workflow
+
+1. Start the desktop app.
+2. On first launch, Settings opens automatically.
+3. Press **Choose books folder** / **Выбрать папку книг**.
+4. A native system folder dialog opens in the desktop app.
+5. Choose the folder that contains your book series folders.
+6. Keep the default SQLite path or set a custom one.
+7. Optionally configure OpenRouter or a local OpenAI-compatible provider.
+8. Save settings.
+9. On the main page, press **Load list**.
+10. Press **Prepare index for questions** when you want full-text Q&A.
+11. Enter a question and press **Find answer**.
+
+## Writable data
 
 Default writable paths:
 
 - config: `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set;
-- SQLite index: `data/books-selection.sqlite` beside the executable, or `BOOKS_SELECTION_DB_PATH` if set.
+- desktop SQLite index: Electron user-data directory, `data/books-selection.sqlite`, or `BOOKS_SELECTION_DB_PATH` if set;
+- source / npm mode SQLite index: project-local `data/books-selection.sqlite`, or `BOOKS_SELECTION_DB_PATH` if set.
 
 The config can contain a local API key if you enter it in Settings, so do not publish or commit your personal config file.
 
@@ -42,13 +82,13 @@ The config can contain a local API key if you enter it in Settings, so do not pu
 - Scans a root folder with book subfolders.
 - Finds `.fb2` and `.fb2.zip` files.
 - Extracts title, annotation, and normalized body text.
-- Shows books in an accessible local web interface.
+- Shows books in an accessible local interface.
 - Supports Russian and English UI.
 - Searches by folder, title, and annotation.
 - Can hide folders without usable annotations or with read errors.
 - Has an in-app Settings page; no manual config editing is required.
-- Stores local settings in JSON.
-- Uses a project-local `data/books-selection.sqlite` database by default.
+- Uses native folder selection in desktop builds.
+- Uses browser/fallback path behavior in normal browser mode.
 - Builds a local SQLite FTS index for full-text search.
 - Caches embeddings in SQLite when an embeddings provider is configured.
 - Supports hybrid Ask mode over local FTS snippets, cached semantic hits, and cached derived facts.
@@ -57,18 +97,7 @@ The config can contain a local API key if you enter it in Settings, so do not pu
 - Guards OpenRouter calls with a configurable session spend limit; default is `$1`.
 - If provider keys are missing, Ask returns local evidence/setup status instead of silently failing or calling the network.
 
-## Main workflow
-
-1. Open Settings.
-2. Set the books folder path.
-3. Keep the default SQLite path or choose another one.
-4. Optionally set OpenRouter/local provider fields and API key.
-5. Save settings.
-6. On the main page, press **Load list** to browse annotations.
-7. Press **Prepare index for questions** to build/update the local index.
-8. Enter a question in **Question about series** and press **Find answer**.
-
-## Build from source
+## Developer/server mode
 
 Source development requires Node.js 22+ because the full-text index uses `node:sqlite`.
 
@@ -77,6 +106,12 @@ npm install
 npm test
 npm start
 ```
+
+`npm start` intentionally keeps the old behavior:
+
+- starts the local Node server;
+- opens the normal system browser;
+- serves the UI at `http://127.0.0.1:3210`.
 
 Optional launch environment variables:
 
@@ -89,28 +124,35 @@ BOOKS_SELECTION_DB_PATH=/path/to/books-selection.sqlite npm start
 
 ## Build release bundles
 
-This project uses the popular `pkg` CLI from `@yao-pkg/pkg` to produce standalone executables with Node.js bundled in.
+### Desktop app builds
+
+This project uses Electron and `electron-builder` for full desktop app windows.
 
 ```bash
 npm install
 npm test
-npm run build:dist
+npm run build:desktop
 ```
 
 The build creates:
 
-- `dist/books-selection-linux-x64/`
-- `dist/books-selection-windows-x64/`
-- `dist/books-selection-macos-x64/`
-- `dist/books-selection-linux-x64.tar.gz`
-- `dist/books-selection-windows-x64.tar.gz`
-- `dist/books-selection-macos-x64.tar.gz`
+- `dist-desktop/books-selection-desktop-linux-x64.tar.gz`
+- `dist-desktop/books-selection-desktop-win-x64.exe`
+- `dist-desktop/books-selection-desktop-mac-x64.zip`
 
-The `dist/` folder is ignored by git. Release archives are uploaded to GitHub Releases.
+### Lightweight server executable builds
+
+The older lightweight server-only executable build is still available through `pkg`:
+
+```bash
+npm run build:dist
+```
+
+Those builds start the local server and open the system browser. The desktop builds above are the recommended user-facing downloads.
 
 ## API notes
 
-The browser UI is the main interface, but the local server also exposes JSON endpoints:
+The local server exposes JSON endpoints used by the UI:
 
 - `GET /api/config`
 - `POST /api/config`
@@ -129,7 +171,7 @@ Annotation browsing through `/api/books` does not require AI keys. Indexing/sear
 - The app is local-first: your library index stays in your local SQLite file.
 - Real API keys must never be committed to git.
 - OpenRouter budget protection is checked before chat and embeddings requests.
-- macOS may require allowing the downloaded executable in system security settings because the build is not notarized.
+- Windows SmartScreen and macOS Gatekeeper may warn because builds are not code-signed yet.
 
 ## License
 
