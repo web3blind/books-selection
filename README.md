@@ -12,7 +12,8 @@ Books Selection can run in two modes:
 Latest desktop release downloads:
 
 - Linux x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-linux-x64.tar.gz
-- Windows x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-win-x64.exe
+- Windows portable exe: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-win-x64.exe
+- Windows folder zip: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-win-x64.zip
 - macOS x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-mac-x64.zip
 
 These links point to `releases/latest`, so they keep working for future releases as long as release assets keep the same names.
@@ -28,11 +29,14 @@ tar -xzf books-selection-desktop-linux-x64.tar.gz
 
 ### Windows
 
-Run `books-selection-desktop-win-x64.exe`.
+There are two Windows downloads:
 
-This is a portable Electron executable. It is meant to be downloaded and launched directly: the required application files are packaged into the `.exe`, and writable user data is created automatically on first run. No Node.js, npm, git, or neighboring project files are required.
+- `books-selection-desktop-win-x64.zip` — recommended if you want a normal folder that is easy to move between devices. Extract the archive and run `Books Selection.exe` inside the extracted folder.
+- `books-selection-desktop-win-x64.exe` — portable single-file executable. Download and run it directly.
 
-Default Windows writable locations are managed by Electron/user settings, for example the app config and SQLite index are created under the user's app data area unless you choose another SQLite path in Settings.
+Both variants include the application files and do not require Node.js, npm, git, or neighboring project files. The folder zip is usually easier to copy to another computer, USB drive, or synced folder. The single exe is simpler when the user just wants one file to download and launch.
+
+Writable user data is created automatically on first run. Default Windows writable locations are managed by Electron/user settings, for example the app config and SQLite index are created under the user's app data area unless you choose another SQLite path in Settings.
 
 ### macOS
 
@@ -142,6 +146,7 @@ The build creates:
 
 - `dist-desktop/books-selection-desktop-linux-x64.tar.gz`
 - `dist-desktop/books-selection-desktop-win-x64.exe`
+- `dist-desktop/books-selection-desktop-win-x64.zip`
 - `dist-desktop/books-selection-desktop-mac-x64.zip`
 
 ### Lightweight server executable builds
