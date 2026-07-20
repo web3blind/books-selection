@@ -12,6 +12,7 @@ const { extractFactFromEvidence } = require('./factExtractor');
 const { indexLibrary, searchChunks } = require('./indexer');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
+const { checkForUpdates } = require('./updateChecker');
 
 const publicDir = path.join(__dirname, '..', 'public');
 
@@ -99,6 +100,7 @@ async function withSearchDatabase(databasePath, callback) {
 
 function createRequestHandler(options = {}) {
   const defaultRoot = options.defaultRoot || '';
+  const updateCheckOptions = options.updateCheckOptions || {};
 
   return async function handleRequest(request, response) {
   try {
@@ -126,6 +128,12 @@ function createRequestHandler(options = {}) {
           isConfigured: isAppConfigured(saved.config),
         });
       }
+    }
+
+    if (url.pathname === '/api/update-check') {
+      const platform = url.searchParams.get('platform') || process.platform;
+      const result = await checkForUpdates({ ...updateCheckOptions, platform });
+      return sendJson(response, 200, result);
     }
 
     if (url.pathname === '/api/books') {
@@ -266,7 +274,10 @@ function startServer(options = {}) {
   const port = Number(requestedPort);
   const shouldOpenBrowser = options.openBrowser ?? (process.env.BOOKS_SELECTION_NO_OPEN !== '1');
   const shouldLog = options.log ?? true;
-  const server = http.createServer(createRequestHandler({ defaultRoot }));
+  const server = http.createServer(createRequestHandler({
+    defaultRoot,
+    updateCheckOptions: options.updateCheckOptions,
+  }));
 
   return new Promise((resolve, reject) => {
     server.once('error', reject);

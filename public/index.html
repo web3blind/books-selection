@@ -22,6 +22,9 @@
     .ai-processing-status.ok { border-color: #276738; }
     .ai-processing-status.warn { border-color: #8a6d1f; }
     .ai-processing-status.error { border-color: #8a1f11; }
+    .update-banner { border: 2px solid #276738; border-radius: 6px; padding: 12px; margin: 12px 0 20px; background: #f3fff5; }
+    .update-banner h2 { font-size: 1.1rem; margin: 0 0 8px; }
+    .update-banner .actions a { display: inline-block; padding: 8px 12px; margin-right: 8px; margin-bottom: 8px; border: 1px solid #276738; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -40,6 +43,16 @@
     <button id="mainViewButton" type="button">Главная</button>
     <button id="settingsViewButton" type="button">Настройки</button>
   </nav>
+
+  <section id="updateBanner" class="update-banner" aria-labelledby="updateBannerTitle" hidden>
+    <h2 id="updateBannerTitle">Доступна новая версия</h2>
+    <p id="updateBannerMessage"></p>
+    <div id="updateBannerLinks" class="actions"></div>
+    <div class="actions">
+      <button id="updateLaterButton" type="button">Напомнить позже</button>
+      <button id="updateSkipButton" type="button">Не показывать эту версию</button>
+    </div>
+  </section>
 
   <section id="settingsPanel" class="panel" aria-labelledby="settingsTitle" hidden>
     <h2 id="settingsTitle">Настройки</h2>
@@ -202,10 +215,17 @@
     const showReadyOnlyText = document.getElementById('showReadyOnlyText');
     const statusNode = document.getElementById('status');
     const resultsNode = document.getElementById('results');
+    const updateBanner = document.getElementById('updateBanner');
+    const updateBannerTitle = document.getElementById('updateBannerTitle');
+    const updateBannerMessage = document.getElementById('updateBannerMessage');
+    const updateBannerLinks = document.getElementById('updateBannerLinks');
+    const updateLaterButton = document.getElementById('updateLaterButton');
+    const updateSkipButton = document.getElementById('updateSkipButton');
 
     const storageKey = 'books-selection:last-root';
     const dbStorageKey = 'books-selection:last-db';
     const languageKey = 'books-selection:language';
+    const skippedUpdateKey = 'books-selection:skipped-update-version';
     const queryParams = new URLSearchParams(location.search);
     const queryRoot = queryParams.get('root') || '';
     const queryLang = queryParams.get('lang') || '';
@@ -286,7 +306,13 @@
         pickerHintBasic: 'В desktop-приложении откроется системный выбор папки. В браузере укажи путь в настройках вручную.',
         folderNotChosen: 'Папка не выбрана.',
         folderChosen: (path) => `Папка выбрана: ${path}. Сразу загружаю список книг.`,
-        folderChosenNoPath: (name) => `Папка «${name}» выбрана, но браузер не отдал полный локальный путь. Укажи путь в настройках и нажми «Загрузить список».`
+        folderChosenNoPath: (name) => `Папка «${name}» выбрана, но браузер не отдал полный локальный путь. Укажи путь в настройках и нажми «Загрузить список».`,
+        updateAvailableTitle: 'Доступна новая версия',
+        updateAvailableMessage: (current, latest) => `Доступна новая версия ${latest}. Сейчас установлена ${current}. Выбери подходящий файл для своей системы.`,
+        updateDownloadAsset: (name) => `Скачать ${name}`,
+        updateOpenRelease: 'Открыть страницу релиза',
+        updateLater: 'Напомнить позже',
+        updateSkip: 'Не показывать эту версию'
       },
       en: {
         pageTitle: 'Choose a book by annotation',
@@ -348,9 +374,15 @@
         loadError: 'Loading error',
         pickerHintModern: 'A folder picker will open. If the browser does not provide the full path, set the folder path in Settings.',
         pickerHintBasic: 'A browser folder picker will open. If the path is not detected, set the folder path in Settings.',
-        folderNotChosen: 'No folder selected.',
-        folderChosen: (path) => `Folder selected: ${path}. Loading books now.`,
-        folderChosenNoPath: (name) => `Folder “${name}” was selected, but the browser did not expose the full local path. Set the path in Settings, then press “Load list”.`
+        folderNotChosen: 'Folder was not chosen.',
+        folderChosen: (path) => `Folder chosen: ${path}. Loading books now.`,
+        folderChosenNoPath: (name) => `Folder “${name}” was chosen, but the browser did not provide a full local path. Enter it in Settings and press “Load list”.`,
+        updateAvailableTitle: 'New version available',
+        updateAvailableMessage: (current, latest) => `Version ${latest} is available. You are using ${current}. Choose the download for your system.`,
+        updateDownloadAsset: (name) => `Download ${name}`,
+        updateOpenRelease: 'Open release page',
+        updateLater: 'Remind me later',
+        updateSkip: 'Do not show this version again'
       }
     };
 
@@ -402,6 +434,9 @@
       ftsQuestionLabel.textContent = t('ftsQuestionLabel');
       ftsQuestionInput.placeholder = t('ftsQuestionPlaceholder');
       askButton.textContent = t('askButton');
+      updateBannerTitle.textContent = t('updateAvailableTitle');
+      updateLaterButton.textContent = t('updateLater');
+      updateSkipButton.textContent = t('updateSkip');
       localStorage.setItem(languageKey, currentLanguage);
     }
 
@@ -524,7 +559,59 @@
       return String(value || '')
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function formatAssetName(asset) {
+      if (asset.kind === 'windowsZip') return 'Windows ZIP';
+      if (asset.kind === 'windowsExe') return 'Windows EXE';
+      if (asset.kind === 'linuxTarGz') return 'Linux tar.gz';
+      if (asset.kind === 'macZip') return 'macOS ZIP';
+      return asset.name || 'download';
+    }
+
+    function hideUpdateBanner() {
+      updateBanner.hidden = true;
+    }
+
+    function renderUpdateBanner(update) {
+      const latestVersion = update.latestVersion || '';
+      updateBannerTitle.textContent = t('updateAvailableTitle');
+      updateBannerMessage.textContent = t('updateAvailableMessage', update.currentVersion || '', latestVersion);
+      const assets = Array.isArray(update.assets) && update.assets.length > 0 ? update.assets : [];
+      const assetLinks = assets.map((asset) => `
+        <a href="${escapeHtml(asset.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('updateDownloadAsset', formatAssetName(asset)))}</a>
+      `).join('');
+      updateBannerLinks.innerHTML = `${assetLinks}
+        <a href="${escapeHtml(update.releaseUrl || 'https://github.com/web3blind/books-selection/releases/latest')}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('updateOpenRelease'))}</a>`;
+      updateLaterButton.textContent = t('updateLater');
+      updateSkipButton.textContent = t('updateSkip');
+      updateSkipButton.onclick = () => {
+        if (latestVersion) {
+          localStorage.setItem(skippedUpdateKey, latestVersion);
+        }
+        hideUpdateBanner();
+      };
+      updateLaterButton.onclick = hideUpdateBanner;
+      updateBanner.hidden = false;
+    }
+
+    async function checkForAppUpdates() {
+      try {
+        const update = await fetchJson('/api/update-check');
+        if (!update.hasUpdate || !update.latestVersion) {
+          hideUpdateBanner();
+          return;
+        }
+        if (localStorage.getItem(skippedUpdateKey) === update.latestVersion) {
+          hideUpdateBanner();
+          return;
+        }
+        renderUpdateBanner(update);
+      } catch {
+        hideUpdateBanner();
+      }
     }
 
     async function fetchJson(url, options = {}) {
@@ -893,6 +980,7 @@
     });
 
     applyLanguage();
+    checkForAppUpdates();
     loadAppConfig().then(() => {
       if (!settingsPanel.hidden || !rootInput.value) {
         return;

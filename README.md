@@ -105,6 +105,7 @@ The config can contain a local API key if you enter it in Settings, so do not pu
 - Supports OpenRouter and local OpenAI-compatible provider settings.
 - Guards OpenRouter calls with a configurable session spend limit; default is `$1`.
 - If provider keys are missing, Ask returns local evidence/setup status instead of silently failing or calling the network.
+- Checks GitHub Releases on startup and shows a cross-platform update notification with Linux, Windows, and macOS download links.
 
 ## Developer/server mode
 

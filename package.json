@@ -1,6 +1,6 @@
 {
   "name": "books-selection",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Local desktop-style web app for browsing FB2 book series, indexing full text, and asking questions with budget-guarded AI providers.",
   "private": false,
   "license": "MIT",
