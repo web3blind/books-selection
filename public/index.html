@@ -18,6 +18,10 @@
     .book h2 { font-size: 1.1rem; margin: 0 0 8px; }
     .muted { color: #555; }
     .error { color: #8a1f11; }
+    .ai-processing-status { border: 1px solid #ccc; border-radius: 6px; padding: 8px; margin: 8px 0 16px; }
+    .ai-processing-status.ok { border-color: #276738; }
+    .ai-processing-status.warn { border-color: #8a6d1f; }
+    .ai-processing-status.error { border-color: #8a1f11; }
   </style>
 </head>
 <body>
@@ -251,6 +255,10 @@
           ? `Базовый индекс готов. Для семантического поиска добавь ${result.setup.apiKeyEnv} для provider ${result.setup.provider}. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
           : `Индекс и semantic cache готовы: embedded ${result.embedded}, пропущено ${result.skipped}, осталось ${result.remaining}.`,
         askDone: 'Ответ готов.',
+        aiProcessingStatusHeading: 'Статус ИИ',
+        aiProcessed: 'Удалось обработать через ИИ: да. Ответ ниже получен от настроенного AI provider.',
+        aiNotProcessed: 'Удалось обработать через ИИ: нет. Показаны только локально найденные evidence.',
+        aiProcessingError: (message) => `Удалось обработать через ИИ: нет. Ошибка: ${message}`,
         providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
         resultHeading: 'Результаты',
         evidenceHeading: 'Доказательные фрагменты',
@@ -307,6 +315,10 @@
           ? `Base index is ready. Add ${result.setup.apiKeyEnv} for provider ${result.setup.provider} to enable semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
           : `Index and semantic cache are ready: embedded ${result.embedded}, skipped ${result.skipped}, remaining ${result.remaining}.`,
         askDone: 'Answer ready.',
+        aiProcessingStatusHeading: 'AI status',
+        aiProcessed: 'Processed through AI: yes. The answer below came from the configured AI provider.',
+        aiNotProcessed: 'Processed through AI: no. Only locally retrieved evidence is shown.',
+        aiProcessingError: (message) => `Processed through AI: no. Error: ${message}`,
         providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
         resultHeading: 'Results',
         evidenceHeading: 'Evidence snippets',
@@ -545,6 +557,27 @@
       showView('settings');
     }
 
+    function renderAiProcessingStatus(result) {
+      const processed = result && result.status === 'answered';
+      const message = processed ? t('aiProcessed') : t('aiNotProcessed');
+      const cssClass = processed ? 'ok' : 'warn';
+      return `
+        <section class="ai-processing-status ${cssClass}" aria-labelledby="aiProcessingStatusHeading">
+          <h3 id="aiProcessingStatusHeading">${escapeHtml(t('aiProcessingStatusHeading'))}</h3>
+          <p>${escapeHtml(message)}</p>
+        </section>
+      `;
+    }
+
+    function renderAiProcessingError(message) {
+      return `
+        <section class="ai-processing-status error" aria-labelledby="aiProcessingStatusHeading">
+          <h3 id="aiProcessingStatusHeading">${escapeHtml(t('aiProcessingStatusHeading'))}</h3>
+          <p>${escapeHtml(t('aiProcessingError', message))}</p>
+        </section>
+      `;
+    }
+
     function renderSetupStatus(setup) {
       if (!setup) return '';
       const items = [
@@ -577,6 +610,7 @@
       const checkedBooks = (result.checked && result.checked.books) || [];
       const answer = result.answer || result.message || '';
       aiResultsNode.innerHTML = `
+        ${renderAiProcessingStatus(result)}
         ${renderSetupStatus(setup)}
         ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
         ${result.confidence ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
@@ -758,6 +792,7 @@
         renderAskResult(result);
       } catch (error) {
         setAiStatus(error.message);
+        aiResultsNode.innerHTML = renderAiProcessingError(error.message);
       }
     }
 
