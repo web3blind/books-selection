@@ -6,12 +6,16 @@ const { DEFAULT_CONFIG } = require('./providerConfig');
 
 const projectRoot = path.join(__dirname, '..');
 
+function getRuntimeRoot() {
+  return process.pkg ? path.dirname(process.execPath) : projectRoot;
+}
+
 function getConfigPath(env = process.env) {
   return env.BOOKS_SELECTION_CONFIG_PATH || path.join(os.homedir(), '.books-selection', 'config.json');
 }
 
 function getDefaultDbPath(env = process.env) {
-  return env.BOOKS_SELECTION_DB_PATH || path.join(projectRoot, 'data', 'books-selection.sqlite');
+  return env.BOOKS_SELECTION_DB_PATH || path.join(getRuntimeRoot(), 'data', 'books-selection.sqlite');
 }
 
 function defaultAppConfig() {
@@ -151,6 +155,7 @@ module.exports = {
   defaultAppConfig,
   getConfigPath,
   getDefaultDbPath,
+  getRuntimeRoot,
   isAppConfigured,
   normalizeAppConfig,
   readAppConfig,

@@ -1,16 +1,17 @@
 {
   "name": "books-selection",
-  "version": "0.1.0",
-  "description": "Local tool for browsing FB2 book folders by annotation.",
+  "version": "0.2.0",
+  "description": "Local desktop-style web app for browsing FB2 book series, indexing full text, and asking questions with budget-guarded AI providers.",
   "private": false,
   "license": "MIT",
   "type": "commonjs",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "build:dist": "node scripts/build-dist.js"
   },
   "keywords": [
     "fb2",
@@ -19,5 +20,14 @@
     "library",
     "accessibility",
     "nodejs"
-  ]
+  ],
+  "devDependencies": {
+    "@yao-pkg/pkg": ">=6.21.0 <7"
+  },
+  "bin": "src/server.js",
+  "pkg": {
+    "assets": [
+      "public/**/*"
+    ]
+  }
 }

@@ -1,121 +1,136 @@
-# books-selection
+# Books Selection
 
-Local tool for browsing FB2 book folders by annotation.
+Local app for choosing FB2 book series by annotation and asking questions over a local full-text index.
 
-Локальный инструмент для просмотра папок с книгами FB2 по аннотациям.
+The app runs as a small local web server and opens in your browser. It is designed to work without requiring users to install Node.js, npm, or git when they download a release build.
 
-## Why / Зачем
+## Download executable builds
 
-Use it when you have a large folder with book series and want to quickly see which first books look interesting before opening them.
+Latest release downloads:
 
-Полезно, когда у тебя большая папка с книжными циклами и хочется быстро посмотреть аннотации первых книг перед выбором, что читать дальше.
+- Linux x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-linux-x64.tar.gz
+- Windows x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-windows-x64.tar.gz
+- macOS x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-macos-x64.tar.gz
 
-## Features / Возможности
+These links point to `releases/latest`, so they keep working for future releases as long as release assets keep the same names.
 
-- scans a root folder with book subfolders
-- finds `.fb2` and `.fb2.zip` files inside each subfolder
-- extracts `book-title` and `annotation`
-- shows the list in a simple local web interface
-- supports search by folder name, book title, and annotation text
-- has one checkbox to show only books with annotations and without errors
-- can try folder selection in the browser, with manual path fallback
-- remembers the last successful folder path in the browser
-- supports English and Russian UI, with English as the default
-- includes first AI-search foundation modules: provider config defaults, FB2 body extraction/chunking helpers, a local SQLite schema/adapter scaffold with FTS5/fact tables, indexing service, minimal local FTS endpoints, embeddings cache schema/helpers, chunk embedding cache population service, hybrid Ask retrieval over FTS/cached semantic vectors/derived facts, generic evidence-linked fact graph helpers, generic model-backed fact extraction with derived-fact caching, semantic/fact setup endpoints, and minimal accessible UI controls for local indexing, FTS search, Ask mode, and provider/setup status
+## Run a downloaded build
 
-- сканирует корневую папку с книжными подпапками
-- ищет `.fb2` и `.fb2.zip` внутри каждой папки
-- извлекает `book-title` и `annotation`
-- показывает список в простом локальном web-интерфейсе
-- поддерживает поиск по имени папки, названию книги и тексту аннотации
-- умеет одной галочкой показывать только книги с аннотацией и без ошибок
-- пытается выбрать папку через браузер, с fallback на ручной ввод пути
-- запоминает последний удачный путь в браузере
-- поддерживает английский и русский интерфейс, по умолчанию английский
+1. Download the archive for your system.
+2. Extract it.
+3. Run the executable inside the extracted folder:
+   - Linux/macOS: `./books-selection`
+   - Windows: `books-selection.exe`
+4. If the browser does not open automatically, open `http://127.0.0.1:3210`.
+5. On first launch, open Settings and save at least the books folder path.
 
-## Requirements / Требования
+Each bundle includes:
 
-- Node.js 18+ for annotation browsing / для просмотра аннотаций
-- Node.js runtime with `node:sqlite` support for local FTS index endpoints / runtime с `node:sqlite` для локального FTS-индекса
+- the executable app;
+- `data/` folder for the default SQLite database;
+- `README.txt` with local launch notes.
 
-## Run / Запуск
+Default writable paths:
 
-```bash
-cd ai-projects/books-selection
-npm start -- /path/to/Books 3210
-```
+- config: `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set;
+- SQLite index: `data/books-selection.sqlite` beside the executable, or `BOOKS_SELECTION_DB_PATH` if set.
 
-Arguments / Аргументы:
-- first argument / первый аргумент: path to the root books folder
-- second argument / второй аргумент: optional port, default `3210`
+The config can contain a local API key if you enter it in Settings, so do not publish or commit your personal config file.
 
-Open / Открыть:
-- the app will try to open your browser automatically
-- if it cannot, open `http://127.0.0.1:3210` manually
+## Current features
 
-Приложение попробует открыть браузер автоматически.
-Если это не получится, открой `http://127.0.0.1:3210` вручную.
+- Scans a root folder with book subfolders.
+- Finds `.fb2` and `.fb2.zip` files.
+- Extracts title, annotation, and normalized body text.
+- Shows books in an accessible local web interface.
+- Supports Russian and English UI.
+- Searches by folder, title, and annotation.
+- Can hide folders without usable annotations or with read errors.
+- Has an in-app Settings page; no manual config editing is required.
+- Stores local settings in JSON.
+- Uses a project-local `data/books-selection.sqlite` database by default.
+- Builds a local SQLite FTS index for full-text search.
+- Caches embeddings in SQLite when an embeddings provider is configured.
+- Supports hybrid Ask mode over local FTS snippets, cached semantic hits, and cached derived facts.
+- Sends only retrieved evidence snippets to the AI provider, not the full library.
+- Supports OpenRouter and local OpenAI-compatible provider settings.
+- Guards OpenRouter calls with a configurable session spend limit; default is `$1`.
+- If provider keys are missing, Ask returns local evidence/setup status instead of silently failing or calling the network.
 
-You can also pass the root path in the URL / Также можно передать путь в URL:
-- `http://127.0.0.1:3210/?root=/path/to/Books`
+## Main workflow
 
-## Local FTS index API / Локальный FTS index API
+1. Open Settings.
+2. Set the books folder path.
+3. Keep the default SQLite path or choose another one.
+4. Optionally set OpenRouter/local provider fields and API key.
+5. Save settings.
+6. On the main page, press **Load list** to browse annotations.
+7. Press **Prepare index for questions** to build/update the local index.
+8. Enter a question in **Question about series** and press **Find answer**.
 
-Annotation browsing still works through `/api/books` without a database. For local full-text search, use a user-local SQLite file with a Node.js runtime that supports `node:sqlite`:
+## Build from source
 
-```bash
-BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210
-curl -X POST "http://127.0.0.1:3210/api/index?root=/path/to/Books&db=/tmp/books-selection.sqlite"
-curl -X POST "http://127.0.0.1:3210/api/embed-index?db=/tmp/books-selection.sqlite&limit=100&batchSize=16"
-curl "http://127.0.0.1:3210/api/search?q=фонарь&db=/tmp/books-selection.sqlite"
-curl "http://127.0.0.1:3210/api/semantic-search?q=фонарь&db=/tmp/books-selection.sqlite"
-curl "http://127.0.0.1:3210/api/ask?q=фонарь&db=/tmp/books-selection.sqlite"
-curl "http://127.0.0.1:3210/api/extract-fact?q=фонарь&bookId=1&factKey=has_lantern&factType=plot_trait&db=/tmp/books-selection.sqlite"
-```
-
-The index stores extracted FB2 body chunks locally and uses SQLite FTS5. `/api/search` does not make AI/network calls and does not read provider API keys. `/api/embed-index` populates the durable `chunk_embeddings` cache for chunks missing the current embeddings provider/model/content hash; it accepts `limit` and `batchSize` for bounded runs, and if no embeddings provider key is configured it returns `needs_embedding_provider_key` without calling the network. `/api/semantic-search` uses cached vectors from local SQLite when a query embedding can be produced; if no embeddings provider key is configured, it returns `needs_embedding_provider_key` with setup fields instead of calling the network. OpenRouter calls are guarded by the OpenRouter credits endpoint before chat and embeddings requests: the default process-session spend limit is `$1`, configurable with `BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD`; `BOOKS_SELECTION_OPENROUTER_USAGE_BASELINE_USD` can pin a starting usage baseline when you want the limit to survive app restarts. If the limit is reached, the provider request is not sent. `/api/ask` now uses hybrid retrieval: local FTS snippets first, optional cached semantic-vector hits when a query embedding can be produced, and cached `derived_facts` for related books/fact filters. If the embeddings key is absent, semantic retrieval is skipped gracefully and Ask still returns FTS/fact candidates. If the active answer-provider key such as `OPENROUTER_API_KEY` is not configured, Ask returns candidate evidence plus setup status instead of calling the network. When a key is configured, Ask mode sends only retrieved snippets/evidence with `fts`, `semantic`, or `fact` source labels to the OpenAI-compatible chat provider scaffold, not the full library text. `src/facts.js` adds the generic fact graph helper layer for enrichment: book-scoped entities, evidence rows linked to chunks, evidence-linked relations/events, and cached `derived_facts` queryable by book/cycle/type. `src/factExtractor.js` adds a generic model-backed extraction service plus `/api/extract-fact`; it accepts arbitrary `factKey`/`factType`, sends only supplied evidence excerpts/snippets, and upserts model results into `derived_facts`. If no provider key is configured, it returns `needs_provider_key` with setup fields and does not call the network. The helper and extraction layers are generic and do not hardcode romance-specific cards.
-
-The web UI now has a Settings section backed by a local JSON config file. The default config path is `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set. The local config file is ignored by git when it is placed inside the project. On first launch, when the config is missing or does not contain both `booksRoot` and `dbPath`, the app opens Settings first. The default SQLite path is `data/books-selection.sqlite` inside the project folder, and generated SQLite files under `data/` are ignored by git. Settings can save the books folder, SQLite DB path, active answer provider, active embeddings provider, OpenRouter/local provider fields, direct API keys, and the OpenRouter spend limit without editing files manually. Because this app is local, direct API keys may be stored in the config file; the fields use password inputs in the UI, and tests/docs must not print real keys. After settings are saved, the main page uses the saved books root and DB path by default and no longer shows path inputs on the main screen. In the **Question about series** section, use **Prepare index for questions** once: it builds/updates the SQLite FTS index and then attempts the bounded semantic embedding cache step. During preparation the button is disabled and the live status explains what is happening; if no embeddings key is configured, the base index still remains usable and the UI shows setup status. Then enter a multi-line question and press **Find answer**. Ask uses hybrid retrieval and renders answer/evidence as accessible lists.
-
-## Folder selection / Выбор папки
-
-The interface includes a browser folder picker, but browser security rules may prevent the full local path from being exposed to the page.
-
-В интерфейсе есть выбор папки через браузер, но ограничения безопасности браузера могут не дать странице полный локальный путь.
-
-Because of that, the app always keeps a manual path input as a reliable fallback.
-
-Поэтому приложение всегда оставляет ручной ввод пути как надёжный fallback.
-
-## Tests / Тесты
+Source development requires Node.js 22+ because the full-text index uses `node:sqlite`.
 
 ```bash
+npm install
 npm test
+npm start
 ```
 
-To disable auto-open / Чтобы отключить автооткрытие браузера:
+Optional launch environment variables:
 
 ```bash
-BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210
+BOOKS_SELECTION_NO_OPEN=1 npm start
+PORT=3210 npm start
+BOOKS_SELECTION_CONFIG_PATH=/path/to/config.json npm start
+BOOKS_SELECTION_DB_PATH=/path/to/books-selection.sqlite npm start
 ```
 
-On Windows PowerShell:
+## Build release bundles
 
-```powershell
-$env:BOOKS_SELECTION_NO_OPEN=1
-npm start -- "C:\path\to\Books" 3210
+This project uses the popular `pkg` CLI from `@yao-pkg/pkg` to produce standalone executables with Node.js bundled in.
+
+```bash
+npm install
+npm test
+npm run build:dist
 ```
 
-## Notes / Замечания
+The build creates:
 
-- if an FB2 file has no annotation, the app shows a fallback message
-- if a folder has no `.fb2` or `.fb2.zip`, it can be hidden by the default filter
-- the project is still local-first: annotation browsing requires no database, cloud, or AI API; AI-search foundation adds local SQLite/FTS5 modules, semantic-search scaffolding, hybrid evidence-only Ask mode, generic fact graph helpers, and provider config/client scaffolding; Ask mode and semantic search fall back to local evidence/setup status when provider keys are not configured
+- `dist/books-selection-linux-x64/`
+- `dist/books-selection-windows-x64/`
+- `dist/books-selection-macos-x64/`
+- `dist/books-selection-linux-x64.tar.gz`
+- `dist/books-selection-windows-x64.tar.gz`
+- `dist/books-selection-macos-x64.tar.gz`
 
-- если в FB2 нет аннотации, приложение показывает fallback-сообщение
-- если в папке нет `.fb2` или `.fb2.zip`, её можно скрыть фильтром по умолчанию
-- проект всё ещё локальный: annotation browsing не требует базы, облака или AI API; AI-search foundation добавляет SQLite/FTS5, semantic-search scaffold, hybrid evidence-only Ask mode, generic fact graph helpers и provider config/client scaffold; Ask mode и semantic search возвращают локальные доказательства/setup status, если provider keys не настроены
+The `dist/` folder is ignored by git. Release archives are uploaded to GitHub Releases.
 
-## License / Лицензия
+## API notes
+
+The browser UI is the main interface, but the local server also exposes JSON endpoints:
+
+- `GET /api/config`
+- `POST /api/config`
+- `GET /api/books`
+- `POST /api/index`
+- `POST /api/embed-index`
+- `GET /api/search`
+- `GET /api/semantic-search`
+- `GET /api/ask`
+- `GET /api/extract-fact`
+
+Annotation browsing through `/api/books` does not require AI keys. Indexing/search uses local SQLite. AI-backed answer generation and embeddings require provider configuration.
+
+## Notes
+
+- The app is local-first: your library index stays in your local SQLite file.
+- Real API keys must never be committed to git.
+- OpenRouter budget protection is checked before chat and embeddings requests.
+- macOS may require allowing the downloaded executable in system security settings because the build is not notarized.
+
+## License
 
 MIT
