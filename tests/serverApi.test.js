@@ -25,13 +25,18 @@ async function writeSampleBook(root) {
   </FictionBook>`);
 }
 
-function requestJson(port, method, pathname) {
+function requestJson(port, method, pathname, payload) {
   return new Promise((resolve, reject) => {
+    const body = payload === undefined ? '' : JSON.stringify(payload);
     const request = http.request({
       hostname: '127.0.0.1',
       port,
       method,
       path: pathname,
+      headers: body ? {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+      } : undefined,
     }, (response) => {
       let body = '';
       response.setEncoding('utf8');
@@ -47,6 +52,9 @@ function requestJson(port, method, pathname) {
       });
     });
     request.on('error', reject);
+    if (body) {
+      request.write(body);
+    }
     request.end();
   });
 }
@@ -76,24 +84,48 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
   const root = await createTempRoot();
   await writeSampleBook(root);
   const dbPath = path.join(root, 'search.sqlite');
+  const configPath = path.join(root, 'app-config.json');
   const port = 33000 + (process.pid % 1000);
   const child = spawn(process.execPath, ['src/server.js', root, String(port)], {
     cwd: process.cwd(),
-    env: { ...process.env, BOOKS_SELECTION_NO_OPEN: '1', OPENROUTER_API_KEY: '' },
+    env: { ...process.env, BOOKS_SELECTION_NO_OPEN: '1', BOOKS_SELECTION_CONFIG_PATH: configPath, OPENROUTER_API_KEY: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   try {
     await waitForServer(child);
 
-    const books = await requestJson(port, 'GET', `/api/books?root=${encodeURIComponent(root)}`);
-    const indexed = await requestJson(port, 'POST', `/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`);
+    const configBefore = await requestJson(port, 'GET', '/api/config');
+    const configSaved = await requestJson(port, 'POST', '/api/config', {
+      booksRoot: root,
+      dbPath,
+      activeProvider: 'openrouter',
+      activeEmbeddingsProvider: 'openrouter',
+      providers: {
+        openrouter: {
+          model: 'openai/gpt-4.1-nano',
+          embeddingModel: 'openai/text-embedding-3-small',
+          apiKeyEnv: 'OPENROUTER_API_KEY',
+          maxSessionUsageUsd: 2,
+        },
+      },
+    });
+    const configAfter = await requestJson(port, 'GET', '/api/config');
+    const books = await requestJson(port, 'GET', '/api/books');
+    const indexed = await requestJson(port, 'POST', '/api/index');
     const hits = await requestJson(port, 'GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
     const answer = await requestJson(port, 'GET', `/api/ask?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
     const extracted = await requestJson(port, 'GET', `/api/extract-fact?q=${encodeURIComponent('Есть ли фонарь?')}&bookId=1&factKey=${encodeURIComponent('has_lantern')}&factType=${encodeURIComponent('plot_trait')}&db=${encodeURIComponent(dbPath)}`);
     const semantic = await requestJson(port, 'GET', `/api/semantic-search?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
     const embedIndex = await requestJson(port, 'POST', `/api/embed-index?db=${encodeURIComponent(dbPath)}&limit=2`);
 
+    assert.equal(configBefore.statusCode, 200);
+    assert.equal(configBefore.body.isConfigured, false);
+    assert.equal(configSaved.statusCode, 200);
+    assert.equal(configSaved.body.isConfigured, true);
+    assert.equal(configSaved.body.config.providers.openrouter.maxSessionUsageUsd, 2);
+    assert.equal(configAfter.body.config.booksRoot, root);
+    assert.equal(configAfter.body.config.dbPath, dbPath);
     assert.equal(books.statusCode, 200);
     assert.equal(books.body.books[0].title, 'API Indexed Book');
     assert.equal(indexed.statusCode, 200);

@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
+const { readAppConfig, isAppConfigured, toProviderOverrides, writeAppConfig } = require('./appConfig');
 const { answerLibraryQuestion, createFtsQueryFromQuestion } = require('./ask');
 const { indexMissingChunkEmbeddings } = require('./embeddingIndexer');
 const { semanticSearchIfConfigured } = require('./embeddings');
@@ -55,8 +56,38 @@ function openBrowser(url) {
   }
 }
 
-function getDbPath(url) {
-  return url.searchParams.get('db') || process.env.BOOKS_SELECTION_DB_PATH || '';
+function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 1024 * 1024) {
+        reject(new Error('Request body is too large.'));
+        request.destroy();
+      }
+    });
+    request.on('end', () => {
+      if (!body.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error('Request body must be valid JSON.'));
+      }
+    });
+    request.on('error', reject);
+  });
+}
+
+function getRootPath(url, appConfig) {
+  return url.searchParams.get('root') || appConfig.booksRoot || defaultRoot;
+}
+
+function getDbPath(url, appConfig) {
+  return url.searchParams.get('db') || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '';
 }
 
 async function withSearchDatabase(databasePath, callback) {
@@ -71,9 +102,33 @@ async function withSearchDatabase(databasePath, callback) {
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
+    const configState = await readAppConfig(process.env);
+    const appConfig = configState.config;
+    const providerOverrides = toProviderOverrides(appConfig);
+
+    if (url.pathname === '/api/config') {
+      if (request.method === 'GET') {
+        return sendJson(response, 200, {
+          config: appConfig,
+          path: configState.path,
+          exists: configState.exists,
+          isConfigured: isAppConfigured(appConfig),
+        });
+      }
+      if (request.method === 'POST') {
+        const payload = await readJsonBody(request);
+        const saved = await writeAppConfig(payload, process.env);
+        return sendJson(response, 200, {
+          config: saved.config,
+          path: saved.path,
+          exists: true,
+          isConfigured: isAppConfigured(saved.config),
+        });
+      }
+    }
 
     if (url.pathname === '/api/books') {
-      const root = url.searchParams.get('root') || defaultRoot;
+      const root = getRootPath(url, appConfig);
 
       if (!root) {
         return sendJson(response, 400, { error: 'Нужен путь к папке с книгами.' });
@@ -84,8 +139,8 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/index' && request.method === 'POST') {
-      const root = url.searchParams.get('root') || defaultRoot;
-      const databasePath = getDbPath(url);
+      const root = getRootPath(url, appConfig);
+      const databasePath = getDbPath(url, appConfig);
 
       if (!root) {
         return sendJson(response, 400, { error: 'Нужен путь к папке с книгами.' });
@@ -101,7 +156,7 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/api/search') {
       const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url);
+      const databasePath = getDbPath(url, appConfig);
 
       if (!query.trim()) {
         return sendJson(response, 400, { error: 'Нужен поисковый запрос q.' });
@@ -117,7 +172,7 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/api/ask') {
       const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url);
+      const databasePath = getDbPath(url, appConfig);
 
       if (!query.trim()) {
         return sendJson(response, 400, { error: 'Нужен вопрос q.' });
@@ -127,13 +182,13 @@ const server = http.createServer(async (request, response) => {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({ db, question: query }));
+      const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({ db, question: query, providerOverrides }));
       return sendJson(response, 200, { query, result });
     }
 
     if (url.pathname === '/api/semantic-search') {
       const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url);
+      const databasePath = getDbPath(url, appConfig);
 
       if (!query.trim()) {
         return sendJson(response, 400, { error: 'Нужен поисковый запрос q.' });
@@ -143,12 +198,12 @@ const server = http.createServer(async (request, response) => {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({ db, query }));
+      const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({ db, query, providerOverrides }));
       return sendJson(response, 200, { query, result });
     }
 
     if (url.pathname === '/api/embed-index' && request.method === 'POST') {
-      const databasePath = getDbPath(url);
+      const databasePath = getDbPath(url, appConfig);
       const limit = Number(url.searchParams.get('limit') || 100);
       const batchSize = Number(url.searchParams.get('batchSize') || 16);
 
@@ -156,13 +211,13 @@ const server = http.createServer(async (request, response) => {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({ db, limit, batchSize }));
+      const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({ db, limit, batchSize, providerOverrides }));
       return sendJson(response, 200, { db: databasePath, result });
     }
 
     if (url.pathname === '/api/extract-fact') {
       const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url);
+      const databasePath = getDbPath(url, appConfig);
       const bookId = Number(url.searchParams.get('bookId') || 0);
       const factKey = url.searchParams.get('factKey') || '';
       const factType = url.searchParams.get('factType') || 'generic';
@@ -187,7 +242,7 @@ const server = http.createServer(async (request, response) => {
         const retrievalQuery = createFtsQueryFromQuestion(query);
         const evidenceRows = searchChunks(db, retrievalQuery, { limit: 12 })
           .filter((row) => row.book_id === bookId);
-        return extractFactFromEvidence({ db, bookId, factKey, factType, question: query, evidenceRows });
+        return extractFactFromEvidence({ db, bookId, factKey, factType, question: query, evidenceRows, providerOverrides });
       });
       return sendJson(response, 200, { query, result });
     }

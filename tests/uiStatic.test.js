@@ -24,8 +24,14 @@ test('index page exposes simplified accessible AI question flow without committe
     '/api/ask',
     'needs_provider_key',
     'needs_embedding_provider_key',
-    'setControlBusy(buildIndexButton, true)',
-    'setControlBusy(buildIndexButton, false)',
+    '/api/config',
+    'id="settingsPanel"',
+    'id="saveSettingsButton"',
+    'id="settingsActiveProvider"',
+    'id="settingsOpenrouterBudget"',
+    'id="openrouterSettings"',
+    'id="localProviderSettings"',
+    'loadAppConfig()'
   ];
 
   for (const marker of requiredMarkers) {

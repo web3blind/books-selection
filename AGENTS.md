@@ -6,7 +6,7 @@
 - Главные entrypoints: `src/server.js` для HTTP-сервера, `public/index.html` для всего UI.
 
 ## Structure
-- `src/server.js`: локальный HTTP server, раздача `public/index.html`, API `GET /api/books`, `POST /api/index`, `POST /api/embed-index`, `GET /api/search`, `GET /api/semantic-search`, `GET /api/ask`, `GET /api/extract-fact`.
+- `src/server.js`: локальный HTTP server, раздача `public/index.html`, API `GET/POST /api/config`, `GET /api/books`, `POST /api/index`, `POST /api/embed-index`, `GET /api/search`, `GET /api/semantic-search`, `GET /api/ask`, `GET /api/extract-fact`.
 - `src/scan.js`: обход корневой папки, natural sort, поиск первого `.fb2` или `.fb2.zip` в каждой подпапке.
 - `src/fb2.js`: чтение FB2/XML, decoding по XML encoding, извлечение `book-title` и `annotation`, извлечение body text/chunks для будущего индекса, чтение `.fb2.zip` через встроенный ZIP parser на Node.js.
 - `src/indexer.js`: локальная индексация просканированной библиотеки в SQLite и минимальный FTS search helper без AI/network calls.
@@ -15,6 +15,7 @@
 - `src/retrieval.js`: hybrid Ask retrieval helper. It combines local FTS hits, optional cached semantic-vector hits, and cached derived facts with source labels (`fts`, `semantic`, `fact`), graceful no-key semantic fallback, dedupe/caps, and evidence rows compatible with `src/ask.js`.
 - `src/facts.js`: generic graph/fact helpers over SQLite: book-scoped entities, chunk-linked evidence, evidence-linked relations/events, cached derived facts, and evidence-only fact-extraction prompt scaffolding. Keep it generic; do not hardcode romance-specific cards.
 - `src/factExtractor.js`: generic model-backed fact extraction service. It uses provider config/client scaffolding, sends only supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, and upserts arbitrary `factKey`/`factType` results into `derived_facts`.
+- `src/appConfig.js`: local app settings file helper for `~/.books-selection/config.json` or `BOOKS_SELECTION_CONFIG_PATH`; normalizes UI settings, maps them to provider overrides, and must not store raw API key values.
 - `src/ask.js`: Ask pipeline поверх hybrid retrieved snippets/facts; строит evidence-only prompt, возвращает setup/evidence без provider key и не отправляет полный текст библиотеки.
 - `src/providerClient.js`: mockable OpenAI-compatible chat completion and embeddings scaffold с injectable `fetchImpl`; checks provider budget before OpenRouter chat/embedding requests; не логирует и не возвращает секреты.
 - `src/providerBudget.js`: OpenRouter credits/budget guard. It calls `/credits`, tracks a process-session usage baseline, defaults to `$1` max additional spend, supports env overrides, and blocks provider requests when the budget is reached.

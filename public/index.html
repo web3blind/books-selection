@@ -32,6 +32,71 @@
   <h1 id="pageTitle">Выбор книги по аннотации</h1>
   <p id="introText">Можно выбрать папку через браузер. Если это не сработает, ниже остаётся обычный ввод пути.</p>
 
+  <nav class="actions" aria-label="Основные разделы">
+    <button id="mainViewButton" type="button">Главная</button>
+    <button id="settingsViewButton" type="button">Настройки</button>
+  </nav>
+
+  <section id="settingsPanel" class="panel" aria-labelledby="settingsTitle" hidden>
+    <h2 id="settingsTitle">Настройки</h2>
+    <p class="meta">Здесь можно настроить папку книг, SQLite базу, provider, модели и лимит OpenRouter без ручного редактирования файла.</p>
+
+    <label for="settingsBooksRoot">Путь к папке книг</label>
+    <input id="settingsBooksRoot" type="text" autocomplete="off" placeholder="Например: /home/denis/Книги">
+
+    <label for="settingsDbPath">Путь к SQLite базе</label>
+    <input id="settingsDbPath" type="text" autocomplete="off" placeholder="Например: /home/denis/books-selection.sqlite">
+
+    <label for="settingsActiveProvider">Provider для ответов</label>
+    <select id="settingsActiveProvider">
+      <option value="openrouter">OpenRouter</option>
+      <option value="local">Local OpenAI-compatible</option>
+      <option value="hermes">Hermes</option>
+    </select>
+
+    <label for="settingsEmbeddingProvider">Provider для semantic embeddings</label>
+    <select id="settingsEmbeddingProvider">
+      <option value="openrouter">OpenRouter</option>
+      <option value="local">Local OpenAI-compatible</option>
+      <option value="hermes">Hermes</option>
+    </select>
+
+    <fieldset id="openrouterSettings">
+      <legend>OpenRouter</legend>
+      <label for="settingsOpenrouterBaseUrl">Base URL</label>
+      <input id="settingsOpenrouterBaseUrl" type="text" autocomplete="off">
+      <label for="settingsOpenrouterModel">Chat model</label>
+      <input id="settingsOpenrouterModel" type="text" autocomplete="off">
+      <label for="settingsOpenrouterEmbeddingModel">Embedding model</label>
+      <input id="settingsOpenrouterEmbeddingModel" type="text" autocomplete="off">
+      <label for="settingsOpenrouterApiKeyEnv">API key environment variable</label>
+      <input id="settingsOpenrouterApiKeyEnv" type="text" autocomplete="off" placeholder="OPENROUTER_API_KEY">
+      <label for="settingsOpenrouterBudget">OpenRouter spend limit in dollars</label>
+      <input id="settingsOpenrouterBudget" type="number" min="0" step="0.01">
+      <label for="settingsOpenrouterBaseline">Optional OpenRouter usage baseline</label>
+      <input id="settingsOpenrouterBaseline" type="number" min="0" step="0.0001" placeholder="Leave empty for current process baseline">
+    </fieldset>
+
+    <fieldset id="localProviderSettings">
+      <legend>Local OpenAI-compatible provider</legend>
+      <label for="settingsLocalBaseUrl">Base URL</label>
+      <input id="settingsLocalBaseUrl" type="text" autocomplete="off">
+      <label for="settingsLocalModel">Chat model</label>
+      <input id="settingsLocalModel" type="text" autocomplete="off">
+      <label for="settingsLocalEmbeddingModel">Embedding model</label>
+      <input id="settingsLocalEmbeddingModel" type="text" autocomplete="off">
+      <label for="settingsLocalApiKeyEnv">API key environment variable</label>
+      <input id="settingsLocalApiKeyEnv" type="text" autocomplete="off">
+    </fieldset>
+
+    <div class="actions">
+      <button id="saveSettingsButton" type="button">Сохранить настройки</button>
+    </div>
+    <div id="settingsStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
+  </section>
+
+  <section id="mainPanel">
+
   <div>
     <button id="pickFolderButton" type="button">Выбрать папку через браузер</button>
     <button id="loadButton" type="button">Загрузить список</button>
@@ -76,9 +141,34 @@
 
   <div id="status" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
   <main id="results"></main>
+  </section>
 
   <script>
     const languageSelect = document.getElementById('languageSelect');
+    const mainViewButton = document.getElementById('mainViewButton');
+    const settingsViewButton = document.getElementById('settingsViewButton');
+    const mainPanel = document.getElementById('mainPanel');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const settingsStatusNode = document.getElementById('settingsStatus');
+    const saveSettingsButton = document.getElementById('saveSettingsButton');
+    const settingsFields = {
+      booksRoot: document.getElementById('settingsBooksRoot'),
+      dbPath: document.getElementById('settingsDbPath'),
+      activeProvider: document.getElementById('settingsActiveProvider'),
+      activeEmbeddingsProvider: document.getElementById('settingsEmbeddingProvider'),
+      openrouterBaseUrl: document.getElementById('settingsOpenrouterBaseUrl'),
+      openrouterModel: document.getElementById('settingsOpenrouterModel'),
+      openrouterEmbeddingModel: document.getElementById('settingsOpenrouterEmbeddingModel'),
+      openrouterApiKeyEnv: document.getElementById('settingsOpenrouterApiKeyEnv'),
+      openrouterBudget: document.getElementById('settingsOpenrouterBudget'),
+      openrouterBaseline: document.getElementById('settingsOpenrouterBaseline'),
+      localBaseUrl: document.getElementById('settingsLocalBaseUrl'),
+      localModel: document.getElementById('settingsLocalModel'),
+      localEmbeddingModel: document.getElementById('settingsLocalEmbeddingModel'),
+      localApiKeyEnv: document.getElementById('settingsLocalApiKeyEnv'),
+    };
+    const openrouterSettings = document.getElementById('openrouterSettings');
+    const localProviderSettings = document.getElementById('localProviderSettings');
     const pageTitle = document.getElementById('pageTitle');
     const introText = document.getElementById('introText');
     const fallbackText = document.getElementById('fallbackText');
@@ -292,6 +382,108 @@
 
     function setAiStatus(message) {
       aiStatusNode.textContent = message;
+    }
+
+    function setSettingsStatus(message) {
+      settingsStatusNode.textContent = message;
+    }
+
+    function showView(view) {
+      const settingsVisible = view === 'settings';
+      settingsPanel.hidden = !settingsVisible;
+      mainPanel.hidden = settingsVisible;
+      mainViewButton.setAttribute('aria-current', settingsVisible ? 'false' : 'page');
+      settingsViewButton.setAttribute('aria-current', settingsVisible ? 'page' : 'false');
+      (settingsVisible ? settingsFields.booksRoot : rootInput).focus();
+    }
+
+    function updateProviderFieldVisibility() {
+      const usesOpenRouter = settingsFields.activeProvider.value === 'openrouter' || settingsFields.activeEmbeddingsProvider.value === 'openrouter';
+      const usesLocal = settingsFields.activeProvider.value === 'local' || settingsFields.activeEmbeddingsProvider.value === 'local';
+      openrouterSettings.hidden = !usesOpenRouter;
+      localProviderSettings.hidden = !usesLocal;
+    }
+
+    function fillSettingsForm(config) {
+      const openrouter = config.providers?.openrouter || {};
+      const local = config.providers?.local || {};
+      settingsFields.booksRoot.value = config.booksRoot || '';
+      settingsFields.dbPath.value = config.dbPath || '';
+      settingsFields.activeProvider.value = config.activeProvider || 'openrouter';
+      settingsFields.activeEmbeddingsProvider.value = config.activeEmbeddingsProvider || 'openrouter';
+      settingsFields.openrouterBaseUrl.value = openrouter.baseUrl || '';
+      settingsFields.openrouterModel.value = openrouter.model || '';
+      settingsFields.openrouterEmbeddingModel.value = openrouter.embeddingModel || '';
+      settingsFields.openrouterApiKeyEnv.value = openrouter.apiKeyEnv || 'OPENROUTER_API_KEY';
+      settingsFields.openrouterBudget.value = openrouter.maxSessionUsageUsd ?? 1;
+      settingsFields.openrouterBaseline.value = openrouter.baselineUsageUsd ?? '';
+      settingsFields.localBaseUrl.value = local.baseUrl || '';
+      settingsFields.localModel.value = local.model || '';
+      settingsFields.localEmbeddingModel.value = local.embeddingModel || '';
+      settingsFields.localApiKeyEnv.value = local.apiKeyEnv || '';
+      rootInput.value = config.booksRoot || rootInput.value;
+      dbPathInput.value = config.dbPath || dbPathInput.value;
+      updateProviderFieldVisibility();
+    }
+
+    function collectSettingsForm() {
+      return {
+        booksRoot: settingsFields.booksRoot.value.trim(),
+        dbPath: settingsFields.dbPath.value.trim(),
+        activeProvider: settingsFields.activeProvider.value,
+        activeEmbeddingsProvider: settingsFields.activeEmbeddingsProvider.value,
+        providers: {
+          openrouter: {
+            baseUrl: settingsFields.openrouterBaseUrl.value.trim(),
+            model: settingsFields.openrouterModel.value.trim(),
+            embeddingModel: settingsFields.openrouterEmbeddingModel.value.trim(),
+            apiKeyEnv: settingsFields.openrouterApiKeyEnv.value.trim(),
+            maxSessionUsageUsd: settingsFields.openrouterBudget.value,
+            baselineUsageUsd: settingsFields.openrouterBaseline.value,
+          },
+          local: {
+            baseUrl: settingsFields.localBaseUrl.value.trim(),
+            model: settingsFields.localModel.value.trim(),
+            embeddingModel: settingsFields.localEmbeddingModel.value.trim(),
+            apiKeyEnv: settingsFields.localApiKeyEnv.value.trim(),
+          },
+        },
+      };
+    }
+
+    async function loadAppConfig() {
+      try {
+        const data = await fetchJson('/api/config');
+        fillSettingsForm(data.config || {});
+        if (!data.isConfigured) {
+          setSettingsStatus('Заполни настройки и сохрани их. После сохранения откроется главная страница.');
+          showView('settings');
+        }
+      } catch (error) {
+        setSettingsStatus(error.message);
+        showView('settings');
+      }
+    }
+
+    async function saveSettings() {
+      setSettingsStatus('Сохраняю настройки...');
+      saveSettingsButton.disabled = true;
+      try {
+        const data = await fetchJson('/api/config', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(collectSettingsForm()),
+        });
+        fillSettingsForm(data.config || {});
+        setSettingsStatus(`Настройки сохранены: ${data.path}`);
+        if (data.isConfigured) {
+          showView('main');
+        }
+      } catch (error) {
+        setSettingsStatus(error.message);
+      } finally {
+        saveSettingsButton.disabled = false;
+      }
     }
 
     function setControlBusy(control, isBusy) {
@@ -567,6 +759,11 @@
       setStatus(t('folderChosenNoPath', topLevelName));
     });
 
+    mainViewButton.addEventListener('click', () => showView('main'));
+    settingsViewButton.addEventListener('click', () => showView('settings'));
+    saveSettingsButton.addEventListener('click', saveSettings);
+    settingsFields.activeProvider.addEventListener('change', updateProviderFieldVisibility);
+    settingsFields.activeEmbeddingsProvider.addEventListener('change', updateProviderFieldVisibility);
     loadButton.addEventListener('click', loadBooks);
     reloadButton.addEventListener('click', loadBooks);
     buildIndexButton.addEventListener('click', buildIndex);
@@ -586,10 +783,12 @@
     });
 
     applyLanguage();
-
-    if (rootInput.value) {
+    loadAppConfig().then(() => {
+      if (!settingsPanel.hidden || !rootInput.value) {
+        return;
+      }
       loadBooks();
-    }
+    });
   </script>
 </body>
 </html>
