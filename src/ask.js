@@ -82,6 +82,41 @@ function createChecked(evidence) {
   };
 }
 
+function createEvidenceCandidates(evidence, { maxExcerptsPerCandidate = 3 } = {}) {
+  const groups = [];
+  const byKey = new Map();
+
+  for (const item of evidence) {
+    const key = `${item.cycle || ''}\u0000${item.book || ''}`;
+    if (!byKey.has(key)) {
+      const group = {
+        cycle: item.cycle || '',
+        book: item.book || '',
+        evidenceCount: 0,
+        sources: [],
+        excerpts: [],
+      };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+
+    const group = byKey.get(key);
+    group.evidenceCount += 1;
+    if (item.source && !group.sources.includes(item.source)) {
+      group.sources.push(item.source);
+    }
+    if (group.excerpts.length < maxExcerptsPerCandidate) {
+      group.excerpts.push({
+        source: item.source,
+        chunkIndex: item.chunkIndex,
+        excerpt: item.excerpt,
+      });
+    }
+  }
+
+  return groups.sort((a, b) => b.evidenceCount - a.evidenceCount);
+}
+
 function createFallbackResult({ providerName, provider, evidence, question }) {
   return {
     status: 'needs_provider_key',
@@ -90,6 +125,7 @@ function createFallbackResult({ providerName, provider, evidence, question }) {
     uncertainty: 'Only local retrieved evidence was returned; no answer model was called.',
     question,
     evidence,
+    candidates: createEvidenceCandidates(evidence),
     checked: createChecked(evidence),
     setup: {
       provider: providerName,
@@ -151,6 +187,7 @@ async function answerLibraryQuestion({
     uncertainty: providerAnswer.uncertainty || '',
     question: trimmedQuestion,
     evidence,
+    candidates: createEvidenceCandidates(evidence),
     checked,
   };
 }
@@ -159,6 +196,7 @@ module.exports = {
   answerLibraryQuestion,
   buildEvidencePrompt,
   buildMessages,
+  createEvidenceCandidates,
   createFtsQueryFromQuestion,
   normalizeEvidence,
 };

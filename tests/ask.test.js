@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { answerLibraryQuestion, buildEvidencePrompt } = require('../src/ask');
+const { answerLibraryQuestion, buildEvidencePrompt, createEvidenceCandidates } = require('../src/ask');
 const { createOpenAiCompatibleClient } = require('../src/providerClient');
 
 const sampleHits = [
@@ -44,6 +44,57 @@ test('buildEvidencePrompt groups retrieved snippets by cycle and book without fu
   assert.doesNotMatch(prompt, /Дракон помогает героине пройти через библиотеку/);
 });
 
+test('createEvidenceCandidates groups local evidence without adding AI-generated reasons', () => {
+  const evidence = [
+    { cycle: 'Cycle A', book: 'Book A', source: 'fts', chunkIndex: 0, excerpt: 'Первый фрагмент.' },
+    { cycle: 'Cycle A', book: 'Book A', source: 'semantic', chunkIndex: 2, excerpt: 'Второй фрагмент.' },
+    { cycle: 'Cycle B', book: 'Book B', source: 'fts', chunkIndex: 0, excerpt: 'Другой кандидат.' },
+  ];
+
+  const candidates = createEvidenceCandidates(evidence, { maxExcerptsPerCandidate: 1 });
+
+  assert.deepEqual(candidates, [
+    {
+      cycle: 'Cycle A',
+      book: 'Book A',
+      evidenceCount: 2,
+      sources: ['fts', 'semantic'],
+      excerpts: [{ source: 'fts', chunkIndex: 0, excerpt: 'Первый фрагмент.' }],
+    },
+    {
+      cycle: 'Cycle B',
+      book: 'Book B',
+      evidenceCount: 1,
+      sources: ['fts'],
+      excerpts: [{ source: 'fts', chunkIndex: 0, excerpt: 'Другой кандидат.' }],
+    },
+  ]);
+  assert.equal('reason' in candidates[0], false);
+});
+
+test('answerLibraryQuestion returns deterministic local candidates without extra provider calls', async () => {
+  let providerCalls = 0;
+  const result = await answerLibraryQuestion({
+    db: {},
+    question: 'Где есть фонарь?',
+    env: { OPENROUTER_API_KEY: 'test-key' },
+    retrievalFn: async () => ({ evidence: sampleHits, semantic: { status: 'searched' } }),
+    providerClient: {
+      chatCompletion: async () => {
+        providerCalls += 1;
+        return { answer: 'Один общий ответ.', confidence: 'medium' };
+      },
+    },
+  });
+
+  assert.equal(providerCalls, 1);
+  assert.equal(result.status, 'answered');
+  assert.equal(result.answer, 'Один общий ответ.');
+  assert.equal(result.candidates.length, 2);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.book), ['Lantern Book', 'Forest Book']);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.evidenceCount), [2, 1]);
+});
+
 test('answerLibraryQuestion returns evidence and setup status without provider key instead of calling network', async () => {
   let providerCalled = false;
   const result = await answerLibraryQuestion({
@@ -64,6 +115,8 @@ test('answerLibraryQuestion returns evidence and setup status without provider k
   assert.equal(result.answer, 'AI provider is not configured; returning local evidence candidates.');
   assert.equal(result.confidence, 'unknown');
   assert.equal(result.evidence.length, 3);
+  assert.equal(result.candidates.length, 2);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.evidenceCount), [2, 1]);
   assert.deepEqual(result.checked.books, ['Lantern Book', 'Forest Book']);
   assert.deepEqual(result.checked.cycles, ['Dragon Cycle', 'Forest Cycle']);
   assert.equal(result.setup.provider, 'openrouter');

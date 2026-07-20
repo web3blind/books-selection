@@ -100,6 +100,7 @@ The config can contain a local API key if you enter it in Settings, so do not pu
 - Builds a local SQLite FTS index for full-text search.
 - Caches embeddings in SQLite when an embeddings provider is configured.
 - Supports hybrid Ask mode over local FTS snippets, cached semantic hits, and cached derived facts.
+- Shows deterministic local candidate groups by series/book from the already retrieved evidence, without extra AI provider calls.
 - Sends only retrieved evidence snippets to the AI provider, not the full library.
 - Supports OpenRouter and local OpenAI-compatible provider settings.
 - Guards OpenRouter calls with a configurable session spend limit; default is `$1`.

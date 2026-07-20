@@ -262,6 +262,10 @@
         providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
         resultHeading: 'Результаты',
         evidenceHeading: 'Доказательные фрагменты',
+        candidatesHeading: 'Найденные варианты',
+        candidateEvidenceCount: (count) => `Доказательных фрагментов: ${count}`,
+        candidateSources: (sources) => `Источники evidence: ${sources}`,
+        candidateExcerptLabel: (source, chunkIndex) => `[${source}] Фрагмент ${chunkIndex}`,
         answerHeading: 'Ответ',
         checkedHeading: 'Проверенные книги',
         providerStatusHeading: 'Provider/setup status',
@@ -322,6 +326,10 @@
         providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
         resultHeading: 'Results',
         evidenceHeading: 'Evidence snippets',
+        candidatesHeading: 'Found candidates',
+        candidateEvidenceCount: (count) => `Evidence snippets: ${count}`,
+        candidateSources: (sources) => `Evidence sources: ${sources}`,
+        candidateExcerptLabel: (source, chunkIndex) => `[${source}] Snippet ${chunkIndex}`,
         answerHeading: 'Answer',
         checkedHeading: 'Checked books',
         providerStatusHeading: 'Provider/setup status',
@@ -604,9 +612,40 @@
       `;
     }
 
+    function renderCandidates(candidates) {
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        return `
+          <h3>${escapeHtml(t('candidatesHeading'))}</h3>
+          <p>${escapeHtml(t('nothingFound'))}</p>
+        `;
+      }
+
+      return `
+        <h3>${escapeHtml(t('candidatesHeading'))}</h3>
+        <ol>${candidates.map((candidate) => {
+          const excerpts = Array.isArray(candidate.excerpts) ? candidate.excerpts : [];
+          const sources = Array.isArray(candidate.sources) ? candidate.sources.join(', ') : '';
+          return `
+          <li>
+            <strong>${escapeHtml(candidate.book || 'Book')}</strong>
+            <div class="muted">${escapeHtml(candidate.cycle || '')}</div>
+            <p>${escapeHtml(t('candidateEvidenceCount', candidate.evidenceCount || excerpts.length))}</p>
+            ${sources ? `<p class="muted">${escapeHtml(t('candidateSources', sources))}</p>` : ''}
+            <ul>${excerpts.map((excerpt) => `
+              <li>
+                <strong>${escapeHtml(t('candidateExcerptLabel', excerpt.source || 'evidence', excerpt.chunkIndex ?? ''))}</strong>
+                <p>${escapeHtml(excerpt.excerpt || '')}</p>
+              </li>
+            `).join('')}</ul>
+          </li>
+        `; }).join('')}</ol>
+      `;
+    }
+
     function renderAskResult(result) {
       const setup = result.setup || null;
       const evidence = result.evidence || [];
+      const candidates = result.candidates || [];
       const checkedBooks = (result.checked && result.checked.books) || [];
       const answer = result.answer || result.message || '';
       aiResultsNode.innerHTML = `
@@ -614,6 +653,7 @@
         ${renderSetupStatus(setup)}
         ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
         ${result.confidence ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
+        ${renderCandidates(candidates)}
         <h3>${escapeHtml(t('evidenceHeading'))}</h3>
         <ul>${evidence.map((item) => `
           <li>
