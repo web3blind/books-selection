@@ -6,13 +6,33 @@ function stripMarkup(value) {
   return String(value || '').replace(/<[^>]+>/g, '');
 }
 
+const QUERY_STOPWORDS = new Set([
+  'а', 'без', 'бы', 'в', 'во', 'вот', 'где', 'да', 'для', 'до', 'его', 'ее', 'её', 'если', 'есть', 'же',
+  'за', 'и', 'из', 'или', 'как', 'кто', 'ли', 'на', 'над', 'надо', 'не', 'но', 'ну', 'о', 'об', 'от',
+  'по', 'под', 'при', 'про', 'с', 'со', 'та', 'так', 'то', 'у', 'чем', 'что', 'это', 'этот', 'эта',
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'about', 'where', 'what', 'who',
+]);
+
+function extractQueryTerms(question, { maxTerms = 12 } = {}) {
+  const seen = new Set();
+  const terms = [];
+  for (const rawTerm of String(question || '').toLocaleLowerCase('ru-RU').match(/[\p{L}\p{N}_-]+/gu) || []) {
+    const term = rawTerm.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (term.length < 2 || QUERY_STOPWORDS.has(term) || seen.has(term)) {
+      continue;
+    }
+    seen.add(term);
+    terms.push(term);
+    if (terms.length >= maxTerms) {
+      break;
+    }
+  }
+  return terms;
+}
+
 function createFtsQueryFromQuestion(question) {
-  const terms = String(question || '')
-    .match(/[\p{L}\p{N}_-]+/gu) || [];
-  const quoted = terms
-    .filter((term) => term.length >= 2)
-    .slice(0, 12)
-    .map((term) => `"${term.replace(/"/g, '""')}"`);
+  const terms = extractQueryTerms(question);
+  const quoted = terms.map((term) => `"${term.replace(/"/g, '""')}"`);
 
   return quoted.length > 0 ? quoted.join(' OR ') : String(question || '').trim();
 }
@@ -36,6 +56,38 @@ function normalizeChunkRow(row, source) {
     source,
     score: row.score,
   };
+}
+
+function textForScoring(row) {
+  return [row.cycle_name, row.title, row.snippet, row.text]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase('ru-RU');
+}
+
+function scoreEvidenceRows(rows, question) {
+  const terms = extractQueryTerms(question, { maxTerms: 16 });
+  if (terms.length <= 1 || rows.length <= 1) {
+    return rows;
+  }
+
+  const scored = rows.map((row, index) => {
+    const haystack = textForScoring(row);
+    const matchedTerms = terms.filter((term) => haystack.includes(term));
+    return {
+      row,
+      index,
+      matchedCount: matchedTerms.length,
+      score: matchedTerms.length / terms.length,
+    };
+  });
+  const bestMatchedCount = Math.max(...scored.map((item) => item.matchedCount));
+  const minimumMatchedCount = bestMatchedCount >= 2 ? 2 : 1;
+
+  return scored
+    .filter((item) => item.matchedCount >= minimumMatchedCount)
+    .sort((a, b) => b.matchedCount - a.matchedCount || b.score - a.score || a.index - b.index)
+    .map((item) => item.row);
 }
 
 function factToEvidenceRow(fact) {
@@ -181,7 +233,10 @@ async function collectHybridEvidence({
   }
 
   const ftsQuery = createFtsQueryFromQuestion(trimmedQuestion);
-  const ftsRows = searchFn(db, ftsQuery, { limit: ftsLimit }).map((row) => normalizeChunkRow(row, 'fts'));
+  const ftsRows = scoreEvidenceRows(
+    searchFn(db, ftsQuery, { limit: ftsLimit }).map((row) => normalizeChunkRow(row, 'fts')),
+    trimmedQuestion,
+  );
   const semantic = await collectSemanticRows({
     db,
     question: trimmedQuestion,
@@ -222,4 +277,6 @@ async function collectHybridEvidence({
 module.exports = {
   collectHybridEvidence,
   createFtsQueryFromQuestion,
+  extractQueryTerms,
+  scoreEvidenceRows,
 };

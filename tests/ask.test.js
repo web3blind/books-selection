@@ -146,7 +146,7 @@ test('answerLibraryQuestion converts a natural-language question into a safe FTS
     },
   });
 
-  assert.equal(receivedQuery, '"Где" OR "есть" OR "фонарь"');
+  assert.equal(receivedQuery, '"фонарь"');
 });
 
 test('OpenAI-compatible provider client posts chat completions through injectable fetch without leaking secrets', async () => {

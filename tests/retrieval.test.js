@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { initializeSearchDatabase } = require('../src/searchDb');
 const { storeChunkEmbedding } = require('../src/embeddings');
 const { upsertDerivedFact } = require('../src/facts');
-const { collectHybridEvidence } = require('../src/retrieval');
+const { collectHybridEvidence, createFtsQueryFromQuestion } = require('../src/retrieval');
 
 function insertBook(db, { cycleName, title, filePath, contentHash }) {
   return Number(db.prepare(`
@@ -21,6 +21,55 @@ function insertChunk(db, { bookId, chunkIndex, text, contentHash }) {
   db.prepare('INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)').run(chunkId, text);
   return chunkId;
 }
+
+test('createFtsQueryFromQuestion removes broad stopwords before FTS matching', () => {
+  assert.equal(createFtsQueryFromQuestion('Где девушка и парень помогают друг другу?'), '"девушка" OR "парень" OR "помогают" OR "друг" OR "другу"');
+});
+
+test('collectHybridEvidence reranks broad OR FTS hits toward multi-term evidence', async () => {
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    const noisyFriend = insertBook(db, { cycleName: 'Noisy Cycle', title: 'Only Friend', filePath: '/tmp/noisy.fb2', contentHash: 'noisy' });
+    insertChunk(db, {
+      bookId: noisyFriend,
+      chunkIndex: 0,
+      text: 'Кайзер постоянно подгонял друга, Максим жаловался, но всё равно бежал.',
+      contentHash: 'noisy-chunk',
+    });
+    const noisyGirl = insertBook(db, { cycleName: 'Girl Cycle', title: 'Only Girl', filePath: '/tmp/girl.fb2', contentHash: 'girl' });
+    insertChunk(db, {
+      bookId: noisyGirl,
+      chunkIndex: 0,
+      text: 'Растрёпанная девушка поправляла волосы на ходу и ушла по коридору.',
+      contentHash: 'girl-chunk',
+    });
+    const relevant = insertBook(db, { cycleName: 'Попаданец с опытом', title: 'Попаданец с опытом. Целитель', filePath: '/tmp/relevant.fb2', contentHash: 'relevant' });
+    insertChunk(db, {
+      bookId: relevant,
+      chunkIndex: 0,
+      text: 'Девушка говорила уверенно, а парень помогал ей выбраться. Они доверяли друг другу и поддерживали друг друга.',
+      contentHash: 'relevant-chunk',
+    });
+
+    const result = await collectHybridEvidence({
+      db,
+      question: 'Где девушка и парень помогают друг другу?',
+      env: {},
+      limit: 5,
+      ftsLimit: 10,
+      semanticLimit: 0,
+      includeRelatedFacts: false,
+    });
+
+    assert.ok(result.evidence.length >= 1);
+    assert.equal(result.evidence[0].book_id, relevant);
+    assert.deepEqual([...new Set(result.evidence.map((row) => row.book_id))], [relevant]);
+    assert.match(result.evidence[0].snippet, /Девушка|парень|друг/i);
+  } finally {
+    db.close();
+  }
+});
 
 test('collectHybridEvidence returns FTS evidence when semantic provider key is absent', async () => {
   const db = initializeSearchDatabase(':memory:');
