@@ -22,6 +22,7 @@ function defaultAppConfig() {
         model: openrouter.model,
         embeddingModel: openrouter.embeddingModel,
         apiKeyEnv: openrouter.apiKeyEnv,
+        apiKey: '',
         maxSessionUsageUsd: openrouter.budget.maxSessionUsageUsd,
         baselineUsageUsd: '',
       },
@@ -30,6 +31,7 @@ function defaultAppConfig() {
         model: local.model,
         embeddingModel: local.embeddingModel,
         apiKeyEnv: local.apiKeyEnv,
+        apiKey: '',
       },
     },
   };
@@ -67,6 +69,7 @@ function normalizeAppConfig(input = {}) {
         model: cleanString(openrouter.model) || defaults.providers.openrouter.model,
         embeddingModel: cleanString(openrouter.embeddingModel) || defaults.providers.openrouter.embeddingModel,
         apiKeyEnv: cleanString(openrouter.apiKeyEnv) || defaults.providers.openrouter.apiKeyEnv,
+        apiKey: cleanString(openrouter.apiKey),
         maxSessionUsageUsd: cleanOptionalNumber(openrouter.maxSessionUsageUsd) || defaults.providers.openrouter.maxSessionUsageUsd,
         baselineUsageUsd: cleanOptionalNumber(openrouter.baselineUsageUsd),
       },
@@ -75,6 +78,7 @@ function normalizeAppConfig(input = {}) {
         model: cleanString(local.model) || defaults.providers.local.model,
         embeddingModel: cleanString(local.embeddingModel) || defaults.providers.local.embeddingModel,
         apiKeyEnv: cleanString(local.apiKeyEnv) || defaults.providers.local.apiKeyEnv,
+        apiKey: cleanString(local.apiKey),
       },
     },
   };
@@ -102,6 +106,7 @@ function toProviderOverrides(config) {
         model: normalized.providers.openrouter.model,
         embeddingModel: normalized.providers.openrouter.embeddingModel,
         apiKeyEnv: normalized.providers.openrouter.apiKeyEnv,
+        apiKey: normalized.providers.openrouter.apiKey,
         budget: openrouterBudget,
       },
       local: {
@@ -109,6 +114,7 @@ function toProviderOverrides(config) {
         model: normalized.providers.local.model,
         embeddingModel: normalized.providers.local.embeddingModel,
         apiKeyEnv: normalized.providers.local.apiKeyEnv,
+        apiKey: normalized.providers.local.apiKey,
       },
     },
   };

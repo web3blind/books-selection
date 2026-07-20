@@ -7,7 +7,6 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 
 test('index page exposes simplified accessible AI question flow without committed secrets', () => {
   const requiredMarkers = [
-    'for="dbPath"',
     'id="dbPath"',
     'books-selection:last-db',
     'id="buildIndexButton"',
@@ -28,6 +27,8 @@ test('index page exposes simplified accessible AI question flow without committe
     'id="settingsPanel"',
     'id="saveSettingsButton"',
     'id="settingsActiveProvider"',
+    'id="settingsOpenrouterApiKey"',
+    'type="password"',
     'id="settingsOpenrouterBudget"',
     'id="openrouterSettings"',
     'id="localProviderSettings"',
@@ -40,6 +41,8 @@ test('index page exposes simplified accessible AI question flow without committe
 
   assert.ok(!html.includes('id="localSearchButton"'), 'question flow should not expose a separate local FTS search button');
   assert.ok(!html.includes('id="embedIndexButton"'), 'question flow should not expose a separate semantic setup button');
+  assert.ok(!html.includes('settingsOpenrouterApiKeyEnv'), 'settings should collect API key directly instead of asking for env variable names');
+  assert.ok(!html.includes('settingsLocalApiKeyEnv'), 'local settings should collect API key directly instead of asking for env variable names');
   assert.ok(!html.includes('Локальный FTS поиск'), 'RU UI should not ask users to choose a separate FTS action');
   assert.ok(!html.includes('Optional: prepare semantic embeddings'), 'EN UI should not expose semantic setup as a separate button');
   assert.ok(!html.includes('sk-'), 'index.html must not contain API-key looking values');

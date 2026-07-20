@@ -38,24 +38,36 @@ test('provider config supports local OpenAI-compatible and optional Hermes modes
 });
 
 test('api key lookup reads configured environment variable without exposing all env values', () => {
-  const config = loadProviderConfig({}, { OPENROUTER_API_KEY: 'secret-value', OTHER_SECRET: 'do-not-leak' });
+  const config = loadProviderConfig({}, { OPENROUTER_API_KEY: 'api-key-fixture', OTHER_SECRET: 'do-not-leak' });
 
-  const result = getApiKey(config.providers.openrouter, { OPENROUTER_API_KEY: 'secret-value', OTHER_SECRET: 'do-not-leak' });
+  const result = getApiKey(config.providers.openrouter, { OPENROUTER_API_KEY: 'api-key-fixture', OTHER_SECRET: 'do-not-leak' });
 
-  assert.equal(result, 'secret-value');
+  assert.equal(result, 'api-key-fixture');
   assert.deepEqual(Object.keys(config.providers.openrouter).sort(), ['apiKeyEnv', 'baseUrl', 'budget', 'embeddingModel', 'model', 'type'].sort());
   assert.equal(config.providers.openrouter.budget.maxSessionUsageUsd, 1);
   assert.equal(config.providers.openrouter.budget.maxSessionUsageEnv, 'BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD');
 });
 
+test('api key lookup prefers direct local config key when explicitly configured', () => {
+  const config = loadProviderConfig({
+    providers: {
+      openrouter: {
+        apiKey: 'direct-api-key-fixture',
+      },
+    },
+  }, { OPENROUTER_API_KEY: 'env-api-key-fixture' });
+
+  assert.equal(getApiKey(config.providers.openrouter, { OPENROUTER_API_KEY: 'env-api-key-fixture' }), 'direct-api-key-fixture');
+});
+
 test('provider config lets env lower or raise the OpenRouter session budget without exposing secrets', () => {
   const config = loadProviderConfig({}, {
-    OPENROUTER_API_KEY: 'secret-value',
+    OPENROUTER_API_KEY: 'api-key-fixture',
     BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD: '2',
     BOOKS_SELECTION_OPENROUTER_USAGE_BASELINE_USD: '10.5',
   });
 
   assert.equal(config.providers.openrouter.budget.maxSessionUsageUsd, 2);
   assert.equal(config.providers.openrouter.budget.baselineUsageUsd, 10.5);
-  assert.doesNotMatch(JSON.stringify(config), /secret-value/);
+  assert.doesNotMatch(JSON.stringify(config), /api-key-fixture/);
 });

@@ -30,7 +30,7 @@
   </div>
 
   <h1 id="pageTitle">Выбор книги по аннотации</h1>
-  <p id="introText">Можно выбрать папку через браузер. Если это не сработает, ниже остаётся обычный ввод пути.</p>
+  <p id="introText">Путь к папке книг и SQLite базе берётся из настроек. На главной странице остаются только загрузка, поиск и вопросы.</p>
 
   <nav class="actions" aria-label="Основные разделы">
     <button id="mainViewButton" type="button">Главная</button>
@@ -39,7 +39,7 @@
 
   <section id="settingsPanel" class="panel" aria-labelledby="settingsTitle" hidden>
     <h2 id="settingsTitle">Настройки</h2>
-    <p class="meta">Здесь можно настроить папку книг, SQLite базу, provider, модели и лимит OpenRouter без ручного редактирования файла.</p>
+    <p class="meta">Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.</p>
 
     <label for="settingsBooksRoot">Путь к папке книг</label>
     <input id="settingsBooksRoot" type="text" autocomplete="off" placeholder="Например: /home/denis/Книги">
@@ -69,8 +69,8 @@
       <input id="settingsOpenrouterModel" type="text" autocomplete="off">
       <label for="settingsOpenrouterEmbeddingModel">Embedding model</label>
       <input id="settingsOpenrouterEmbeddingModel" type="text" autocomplete="off">
-      <label for="settingsOpenrouterApiKeyEnv">API key environment variable</label>
-      <input id="settingsOpenrouterApiKeyEnv" type="text" autocomplete="off" placeholder="OPENROUTER_API_KEY">
+      <label for="settingsOpenrouterApiKey">OpenRouter API key</label>
+      <input id="settingsOpenrouterApiKey" type="password" autocomplete="off" placeholder="Вставь отдельный OpenRouter API key">
       <label for="settingsOpenrouterBudget">OpenRouter spend limit in dollars</label>
       <input id="settingsOpenrouterBudget" type="number" min="0" step="0.01">
       <label for="settingsOpenrouterBaseline">Optional OpenRouter usage baseline</label>
@@ -85,8 +85,8 @@
       <input id="settingsLocalModel" type="text" autocomplete="off">
       <label for="settingsLocalEmbeddingModel">Embedding model</label>
       <input id="settingsLocalEmbeddingModel" type="text" autocomplete="off">
-      <label for="settingsLocalApiKeyEnv">API key environment variable</label>
-      <input id="settingsLocalApiKeyEnv" type="text" autocomplete="off">
+      <label for="settingsLocalApiKey">Local provider API key, если нужен</label>
+      <input id="settingsLocalApiKey" type="password" autocomplete="off">
     </fieldset>
 
     <div class="actions">
@@ -103,10 +103,10 @@
     <button id="reloadButton" type="button">Обновить</button>
   </div>
 
-  <p id="fallbackText" class="meta">Fallback: если браузер не умеет отдавать путь к папке, просто вставь путь вручную.</p>
+  <p id="fallbackText" class="meta">Папка книг берётся из настроек. Если нужно изменить путь, открой раздел «Настройки».</p>
 
-  <label id="rootLabel" for="root">Путь к папке книг</label>
-  <input id="root" name="root" type="text" placeholder="Например: /home/denis/Книги" autocomplete="off">
+  <label id="rootLabel" for="root" hidden>Путь к папке книг</label>
+  <input id="root" name="root" type="hidden">
 
   <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
 
@@ -121,8 +121,8 @@
     <h2 id="aiSearchTitle">Вопрос по циклам</h2>
     <p id="aiSearchIntro" class="meta">Сначала одной кнопкой подготовь локальный индекс и семантический кэш. Потом задай вопрос по циклам и нажми «Найти ответ».</p>
 
-    <label id="dbPathLabel" for="dbPath">Путь к SQLite базе</label>
-    <input id="dbPath" name="dbPath" type="text" placeholder="Например: /home/denis/books-selection.sqlite" autocomplete="off">
+    <p id="dbPathLabel" class="meta">SQLite база берётся из настроек.</p>
+    <input id="dbPath" name="dbPath" type="hidden">
 
     <div class="actions">
       <button id="buildIndexButton" type="button">Подготовить индекс для вопросов</button>
@@ -159,13 +159,13 @@
       openrouterBaseUrl: document.getElementById('settingsOpenrouterBaseUrl'),
       openrouterModel: document.getElementById('settingsOpenrouterModel'),
       openrouterEmbeddingModel: document.getElementById('settingsOpenrouterEmbeddingModel'),
-      openrouterApiKeyEnv: document.getElementById('settingsOpenrouterApiKeyEnv'),
+      openrouterApiKey: document.getElementById('settingsOpenrouterApiKey'),
       openrouterBudget: document.getElementById('settingsOpenrouterBudget'),
       openrouterBaseline: document.getElementById('settingsOpenrouterBaseline'),
       localBaseUrl: document.getElementById('settingsLocalBaseUrl'),
       localModel: document.getElementById('settingsLocalModel'),
       localEmbeddingModel: document.getElementById('settingsLocalEmbeddingModel'),
-      localApiKeyEnv: document.getElementById('settingsLocalApiKeyEnv'),
+      localApiKey: document.getElementById('settingsLocalApiKey'),
     };
     const openrouterSettings = document.getElementById('openrouterSettings');
     const localProviderSettings = document.getElementById('localProviderSettings');
@@ -218,11 +218,11 @@
     const messages = {
       ru: {
         pageTitle: 'Выбор книги по аннотации',
-        introText: 'Можно выбрать папку через браузер. Если это не сработает, ниже остаётся обычный ввод пути.',
+        introText: 'Путь к папке книг и SQLite базе берётся из настроек. На главной странице остаются только загрузка, поиск и вопросы.',
         pickFolderButton: 'Выбрать папку через браузер',
         loadButton: 'Загрузить список',
         reloadButton: 'Обновить',
-        fallbackText: 'Fallback: если браузер не умеет отдавать путь к папке, просто вставь путь вручную.',
+        fallbackText: 'Папка книг берётся из настроек. Если нужно изменить путь, открой раздел «Настройки».',
         rootLabel: 'Путь к папке книг',
         rootPlaceholder: 'Например: /home/denis/Книги',
         searchLabel: 'Поиск по папке, названию и аннотации',
@@ -230,7 +230,7 @@
         showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
         aiSearchTitle: 'Вопрос по циклам',
         aiSearchIntro: 'Сначала одной кнопкой подготовь локальный индекс и семантический кэш. Потом задай вопрос по циклам и нажми «Найти ответ».',
-        dbPathLabel: 'Путь к SQLite базе',
+        dbPathLabel: 'SQLite база берётся из настроек.',
         dbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
         buildIndexButton: 'Подготовить индекс для вопросов',
         ftsQuestionLabel: 'Вопрос по циклам',
@@ -272,11 +272,11 @@
       },
       en: {
         pageTitle: 'Choose a book by annotation',
-        introText: 'You can try selecting a folder in the browser. If that does not work, use the manual path field below.',
+        introText: 'The books folder and SQLite database are loaded from Settings. The main page only keeps loading, search, and questions.',
         pickFolderButton: 'Choose folder in browser',
         loadButton: 'Load list',
         reloadButton: 'Reload',
-        fallbackText: 'Fallback: if the browser cannot provide the local folder path, paste it manually.',
+        fallbackText: 'The books folder is loaded from Settings. To change it, open Settings.',
         rootLabel: 'Books folder path',
         rootPlaceholder: 'For example: /home/denis/Books',
         searchLabel: 'Search by folder, title, and annotation',
@@ -284,7 +284,7 @@
         showReadyOnly: 'Show only books with annotations and without errors',
         aiSearchTitle: 'Question about series',
         aiSearchIntro: 'First prepare the local index and semantic cache with one button. Then enter a question about series and press “Find answer”.',
-        dbPathLabel: 'SQLite database path',
+        dbPathLabel: 'SQLite database is loaded from Settings.',
         dbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
         buildIndexButton: 'Prepare index for questions',
         ftsQuestionLabel: 'Question about series',
@@ -315,14 +315,14 @@
         missingFileTitle: 'Book file not found',
         missingFileAnnotation: 'No .fb2 or .fb2.zip file was found in this folder.',
         readErrorTitle: 'Book read error',
-        noRoot: 'First choose a folder in the browser or enter the books folder path manually.',
+        noRoot: 'First set the books folder in Settings.',
         loading: 'Loading book list...',
         loadError: 'Loading error',
-        pickerHintModern: 'A folder picker will open. If the browser does not provide the full path, manual input will remain available below.',
-        pickerHintBasic: 'A browser folder picker will open. If the path is not filled in, paste it manually into the field below.',
+        pickerHintModern: 'A folder picker will open. If the browser does not provide the full path, set the folder path in Settings.',
+        pickerHintBasic: 'A browser folder picker will open. If the path is not detected, set the folder path in Settings.',
         folderNotChosen: 'No folder selected.',
         folderChosen: (path) => `Folder selected: ${path}. Loading books now.`,
-        folderChosenNoPath: (name) => `Folder “${name}” was selected, but the browser did not expose the full local path. Paste the path manually below, then press “Load list”.`
+        folderChosenNoPath: (name) => `Folder “${name}” was selected, but the browser did not expose the full local path. Set the path in Settings, then press “Load list”.`
       }
     };
 
@@ -394,7 +394,7 @@
       mainPanel.hidden = settingsVisible;
       mainViewButton.setAttribute('aria-current', settingsVisible ? 'false' : 'page');
       settingsViewButton.setAttribute('aria-current', settingsVisible ? 'page' : 'false');
-      (settingsVisible ? settingsFields.booksRoot : rootInput).focus();
+      (settingsVisible ? settingsFields.booksRoot : loadButton).focus();
     }
 
     function updateProviderFieldVisibility() {
@@ -414,13 +414,13 @@
       settingsFields.openrouterBaseUrl.value = openrouter.baseUrl || '';
       settingsFields.openrouterModel.value = openrouter.model || '';
       settingsFields.openrouterEmbeddingModel.value = openrouter.embeddingModel || '';
-      settingsFields.openrouterApiKeyEnv.value = openrouter.apiKeyEnv || 'OPENROUTER_API_KEY';
+      settingsFields.openrouterApiKey.value = openrouter.apiKey || '';
       settingsFields.openrouterBudget.value = openrouter.maxSessionUsageUsd ?? 1;
       settingsFields.openrouterBaseline.value = openrouter.baselineUsageUsd ?? '';
       settingsFields.localBaseUrl.value = local.baseUrl || '';
       settingsFields.localModel.value = local.model || '';
       settingsFields.localEmbeddingModel.value = local.embeddingModel || '';
-      settingsFields.localApiKeyEnv.value = local.apiKeyEnv || '';
+      settingsFields.localApiKey.value = local.apiKey || '';
       rootInput.value = config.booksRoot || rootInput.value;
       dbPathInput.value = config.dbPath || dbPathInput.value;
       updateProviderFieldVisibility();
@@ -437,7 +437,7 @@
             baseUrl: settingsFields.openrouterBaseUrl.value.trim(),
             model: settingsFields.openrouterModel.value.trim(),
             embeddingModel: settingsFields.openrouterEmbeddingModel.value.trim(),
-            apiKeyEnv: settingsFields.openrouterApiKeyEnv.value.trim(),
+            apiKey: settingsFields.openrouterApiKey.value.trim(),
             maxSessionUsageUsd: settingsFields.openrouterBudget.value,
             baselineUsageUsd: settingsFields.openrouterBaseline.value,
           },
@@ -445,7 +445,7 @@
             baseUrl: settingsFields.localBaseUrl.value.trim(),
             model: settingsFields.localModel.value.trim(),
             embeddingModel: settingsFields.localEmbeddingModel.value.trim(),
-            apiKeyEnv: settingsFields.localApiKeyEnv.value.trim(),
+            apiKey: settingsFields.localApiKey.value.trim(),
           },
         },
       };

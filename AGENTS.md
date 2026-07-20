@@ -15,7 +15,7 @@
 - `src/retrieval.js`: hybrid Ask retrieval helper. It combines local FTS hits, optional cached semantic-vector hits, and cached derived facts with source labels (`fts`, `semantic`, `fact`), graceful no-key semantic fallback, dedupe/caps, and evidence rows compatible with `src/ask.js`.
 - `src/facts.js`: generic graph/fact helpers over SQLite: book-scoped entities, chunk-linked evidence, evidence-linked relations/events, cached derived facts, and evidence-only fact-extraction prompt scaffolding. Keep it generic; do not hardcode romance-specific cards.
 - `src/factExtractor.js`: generic model-backed fact extraction service. It uses provider config/client scaffolding, sends only supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, and upserts arbitrary `factKey`/`factType` results into `derived_facts`.
-- `src/appConfig.js`: local app settings file helper for `~/.books-selection/config.json` or `BOOKS_SELECTION_CONFIG_PATH`; normalizes UI settings, maps them to provider overrides, and must not store raw API key values.
+- `src/appConfig.js`: local app settings file helper for `~/.books-selection/config.json` or `BOOKS_SELECTION_CONFIG_PATH`; normalizes UI settings, maps them to provider overrides, supports direct local API keys by explicit product decision, and must never print real keys in docs/tests/logs.
 - `src/ask.js`: Ask pipeline поверх hybrid retrieved snippets/facts; строит evidence-only prompt, возвращает setup/evidence без provider key и не отправляет полный текст библиотеки.
 - `src/providerClient.js`: mockable OpenAI-compatible chat completion and embeddings scaffold с injectable `fetchImpl`; checks provider budget before OpenRouter chat/embedding requests; не логирует и не возвращает секреты.
 - `src/providerBudget.js`: OpenRouter credits/budget guard. It calls `/credits`, tracks a process-session usage baseline, defaults to `$1` max additional spend, supports env overrides, and blocks provider requests when the budget is reached.
@@ -52,7 +52,7 @@
 - Fact graph helpers are storage-only/prompt-only scaffolding for later enrichment. Tests must not make real OpenRouter/Hermes/local-model calls; evidence rows should point back to book/chunk context, and derived facts should remain queryable by book/cycle/type.
 - Для machine-readable поведения используй общие constants из `src/constants.js` и не завязывай UI или тесты на точные fallback-строки backend.
 - UI intentionally single-file: вся клиентская логика, тексты и локализация лежат в `public/index.html` без frontend framework.
-- AI search UI keeps the SQLite DB path separate from the books root path and persists it with browser `localStorage` key `books-selection:last-db`. The question flow intentionally exposes one prepare button (FTS index + bounded semantic cache attempt) and one answer button with a multi-line question field. Results/evidence should stay as accessible lists with normal labels/buttons/status regions, not custom widgets or tables.
+- AI search UI loads the books root and SQLite DB path from saved settings; do not reintroduce visible path inputs on the main page. The question flow intentionally exposes one prepare button (FTS index + bounded semantic cache attempt) and one answer button with a multi-line question field. Results/evidence should stay as accessible lists with normal labels/buttons/status regions, not custom widgets or tables.
 
 ## Change Rules
 - Если меняешь формат ответа `/api/books`, сразу проверяй совместимость с рендерингом и фильтрами в `public/index.html`.

@@ -99,13 +99,14 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     const configSaved = await requestJson(port, 'POST', '/api/config', {
       booksRoot: root,
       dbPath,
-      activeProvider: 'openrouter',
-      activeEmbeddingsProvider: 'openrouter',
+      activeProvider: 'local',
+      activeEmbeddingsProvider: 'local',
       providers: {
         openrouter: {
           model: 'openai/gpt-4.1-nano',
           embeddingModel: 'openai/text-embedding-3-small',
           apiKeyEnv: 'OPENROUTER_API_KEY',
+          apiKey: 'openrouter-key-fixture',
           maxSessionUsageUsd: 2,
         },
       },
@@ -124,6 +125,7 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     assert.equal(configSaved.statusCode, 200);
     assert.equal(configSaved.body.isConfigured, true);
     assert.equal(configSaved.body.config.providers.openrouter.maxSessionUsageUsd, 2);
+    assert.equal(configSaved.body.config.providers.openrouter.apiKey, 'openrouter-key-fixture');
     assert.equal(configAfter.body.config.booksRoot, root);
     assert.equal(configAfter.body.config.dbPath, dbPath);
     assert.equal(books.statusCode, 200);
@@ -146,17 +148,17 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     assert.equal(extracted.body.result.factKey, 'has_lantern');
     assert.equal(extracted.body.result.factType, 'plot_trait');
     assert.equal(extracted.body.result.evidence.length, 1);
-    assert.equal(extracted.body.result.setup.apiKeyEnv, 'OPENROUTER_API_KEY');
+    assert.equal(extracted.body.result.setup.apiKeyEnv, 'LOCAL_OPENAI_API_KEY');
     assert.equal(semantic.statusCode, 200);
     assert.equal(semantic.body.query, 'Где есть фонарь?');
     assert.equal(semantic.body.result.status, 'needs_embedding_provider_key');
     assert.deepEqual(semantic.body.result.results, []);
-    assert.equal(semantic.body.result.setup.apiKeyEnv, 'OPENROUTER_API_KEY');
+    assert.equal(semantic.body.result.setup.apiKeyEnv, 'LOCAL_OPENAI_API_KEY');
     assert.equal(embedIndex.statusCode, 200);
     assert.equal(embedIndex.body.result.status, 'needs_embedding_provider_key');
     assert.equal(embedIndex.body.result.embedded, 0);
     assert.equal(embedIndex.body.result.remaining, 1);
-    assert.equal(embedIndex.body.result.setup.apiKeyEnv, 'OPENROUTER_API_KEY');
+    assert.equal(embedIndex.body.result.setup.apiKeyEnv, 'LOCAL_OPENAI_API_KEY');
   } finally {
     child.kill();
     await fs.rm(root, { recursive: true, force: true });

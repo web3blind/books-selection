@@ -88,7 +88,15 @@ function loadProviderConfig(overrides = {}, env = process.env) {
 }
 
 function getApiKey(providerConfig, env = process.env) {
-  if (!providerConfig || !providerConfig.apiKeyEnv) {
+  if (!providerConfig) {
+    return '';
+  }
+
+  if (providerConfig.apiKey) {
+    return providerConfig.apiKey;
+  }
+
+  if (!providerConfig.apiKeyEnv) {
     return '';
   }
 
