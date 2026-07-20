@@ -30,6 +30,10 @@ tar -xzf books-selection-desktop-linux-x64.tar.gz
 
 Run `books-selection-desktop-win-x64.exe`.
 
+This is a portable Electron executable. It is meant to be downloaded and launched directly: the required application files are packaged into the `.exe`, and writable user data is created automatically on first run. No Node.js, npm, git, or neighboring project files are required.
+
+Default Windows writable locations are managed by Electron/user settings, for example the app config and SQLite index are created under the user's app data area unless you choose another SQLite path in Settings.
+
 ### macOS
 
 Extract `books-selection-desktop-mac-x64.zip` and run Books Selection.
