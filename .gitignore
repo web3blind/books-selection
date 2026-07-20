@@ -2,3 +2,15 @@ node_modules/
 .DS_Store
 Thumbs.db
 npm-debug.log*
+
+# Local app configuration may contain API keys.
+.books-selection/
+config.json
+books-selection.config.json
+*.local.json
+
+# Generated local SQLite databases and sidecar files.
+data/*.sqlite
+data/*.sqlite-*
+data/*.db
+data/*.db-*

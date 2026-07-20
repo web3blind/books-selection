@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
+  getDefaultDbPath,
   isAppConfigured,
   normalizeAppConfig,
   readAppConfig,
@@ -35,6 +36,20 @@ test('app config normalizes settings and stores explicitly provided local API ke
   assert.equal(config.providers.openrouter.baselineUsageUsd, 10.5);
   assert.equal(isAppConfigured(config), true);
   assert.equal(config.providers.openrouter.apiKey, 'api-key-fixture');
+});
+
+test('app config missing file defaults SQLite database to project data folder', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-'));
+  const env = { BOOKS_SELECTION_CONFIG_PATH: path.join(dir, 'config.json') };
+
+  try {
+    const missing = await readAppConfig(env);
+    assert.equal(missing.config.dbPath, getDefaultDbPath());
+    assert.match(missing.config.dbPath, /data[\\/]books-selection\.sqlite$/);
+    assert.equal(isAppConfigured(missing.config), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('app config read returns defaults for missing file and write persists normalized config', async () => {

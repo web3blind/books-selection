@@ -1,3 +1,5 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const { createRequire } = require('node:module');
 const { createSchemaSql } = require('./searchSchema');
 
@@ -21,6 +23,7 @@ function initializeSearchDatabase(databasePath) {
     throw new Error('SQLite runtime support is unavailable. Use Node.js with node:sqlite support or add a portable SQLite adapter later.');
   }
 
+  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new sqlite.DatabaseSync(databasePath);
   try {
     db.exec(createSchemaSql());

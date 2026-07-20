@@ -4,8 +4,14 @@ const path = require('node:path');
 
 const { DEFAULT_CONFIG } = require('./providerConfig');
 
+const projectRoot = path.join(__dirname, '..');
+
 function getConfigPath(env = process.env) {
   return env.BOOKS_SELECTION_CONFIG_PATH || path.join(os.homedir(), '.books-selection', 'config.json');
+}
+
+function getDefaultDbPath(env = process.env) {
+  return env.BOOKS_SELECTION_DB_PATH || path.join(projectRoot, 'data', 'books-selection.sqlite');
 }
 
 function defaultAppConfig() {
@@ -13,7 +19,7 @@ function defaultAppConfig() {
   const local = DEFAULT_CONFIG.providers.local;
   return {
     booksRoot: '',
-    dbPath: '',
+    dbPath: getDefaultDbPath(),
     activeProvider: DEFAULT_CONFIG.activeProvider,
     activeEmbeddingsProvider: DEFAULT_CONFIG.activeEmbeddingsProvider,
     providers: {
@@ -60,7 +66,7 @@ function normalizeAppConfig(input = {}) {
 
   return {
     booksRoot: cleanString(input.booksRoot || input.root),
-    dbPath: cleanString(input.dbPath || input.db),
+    dbPath: cleanString(input.dbPath || input.db) || defaults.dbPath,
     activeProvider: normalizeProviderName(input.activeProvider, defaults.activeProvider),
     activeEmbeddingsProvider: normalizeProviderName(input.activeEmbeddingsProvider, defaults.activeEmbeddingsProvider),
     providers: {
@@ -144,6 +150,7 @@ async function writeAppConfig(input, env = process.env) {
 module.exports = {
   defaultAppConfig,
   getConfigPath,
+  getDefaultDbPath,
   isAppConfigured,
   normalizeAppConfig,
   readAppConfig,

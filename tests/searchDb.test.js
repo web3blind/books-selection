@@ -38,6 +38,30 @@ test('search DB adapter initializes schema in a supplied SQLite database path wh
   assert.deepEqual(JSON.parse(child.stdout.trim()), { title: 'Title', index_status: 'indexed' });
 });
 
+test('search DB adapter creates missing parent directories for project data database paths', () => {
+  const child = runNodeSqliteScript(`
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const { initializeSearchDatabase } = require('./src/searchDb');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'books-selection-db-parent-'));
+    const dbPath = path.join(dir, 'nested', 'data', 'books-selection.sqlite');
+    const db = initializeSearchDatabase(dbPath);
+    db.close();
+    console.log(JSON.stringify({ exists: fs.existsSync(dbPath) }));
+    fs.rmSync(dir, { recursive: true, force: true });
+  `);
+
+  if (child.status !== 0 && /No such built-in module: node:sqlite|ERR_UNKNOWN_BUILTIN_MODULE/.test(child.stderr)) {
+    assert.match(child.stderr, /node:sqlite|ERR_UNKNOWN_BUILTIN_MODULE/);
+    return;
+  }
+
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout.trim()), { exists: true });
+});
+
 test('search DB adapter adds fact_type column when opening an older derived_facts table', () => {
   const child = runNodeSqliteScript(`
     const fs = require('node:fs');
