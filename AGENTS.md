@@ -1,67 +1,86 @@
 # AGENTS.md
 
 ## Project Context
-- Что это: локальный Node.js tool для выбора FB2-книг по аннотациям из каталога с подпапками.
-- Стек: CommonJS. Source/dev mode requires Node.js 22+ because local FTS uses `node:sqlite`. Desktop releases use Electron/electron-builder; lightweight server executables use `@yao-pkg/pkg`.
-- Главные entrypoints: `src/server.js` для HTTP-сервера/browser mode, `desktop/main.js` + `desktop/preload.js` для Electron desktop, `public/index.html` для всего UI.
+- Books Selection is a local-first CommonJS Node.js/Electron app for browsing FB2 series by annotation and asking evidence-grounded questions over a local SQLite index.
+- Source/developer mode requires Node.js 22+ because search uses built-in `node:sqlite`; packaged Electron desktop builds do not require Node.js, npm, or git on the user's machine.
+- Supported user-facing desktop artifacts are Linux x64 tar.gz, Windows x64 portable exe and folder zip, and macOS x64 zip. They are unsigned/not notarized, so SmartScreen or Gatekeeper warnings are expected.
+- Primary entrypoints: `src/server.js` for browser/server mode, `desktop/main.js` plus `desktop/preload.js` for Electron, and `public/index.html` for the entire renderer UI.
 
-## Structure
-- `src/server.js`: local HTTP server module. When executed directly (`npm start`) it starts the server and opens the system browser. When imported by Electron, `startServer({ defaultRoot: '', port: 0, openBrowser: false })` starts the same backend inside the Electron main process without spawning a child process. APIs: `GET/POST /api/config`, `GET /api/books`, `POST /api/index`, `POST /api/embed-index`, `GET /api/search`, `GET /api/semantic-search`, `GET /api/ask`, `GET /api/extract-fact`.
-- `desktop/main.js`: Electron main process. Starts the backend in-process, opens `BrowserWindow`, sets default desktop SQLite path under Electron `userData`, and owns the native directory dialog IPC handler.
-- `desktop/preload.js`: narrow, context-isolated desktop bridge exposing only `booksSelectionDesktop.pickDirectory()` and `isDesktop`.
-- `src/scan.js`: обход корневой папки, natural sort, поиск первого `.fb2` или `.fb2.zip` в каждой подпапке.
-- `src/fb2.js`: чтение FB2/XML, decoding по XML encoding, извлечение `book-title` и `annotation`, извлечение body text/chunks для будущего индекса, чтение `.fb2.zip` через встроенный ZIP parser на Node.js.
-- `src/indexer.js`: локальная индексация просканированной библиотеки в SQLite и минимальный FTS search helper без AI/network calls.
-- `src/embeddings.js`: embeddings cache helpers, local cosine-similarity ranking over cached SQLite vectors, and no-key semantic-search setup fallback.
-- `src/embeddingIndexer.js`: service for bounded chunk embedding cache population. It selects chunks missing the current embeddings provider/model/content hash, returns `needs_embedding_provider_key` without network when no key is configured, and writes vectors to `chunk_embeddings` through the mockable embeddings provider path.
-- `src/retrieval.js`: hybrid Ask retrieval helper. It combines local FTS hits, optional cached semantic-vector hits, and cached derived facts with source labels (`fts`, `semantic`, `fact`), graceful no-key semantic fallback, dedupe/caps, and evidence rows compatible with `src/ask.js`.
-- `src/facts.js`: generic graph/fact helpers over SQLite: book-scoped entities, chunk-linked evidence, evidence-linked relations/events, cached derived facts, and evidence-only fact-extraction prompt scaffolding. Keep it generic; do not hardcode romance-specific cards.
-- `src/factExtractor.js`: generic model-backed fact extraction service. It uses provider config/client scaffolding, sends only supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, and upserts arbitrary `factKey`/`factType` results into `derived_facts`.
-- `src/appConfig.js`: local app settings file helper for `~/.books-selection/config.json` or `BOOKS_SELECTION_CONFIG_PATH`; normalizes UI settings, maps them to provider overrides, defaults SQLite to project-local `data/books-selection.sqlite`, supports direct local API keys by explicit product decision, and must never print real keys in docs/tests/logs.
-- `src/ask.js`: Ask pipeline поверх hybrid retrieved snippets/facts; строит evidence-only prompt, возвращает setup/evidence без provider key и не отправляет полный текст библиотеки.
-- `src/providerClient.js`: mockable OpenAI-compatible chat completion and embeddings scaffold с injectable `fetchImpl`; checks provider budget before OpenRouter chat/embedding requests; не логирует и не возвращает секреты.
-- `src/providerBudget.js`: OpenRouter credits/budget guard. It calls `/credits`, tracks a process-session usage baseline, defaults to `$1` max additional spend, supports env overrides, and blocks provider requests when the budget is reached.
-- `src/providerConfig.js`: безопасные provider defaults для будущих AI и embeddings вызовов; ключи только через env references, без сетевых вызовов.
-- `src/searchSchema.js`: SQLite schema SQL для books/chunks/chunk_embeddings/FTS5/entities/relations/events/evidence/derived facts.
-- `src/searchDb.js`: тонкий optional adapter на `node:sqlite`; normal annotation browsing не должен от него зависеть.
-- `src/constants.js`: общие status/reason constants и fallback-тексты для scan layer.
-- `tests/fb2.test.js`: node:test для парсинга XML, fallback-логики, body extraction/chunking и чтения zip.
-- `tests/indexer.test.js`: node:test для SQLite indexing service, FTS population/search и unchanged-file skip behavior.
-- `tests/serverApi.test.js`: node:test smoke для `/api/books`, `/api/index`, `/api/search`, `/api/ask`.
-- `tests/ask.test.js`: node:test для evidence-only prompt, no-key fallback и mockable provider client behavior.
-- `tests/embeddings.test.js`: node:test для chunk_embeddings schema/cache, embeddings config/client, cosine ranking и no-key semantic fallback.
-- `tests/embeddingIndexer.test.js`: node:test для bounded chunk embedding cache population with mocked provider/no-key behavior; never make real provider calls.
-- `tests/retrieval.test.js`: node:test для hybrid Ask retrieval over FTS, cached semantic vectors, derived facts, dedupe/limits/source labels, and no-key fallback without real network calls.
-- `tests/facts.test.js`: node:test для generic fact graph helpers, evidence links, derived_fact upsert/query behavior и fact-extraction prompt scaffold.
-- `tests/factExtractor.test.js`: node:test для model-backed generic fact extraction service с mocked provider/no-key behavior и derived_facts cache upsert.
-- `tests/uiStatic.test.js`: static smoke assertions for the single-file UI: accessible labels/ids for index/search/Ask controls and no accidental API-key-looking values.
-- `plan.md`: продуктовый план, его нужно держать в соответствии с реальной реализацией.
+## Architecture And File Ownership
+- `src/server.js`: loopback-only HTTP server bound to `127.0.0.1`. Direct execution opens the system browser; Electron imports `startServer()` and starts the same backend in-process on an ephemeral port without a child process.
+- `desktop/main.js`: Electron lifecycle, `BrowserWindow`, desktop SQLite default under Electron `userData`, native folder-dialog IPC, external-link handling, and Linux-verifiable smoke mode.
+- `desktop/preload.js`: narrow context-isolated bridge exposing only `booksSelectionDesktop.isDesktop` and `pickDirectory()`; do not expose filesystem, process, shell, or arbitrary IPC access.
+- `public/index.html`: intentional single-file, framework-free RU/EN UI containing markup, styles, localization, settings, annotation browser, index/Ask flow, accessible live regions, and update banner.
+- `src/scan.js`: scans exactly one level of series folders, natural-sorts files, and selects the first `.fb2` or `.fb2.zip` in each folder.
+- `src/fb2.js`: FB2/XML encoding detection, title/annotation/body extraction, stable text chunking, and built-in ZIP reading without Python.
+- `src/indexer.js`: transactional local indexing, file fingerprinting, unchanged-file skip, chunk replacement, FTS5 synchronization, and local snippet search.
+- `src/searchSchema.js`: schema for books, chunks, FTS5, embeddings, entities, evidence, relations, events, and derived facts.
+- `src/searchDb.js`: optional `node:sqlite` adapter, parent-directory creation, schema initialization, and compatibility migration for older `derived_facts` tables missing `fact_type`.
+- `src/embeddings.js`: embedding cache storage, query embedding, local cosine ranking, and graceful no-key semantic-search result.
+- `src/embeddingIndexer.js`: bounded population of embeddings missing for the current provider/model/content hash.
+- `src/retrieval.js`: hybrid evidence retrieval combining FTS, optional cached semantic hits, and cached facts with `fts`/`semantic`/`fact` source labels, scoring, dedupe, and caps.
+- `src/ask.js`: evidence-only Ask pipeline and deterministic local candidate grouping; it never sends the full library to a model.
+- `src/facts.js`: generic evidence-linked entity/relation/event/derived-fact storage and prompt helpers. Keep this generic; do not hardcode romance-specific schemas.
+- `src/factExtractor.js`: generic model-backed fact extraction from supplied evidence and cache upsert by arbitrary `factKey`/`factType`.
+- `src/appConfig.js`: normalization and persistence of user-local settings, including saved paths, providers, models, budget, and explicitly entered API keys.
+- `src/providerConfig.js`: defaults and resolution for OpenRouter, local OpenAI-compatible, and Hermes modes; an explicitly saved key takes precedence over its env reference.
+- `src/providerClient.js`: injectable OpenAI-compatible chat/embedding transport; budget check happens before provider requests.
+- `src/providerBudget.js`: OpenRouter `/credits` guard with a process-session baseline and a default maximum additional spend of `$1`.
+- `src/updateChecker.js`: GitHub Releases lookup, version comparison, and platform-specific asset selection for the update notification.
+- `src/constants.js`: machine-readable scan statuses/reasons and backend fallback strings.
+- `scripts/build-dist.js`: legacy `@yao-pkg/pkg` server-only bundles that open the browser; these are not the preferred desktop releases.
+- `plan.md`: historical/product implementation plan. Keep active status and architecture claims aligned when behavior materially changes; do not add transient task logs or commit IDs.
 
-## Run And Validation
-- Запуск: `npm start -- /path/to/Books 3210`
-- Тесты: `npm test`
-- Без автооткрытия браузера: `BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210`
+## HTTP API And Data Flow
+- `GET/POST /api/config`: read/write normalized local settings. JSON request bodies are limited to 1 MiB.
+- `GET /api/books`: scan annotations without SQLite, provider keys, or AI/network calls.
+- `POST /api/index`: scan, parse, fingerprint, chunk, and index changed books into SQLite/FTS.
+- `GET /api/search`: local FTS search.
+- `POST /api/embed-index`: bounded embedding cache population; accepts optional `limit` and `batchSize`.
+- `GET /api/semantic-search`: local ranking over cached vectors after creating a query embedding.
+- `GET /api/ask`: hybrid retrieval followed by optional evidence-only answer generation.
+- `GET /api/extract-fact`: requires `q`, numeric `bookId`, and `factKey`; `factType` defaults to `generic`.
+- `GET /api/update-check`: checks the public GitHub latest-release endpoint and returns current/latest version plus preferred and fallback assets.
+- Root and DB resolution order is explicit query parameter, saved app config, then applicable runtime default. `q` and endpoint-specific identifiers remain required.
+- Missing answer or embedding credentials must return `needs_provider_key` / `needs_embedding_provider_key` with setup metadata and no provider request.
+- Plain annotation browsing, SQLite indexing, FTS, cached-vector ranking, and fact storage remain local. Only configured embeddings/chat/fact extraction and the public update check use the network.
+- OpenRouter calls must pass the credits/budget guard before both chat and embeddings. Tests must mock every provider and GitHub call.
+- Hermes appears in provider configuration and Settings as an optional scaffold, but no Hermes CLI/API transport is implemented yet. Do not claim it works until a dedicated adapter and tests exist.
 
-## Behavior And Invariants
-- Сканируется только один уровень подпапок внутри переданного root path.
-- На папку берётся первый подходящий файл по natural sort (`.fb2` или `.fb2.zip`).
-- API возвращает записи со status: `ok`, `missing`, `error`; UI и фильтры опираются на `status`, `reason`, `hasAnnotation`.
-- `/api/index` and `/api/search` require explicit `db` query parameter or `BOOKS_SELECTION_DB_PATH`; they must remain local, without AI/network calls and without reading API keys.
-- `/api/embed-index` requires `db`, accepts optional `limit` and `batchSize`, and only populates embeddings for chunks missing the current embeddings provider/model/content hash. Without an embeddings provider key it must return `needs_embedding_provider_key` and must not call provider/network.
-- `/api/semantic-search` requires `db` and `q`; it returns `needs_embedding_provider_key` with setup info without calling the network when the embeddings provider key is absent, and otherwise ranks only cached SQLite vectors by local cosine similarity.
-- `/api/ask` тоже требует `db` и `q`; использует hybrid retrieval из `src/retrieval.js`: FTS snippets, optional cached semantic hits if a query embedding can be produced, and cached derived facts for related books/fact filters. Missing embeddings key is a graceful semantic skip, not a hard Ask failure. Если active answer provider key не настроен, возвращает `needs_provider_key` с evidence/setup и не вызывает сеть. Если ключ есть, provider client сначала проверяет OpenRouter budget/credits guard, затем отправляет только retrieved snippets/evidence with source labels, не полный текст библиотеки.
-- `/api/extract-fact` требует `db`, `q`, `bookId`, `factKey`; `factType` optional/default `generic`. It retrieves local evidence for that book, then uses `src/factExtractor.js`: no provider key means `needs_provider_key` and no network; configured provider means only supplied excerpts/snippets are sent and the returned generic fact is cached in `derived_facts`.
-- Fact graph helpers are storage-only/prompt-only scaffolding for later enrichment. Tests must not make real OpenRouter/Hermes/local-model calls; evidence rows should point back to book/chunk context, and derived facts should remain queryable by book/cycle/type.
-- Для machine-readable поведения используй общие constants из `src/constants.js` и не завязывай UI или тесты на точные fallback-строки backend.
-- UI intentionally single-file: вся клиентская логика, тексты и локализация лежат в `public/index.html` без frontend framework.
-- AI search UI loads the books root and SQLite DB path from saved settings; do not reintroduce visible path inputs on the main page. The question flow intentionally exposes one prepare button (FTS index + bounded semantic cache attempt) and one answer button with a multi-line question field. Results/evidence should stay as accessible lists with normal labels/buttons/status regions, not custom widgets or tables.
+## UI And Accessibility Invariants
+- The main page uses saved books-root and DB settings; do not reintroduce visible technical path inputs there. First-run configuration belongs in Settings.
+- Keep native HTML labels, buttons, links, lists, headings, and `role="status"`/`aria-live` regions; avoid custom widgets and tables for Ask evidence/results.
+- Keep RU and EN text maps synchronized when adding visible copy or controls.
+- The intended question flow has one prepare action (FTS index plus bounded semantic-cache attempt), one multiline question field, and one answer action.
+- UI filtering depends on machine-readable `status`, `reason`, and `hasAnnotation`; do not couple it to exact backend fallback prose.
+- Desktop renderer security is load-bearing: preserve `nodeIntegration: false`, `contextIsolation: true`, the narrow preload API, and external URL routing through `shell.openExternal`.
+- Startup update checks must be silent and non-blocking on failure. A newer release shows OS-specific download links and a release-page fallback; the app does not auto-install, unpack, delete, or replace itself. “Skip this version” is localStorage state.
 
-## Change Rules
-- Если меняешь формат ответа `/api/books`, сразу проверяй совместимость с рендерингом и фильтрами в `public/index.html`.
-- Если меняешь ZIP/FB2 parsing в `src/fb2.js`, обновляй или добавляй node:test кейсы в `tests/fb2.test.js`.
-- Если меняешь команды, ограничения платформы или архитектурные допущения, обновляй `README.md` и `plan.md` вместе с кодом.
-- Не добавляй тяжёлые зависимости или frontend framework без явной причины: текущая архитектура намеренно минимальная.
+## Config, Writable Data, And Secrets
+- Default config: `~/.books-selection/config.json`; override with `BOOKS_SELECTION_CONFIG_PATH`.
+- Source/pkg default DB: runtime-root `data/books-selection.sqlite`; override with `BOOKS_SELECTION_DB_PATH`. Electron sets its default DB under the app's `userData/data/` directory.
+- User-local config may contain API keys entered in Settings by explicit product decision. `writeAppConfig()` creates the parent directory with mode `0700` and writes the file with mode `0600` where supported.
+- Never commit, print, log, return, fixture, or document real keys. Keep `.books-selection/`, local config variants, generated SQLite files/sidecars, `dist/`, and `dist-desktop/` ignored.
+- Relevant env: `PORT`, `BOOKS_SELECTION_NO_OPEN`, `BOOKS_SELECTION_CONFIG_PATH`, `BOOKS_SELECTION_DB_PATH`, `OPENROUTER_API_KEY`, `LOCAL_OPENAI_API_KEY`, `BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD`, and `BOOKS_SELECTION_OPENROUTER_USAGE_BASELINE_USD`.
+- Desktop-only env used by runtime/testing: `BOOKS_SELECTION_DESKTOP`, `BOOKS_SELECTION_DESKTOP_SMOKE`; do not treat these as normal end-user configuration.
 
-## Config And Secrets
-- Секреты не коммитятся. Provider config хранит только имена env-переменных (`OPENROUTER_API_KEY`, `LOCAL_OPENAI_API_KEY`), не значения.
-- Основные runtime inputs: CLI args `root` и `port`, env `PORT`, env `BOOKS_SELECTION_NO_OPEN`.
+## Run, Test, And Build
+- Install: `npm install`.
+- Full test suite: `npm test` (`node --test tests/*.test.js`). Tests use Node's built-in test runner and temporary directories/databases.
+- Browser/server mode: `npm start -- /path/to/Books 3210`.
+- Browser/server mode without auto-open: `BOOKS_SELECTION_NO_OPEN=1 npm start -- /path/to/Books 3210`.
+- Desktop development: `npm run desktop:start`.
+- Preferred desktop release build: `npm run build:desktop`; output is under `dist-desktop/`.
+- Legacy server-only bundle build: `npm run build:dist`; output is under `dist/`.
+- Before completion run at least `npm test` and `git diff --check`. For desktop/runtime changes, also execute the real Electron smoke path under a display/Xvfb and verify page title, preload bridge, picker function, `/api/config` HTTP 200, and a non-empty DB path.
+- Focused ownership: parser/ZIP changes → `tests/fb2.test.js`; schema/migrations → `tests/searchSchema.test.js` and `tests/searchDb.test.js`; indexing → `tests/indexer.test.js`; provider/config/budget → corresponding provider/app-config tests; API changes → server/update API tests; UI changes → `tests/uiStatic.test.js`; Electron/build changes → `tests/desktopStatic.test.js` and `tests/packageMetadata.test.js`.
+
+## Change Coupling And Release Rules
+- API response changes require updating every UI consumer and focused API test in the same change.
+- Config/provider field changes require synchronized updates to `src/appConfig.js`, `src/providerConfig.js`, Settings controls, both translation maps, and focused tests.
+- SQLite table/column changes require schema SQL, compatibility migration logic, and temp-database tests; preserve existing user databases.
+- FB2/ZIP parser changes require realistic plain-FB2 and zipped-FB2 fixtures/tests, including encoding behavior where relevant.
+- Keep dependencies minimal and upper-bounded. Do not add a frontend framework, native SQLite/vector extension, or heavy runtime dependency without an explicit portability justification.
+- Electron release filenames are a public contract. If version, targets, architectures, repository identity, or filenames change, update `package.json`, `package-lock.json`, `src/updateChecker.js`, `README.md`, `GITHUB.md` where relevant, package/update tests, and GitHub release assets together.
+- Current stable desktop asset names are `books-selection-desktop-linux-x64.tar.gz`, `books-selection-desktop-win-x64.exe`, `books-selection-desktop-win-x64.zip`, and `books-selection-desktop-mac-x64.zip`; `releases/latest/download/...` links depend on them.
+- Public releases must be built from the matching package version, tested before upload, and verified by reading back the GitHub release asset list and checking each latest-download URL. Do not call a local build a published release.
