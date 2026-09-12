@@ -147,6 +147,20 @@ test('chunkText creates stable bounded chunks with offsets and hashes', () => {
   assert.ok(chunks.every((chunk) => /^[a-f0-9]{64}$/.test(chunk.contentHash)));
 });
 
+test('chunkText enforces maxChars for long sentences and preserves normalized offsets', () => {
+  const text = `${'а'.repeat(130)}\n\nВторой абзац без потери смещений.`;
+  const normalized = text.trim();
+  const chunks = chunkText(text, { maxChars: 40 });
+
+  assert.ok(chunks.length > 3);
+  assert.ok(chunks.every((chunk) => chunk.text.length <= 40));
+  assert.ok(chunks.every((chunk) => chunk.startOffset >= 0));
+  assert.deepEqual(
+    chunks.map((chunk) => normalized.slice(chunk.startOffset, chunk.endOffset)),
+    chunks.map((chunk) => chunk.text),
+  );
+});
+
 test('reads fb2 from zip without python', async () => {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
   <FictionBook>
@@ -167,4 +181,33 @@ test('reads fb2 from zip without python', async () => {
 
   assert.equal(result.title, 'Леший');
   assert.equal(result.annotation, 'Аннотация внутри zip.');
+});
+
+test('rejects a zip entry whose declared uncompressed size exceeds the safety limit before inflation', async () => {
+  const zipBuffer = createZipBuffer('book.fb2', '<FictionBook/>');
+  const centralOffset = zipBuffer.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  zipBuffer.writeUInt32LE(300 * 1024 * 1024, centralOffset + 24);
+  const tempFile = path.join(os.tmpdir(), `books-selection-limit-${Date.now()}.fb2.zip`);
+
+  await fs.writeFile(tempFile, zipBuffer);
+  try {
+    await assert.rejects(readBookInfo(tempFile), /safety limit/i);
+  } finally {
+    await fs.unlink(tempFile);
+  }
+});
+
+test('rejects encrypted zip entries', async () => {
+  const zipBuffer = createZipBuffer('book.fb2', '<FictionBook/>');
+  const centralOffset = zipBuffer.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  zipBuffer.writeUInt16LE(1, 6);
+  zipBuffer.writeUInt16LE(1, centralOffset + 8);
+  const tempFile = path.join(os.tmpdir(), `books-selection-encrypted-${Date.now()}.fb2.zip`);
+
+  await fs.writeFile(tempFile, zipBuffer);
+  try {
+    await assert.rejects(readBookInfo(tempFile), /encrypted/i);
+  } finally {
+    await fs.unlink(tempFile);
+  }
 });

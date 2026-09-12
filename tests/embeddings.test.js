@@ -35,13 +35,16 @@ test('schema stores durable chunk embeddings keyed by chunk, provider, model, an
     assert.equal(row.content_hash, 'chunk-hash');
     assert.deepEqual(JSON.parse(row.embedding_json), [0.1, 0.2, 0.3]);
 
-    assert.throws(() => storeChunkEmbedding(db, {
+    storeChunkEmbedding(db, {
       chunkId,
       provider: 'openrouter',
       model: 'text-embedding-3-small',
       contentHash: 'chunk-hash',
       embedding: [0.4, 0.5, 0.6],
-    }), /UNIQUE|constraint/i);
+    });
+    const refreshed = db.prepare('SELECT embedding_json FROM chunk_embeddings WHERE chunk_id = ?').all(chunkId);
+    assert.equal(refreshed.length, 1);
+    assert.deepEqual(JSON.parse(refreshed[0].embedding_json), [0.4, 0.5, 0.6]);
 
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'chunk_embeddings'").all().map((item) => item.name);
     assert.ok(indexes.includes('idx_chunk_embeddings_provider_model_hash'));
@@ -115,6 +118,20 @@ test('cosineSimilarity and semanticSearchChunks rank cached DB vectors locally',
     assert.equal(results[0].chunk_index, 0);
     assert.equal(results[0].title, 'Vector Book');
     assert.ok(results[0].score > results[1].score);
+  } finally {
+    db.close();
+  }
+});
+
+test('semanticSearchChunks ignores embeddings whose content hash is stale', () => {
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    const bookId = Number(db.prepare("INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status) VALUES ('Cycle', '/tmp/Cycle', '/tmp/stale.fb2', 1, 2, 'book', 'Book', '', 'indexed')").run().lastInsertRowid);
+    const chunkId = Number(db.prepare("INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset) VALUES (?, 0, 'current text', 'current-hash', 0, 12)").run(bookId).lastInsertRowid);
+    db.prepare("INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json) VALUES (?, 'openrouter', 'embed', 'stale-hash', '[1,0]')").run(chunkId);
+
+    assert.deepEqual(semanticSearchChunks(db, [1, 0], { provider: 'openrouter', model: 'embed' }), []);
   } finally {
     db.close();
   }

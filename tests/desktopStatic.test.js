@@ -11,6 +11,11 @@ test('Electron desktop starts backend in main process and opens BrowserWindow', 
   assert.ok(main.includes('startServer({ defaultRoot: \'\', port: 0, openBrowser: false'), 'desktop should start local backend without opening the system browser');
   assert.ok(main.includes('new BrowserWindow'), 'desktop should open an app window');
   assert.ok(main.includes('serverHandle.url'), 'desktop window should load the in-process server URL');
+  assert.ok(main.includes('async function ensureServer()'), 'desktop should reuse one backend server for reopened windows');
+  assert.ok(main.includes('sandbox: true'), 'desktop renderer should use Chromium sandboxing');
+  assert.ok(main.includes("mainWindow.webContents.on('will-navigate'"), 'desktop should block navigation away from its loopback origin');
+  assert.ok(main.includes('isAllowedExternalUrl'), 'desktop should validate URLs before opening them externally');
+  assert.ok(main.includes('isTrustedRendererUrl'), 'desktop IPC should validate the calling renderer URL');
   assert.ok(main.includes('BOOKS_SELECTION_DESKTOP_SMOKE'), 'desktop should include a Linux-verifiable smoke mode');
   assert.ok(!main.includes('child_process'), 'desktop backend must not be spawned as a separate child process');
 });

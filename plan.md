@@ -2,7 +2,53 @@
 
 ## Status
 
-Основной annotation-browser выполнен. Новый активный план: превратить Books Selection в локальный AI/semantic search tool по FB2-библиотеке с SQLite, FTS5, embeddings, графом фактов и несколькими AI provider modes.
+Статус: исправления по аудиту реализованы и проверены. Обновление защищённого `AGENTS.md` ожидает отдельного разрешения; код, README и тесты используют актуальные POST-контракты. Hermes provider transport Денис реализует отдельно; до появления транспорта Hermes остаётся внутренним scaffold и не показывается как рабочий выбор в UI.
+
+Основной annotation-browser выполнен. Стратегическое направление: превратить Books Selection в локальный AI/semantic search tool по FB2-библиотеке с SQLite, FTS5, embeddings, графом фактов и несколькими AI provider modes.
+
+## Active audit remediation
+
+### Scope and non-goals
+
+- Защитить loopback API от cross-origin/DNS-rebinding запросов, не возвращать сохранённые ключи и валидировать provider configuration.
+- Исправить удаление устаревших книг, фактов и embeddings; сохранить совместимость существующих SQLite баз.
+- Проверять model-generated evidence и не сохранять неподтверждённые ссылки.
+- Исправить нулевой бюджет, конкурентные Ask-запросы, `bookId`, chunk/ZIP limits, permissions и prompt-injection boundary.
+- Исправить RU/EN UI, доступные статусы, folder picker, uncertainty, Electron navigation/lifecycle и release metadata.
+- Обновить уязвимые build dependencies в пределах совместимых major versions, если lockfile позволяет устранить audit findings без смены архитектуры.
+- Не реализовывать Hermes adapter в этой задаче, не публиковать release и не обращаться к реальным AI providers.
+
+### Files and boundaries
+
+- In scope: `src/`, `desktop/`, `public/index.html`, focused tests, package metadata/lockfile, `.gitignore`, `README.md`, `AGENTS.md`, `plan.md`.
+- Out of scope: user libraries/config/databases, live API keys, GitHub release publication, Hermes transport implementation, production deployment.
+
+### Functional slices
+
+1. Loopback API and provider configuration security with API-level regression tests.
+2. SQLite/index/fact/embedding consistency with migration-safe database tests.
+3. FB2 chunking and bounded ZIP parsing tests/fixes.
+4. AI evidence validation, budget correctness and request deduplication tests/fixes.
+5. UI localization/accessibility/folder/uncertainty behavior.
+6. Electron navigation/lifecycle hardening and release/dependency hygiene.
+7. Full integration, browser/Electron smoke, security review and documentation alignment.
+
+### Verification
+
+- RED/GREEN focused tests for every behavior change.
+- `npm test` and `git diff --check`.
+- `npm audit --json` with remaining findings classified.
+- Real loopback API smoke using temporary config/library/database only.
+- Electron smoke under Xvfb with temporary config/database.
+- Browser-visible flow and console check where practical without real provider calls.
+
+### Completion contract
+
+- `outcome`: all audit findings are fixed or explicitly proven non-actionable; existing annotation, indexing, Ask fallback and desktop startup remain working.
+- `verification`: focused regression tests plus full suite, syntax, API and Electron/browser smoke evidence.
+- `constraints`: no real provider calls, no user data/config mutation, no Hermes adapter, no release publication, no widening beyond audited defects.
+- `boundaries`: only this repository and temporary test data may change; external accounts/services remain untouched.
+- `stop_when`: a fix requires real credentials, live spending, release publication, incompatible dependency major upgrade, or a product decision that changes the Hermes adapter contract.
 
 ## Product Goal
 
@@ -24,11 +70,11 @@
 - Базовые тесты на FB2 parsing и scan behavior.
 
 - SQLite schema, indexer and FTS endpoints delivered in commit `73ec214`.
-- Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `GET /api/ask?q=...&db=...`.
-- Embeddings cache / semantic scaffold increment delivered: durable `chunk_embeddings` table, embedding model config defaults, mockable OpenAI-compatible `/embeddings` client, local cosine ranking over cached vectors, no-key semantic setup fallback, and `GET /api/semantic-search?q=...&db=...` status endpoint.
+- Current TDD increment delivered Ask MVP over local FTS evidence: evidence-only prompt construction, no-key fallback status, mockable OpenAI-compatible provider client scaffold, and `POST /api/ask`.
+- Embeddings cache / semantic scaffold increment delivered: durable `chunk_embeddings` table, embedding model config defaults, mockable OpenAI-compatible `/embeddings` client, local cosine ranking over cached vectors, no-key semantic setup fallback, and `POST /api/semantic-search` status endpoint.
 - Chunk embedding indexing increment delivered: `src/embeddingIndexer.js` selects chunks missing the current embeddings provider/model/content hash, returns `needs_embedding_provider_key` without network when the key is absent, writes mocked-provider vectors into `chunk_embeddings`, supports changed chunk re-embedding and bounded `limit`/`batchSize` runs, and exposes `POST /api/embed-index?db=...&limit=...&batchSize=...`.
 - Generic fact graph helper increment delivered: `src/facts.js` storage helpers for book-scoped entities, chunk-linked evidence, evidence-linked relations/events, derived fact upsert/query by book/cycle/type, plus an evidence-only fact-extraction prompt scaffold.
-- Generic model-backed fact extraction increment delivered: `src/factExtractor.js` builds generic prompts from supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, uses injectable/mockable provider clients, upserts arbitrary `factKey`/`factType` results into `derived_facts`, and exposes a small `GET /api/extract-fact` setup/cache endpoint.
+- Generic model-backed fact extraction increment delivered: `src/factExtractor.js` builds generic prompts from supplied excerpts/snippets, returns `needs_provider_key` without network when no key is configured, uses injectable/mockable provider clients, upserts arbitrary `factKey`/`factType` results into `derived_facts`, and exposes a small `POST /api/extract-fact` setup/cache endpoint.
 - Minimal accessible UI controls increment delivered: `public/index.html` now exposes separate browser-persisted SQLite DB path input, a single prepare-index button that builds/updates SQLite FTS and attempts semantic cache setup, a multi-line question field, a single Find answer action, provider/setup live status, and list-based results/evidence rendering without a frontend framework.
 - Hybrid Ask retrieval increment delivered: `src/retrieval.js` combines local FTS snippets, optional cached semantic-vector hits, and cached derived facts with `fts`/`semantic`/`fact` source labels, dedupe/caps, graceful no-key semantic fallback, and evidence rows compatible with `answerLibraryQuestion`.
 - OpenRouter budget guard delivered: provider calls check OpenRouter `/credits` before chat and embeddings requests, default to a `$1` process-session spend cap, support `BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD` and optional baseline env override, and block the provider request when the cap is reached.

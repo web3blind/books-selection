@@ -12,8 +12,8 @@ config.json
 books-selection.config.json
 *.local.json
 
-# Generated local SQLite databases and sidecar files.
-data/*.sqlite
-data/*.sqlite-*
-data/*.db
-data/*.db-*
+# Generated local SQLite databases and sidecar files anywhere in the repository.
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*

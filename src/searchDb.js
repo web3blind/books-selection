@@ -34,6 +34,10 @@ function initializeSearchDatabase(databasePath) {
     db.exec("ALTER TABLE derived_facts ADD COLUMN fact_type TEXT NOT NULL DEFAULT 'generic'");
     db.exec(createSchemaSql());
   }
+  const bookColumns = db.prepare('PRAGMA table_info(books)').all().map((row) => row.name);
+  if (!bookColumns.includes('indexed_root')) {
+    db.exec('ALTER TABLE books ADD COLUMN indexed_root TEXT');
+  }
   return db;
 }
 

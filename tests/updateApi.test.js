@@ -4,10 +4,10 @@ const http = require('node:http');
 
 const { createRequestHandler } = require('../src/server');
 
-function requestJson(server, path) {
+function requestJson(server, path, headers = {}) {
   return new Promise((resolve, reject) => {
     const { port } = server.address();
-    http.get({ hostname: '127.0.0.1', port, path }, (response) => {
+    http.get({ hostname: '127.0.0.1', port, path, headers }, (response) => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => { body += chunk; });
@@ -34,6 +34,7 @@ function listen(server) {
 
 test('/api/update-check returns update metadata with platform-specific assets', async () => {
   const server = http.createServer(createRequestHandler({
+    apiToken: 'test-token',
     updateCheckOptions: {
       currentVersion: '0.3.4',
       fetchImpl: async () => ({
@@ -56,7 +57,9 @@ test('/api/update-check returns update metadata with platform-specific assets', 
 
   try {
     await listen(server);
-    const response = await requestJson(server, '/api/update-check?platform=win32');
+    const response = await requestJson(server, '/api/update-check?platform=win32', {
+      cookie: 'books_selection_api_token=test-token',
+    });
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.hasUpdate, true);

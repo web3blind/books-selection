@@ -15,6 +15,13 @@ test('compareVersions handles v-prefixed semantic release tags', () => {
   assert.equal(compareVersions('0.3.3', '0.3.4'), -1);
 });
 
+test('compareVersions follows SemVer prerelease precedence and ignores build metadata', () => {
+  assert.equal(compareVersions('1.0.0-rc.1', '1.0.0'), -1);
+  assert.equal(compareVersions('1.0.0', '1.0.0-rc.1'), 1);
+  assert.equal(compareVersions('1.0.0-rc.2', '1.0.0-rc.10'), -1);
+  assert.equal(compareVersions('1.0.0+build.2', '1.0.0+build.1'), 0);
+});
+
 test('selectPlatformAssets chooses platform-specific desktop assets without hiding all downloads', () => {
   const releaseAssets = [
     { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://example.test/linux' },

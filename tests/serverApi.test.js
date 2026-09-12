@@ -25,31 +25,31 @@ async function writeSampleBook(root) {
   </FictionBook>`);
 }
 
-function requestJson(port, method, pathname, payload) {
+function requestRaw(port, method, pathname, { payload, rawBody, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const body = payload === undefined ? '' : JSON.stringify(payload);
+    const body = rawBody !== undefined
+      ? rawBody
+      : payload === undefined ? '' : JSON.stringify(payload);
     const request = http.request({
       hostname: '127.0.0.1',
       port,
       method,
       path: pathname,
-      headers: body ? {
-        'content-type': 'application/json',
-        'content-length': Buffer.byteLength(body),
-      } : undefined,
+      headers: {
+        ...headers,
+        ...(body && headers['content-length'] === undefined ? { 'content-length': Buffer.byteLength(body) } : {}),
+      },
     }, (response) => {
-      let body = '';
+      let responseBody = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => {
-        body += chunk;
+        responseBody += chunk;
       });
-      response.on('end', () => {
-        try {
-          resolve({ statusCode: response.statusCode, body: JSON.parse(body) });
-        } catch (error) {
-          reject(error);
-        }
-      });
+      response.on('end', () => resolve({
+        statusCode: response.statusCode,
+        headers: response.headers,
+        body: responseBody,
+      }));
     });
     request.on('error', reject);
     if (body) {
@@ -59,13 +59,32 @@ function requestJson(port, method, pathname, payload) {
   });
 }
 
+async function requestJson(port, method, pathname, payload, headers = {}) {
+  const requestHeaders = payload === undefined
+    ? headers
+    : { 'content-type': 'application/json', ...headers };
+  const response = await requestRaw(port, method, pathname, { payload, headers: requestHeaders });
+  return { ...response, body: JSON.parse(response.body) };
+}
+
+async function getApiCookie(port) {
+  const response = await requestRaw(port, 'GET', '/');
+  assert.equal(response.statusCode, 200);
+  const setCookie = response.headers['set-cookie']?.[0] || '';
+  assert.match(setCookie, /HttpOnly/i);
+  assert.match(setCookie, /SameSite=Strict/i);
+  return setCookie.split(';', 1)[0];
+}
+
 function waitForServer(child) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('server did not start')), 5000);
     child.stdout.on('data', (data) => {
-      if (data.toString('utf8').includes('Books Selection started:')) {
+      const text = data.toString('utf8');
+      const match = text.match(/Books Selection started: http:\/\/127\.0\.0\.1:(\d+)/);
+      if (match) {
         clearTimeout(timeout);
-        resolve();
+        resolve(Number(match[1]));
       }
     });
     child.stderr.on('data', (data) => {
@@ -77,6 +96,19 @@ function waitForServer(child) {
     child.on('exit', (code) => {
       reject(new Error(`server exited early with code ${code}`));
     });
+  });
+}
+
+function spawnTestServer(root, configPath, port = 0) {
+  return spawn(process.execPath, ['src/server.js', root, String(port)], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      BOOKS_SELECTION_NO_OPEN: '1',
+      BOOKS_SELECTION_CONFIG_PATH: configPath,
+      OPENROUTER_API_KEY: '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
@@ -94,9 +126,17 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
 
   try {
     await waitForServer(child);
+    const apiCookie = await getApiCookie(port);
+    const apiRequest = (method, pathname, payload) => requestJson(
+      port,
+      method,
+      pathname,
+      payload,
+      { cookie: apiCookie },
+    );
 
-    const configBefore = await requestJson(port, 'GET', '/api/config');
-    const configSaved = await requestJson(port, 'POST', '/api/config', {
+    const configBefore = await apiRequest('GET', '/api/config');
+    const configSaved = await apiRequest('POST', '/api/config', {
       booksRoot: root,
       dbPath,
       activeProvider: 'local',
@@ -111,27 +151,40 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
         },
       },
     });
-    const configAfter = await requestJson(port, 'GET', '/api/config');
-    const books = await requestJson(port, 'GET', '/api/books');
-    const indexed = await requestJson(port, 'POST', '/api/index');
-    const hits = await requestJson(port, 'GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
-    const answer = await requestJson(port, 'GET', `/api/ask?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
-    const extracted = await requestJson(port, 'GET', `/api/extract-fact?q=${encodeURIComponent('Есть ли фонарь?')}&bookId=1&factKey=${encodeURIComponent('has_lantern')}&factType=${encodeURIComponent('plot_trait')}&db=${encodeURIComponent(dbPath)}`);
-    const semantic = await requestJson(port, 'GET', `/api/semantic-search?q=${encodeURIComponent('Где есть фонарь?')}&db=${encodeURIComponent(dbPath)}`);
-    const embedIndex = await requestJson(port, 'POST', `/api/embed-index?db=${encodeURIComponent(dbPath)}&limit=2`);
+    const configAfter = await apiRequest('GET', '/api/config');
+    const configCleared = await apiRequest('POST', '/api/config', {
+      booksRoot: root,
+      dbPath,
+      activeProvider: 'local',
+      activeEmbeddingsProvider: 'local',
+      providers: { openrouter: { clearApiKey: true } },
+    });
+    const books = await apiRequest('GET', '/api/books');
+    const indexed = await apiRequest('POST', '/api/index', { root, db: dbPath });
+    const hits = await apiRequest('GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
+    const answer = await apiRequest('POST', '/api/ask', { q: 'Где есть фонарь?', db: dbPath });
+    const extracted = await apiRequest('POST', '/api/extract-fact', {
+      q: 'Есть ли фонарь?', bookId: 1, factKey: 'has_lantern', factType: 'plot_trait', db: dbPath,
+    });
+    const semantic = await apiRequest('POST', '/api/semantic-search', { q: 'Где есть фонарь?', db: dbPath });
+    const embedIndex = await apiRequest('POST', '/api/embed-index', { db: dbPath, limit: 2 });
 
     assert.equal(configBefore.statusCode, 200);
     assert.equal(configBefore.body.isConfigured, false);
     assert.equal(configSaved.statusCode, 200);
     assert.equal(configSaved.body.isConfigured, true);
     assert.equal(configSaved.body.config.providers.openrouter.maxSessionUsageUsd, 2);
-    assert.equal(configSaved.body.config.providers.openrouter.apiKey, 'openrouter-key-fixture');
+    assert.equal(configSaved.body.config.providers.openrouter.apiKey, '');
+    assert.equal(configSaved.body.config.providers.openrouter.hasApiKey, true);
+    assert.doesNotMatch(JSON.stringify(configSaved.body), /openrouter-key-fixture/);
     assert.equal(configAfter.body.config.booksRoot, root);
     assert.equal(configAfter.body.config.dbPath, dbPath);
+    assert.equal(configCleared.statusCode, 200);
+    assert.equal(configCleared.body.config.providers.openrouter.hasApiKey, false);
     assert.equal(books.statusCode, 200);
     assert.equal(books.body.books[0].title, 'API Indexed Book');
     assert.equal(indexed.statusCode, 200);
-    assert.deepEqual(indexed.body.result, { indexed: 1, skipped: 0, errors: 0, total: 1 });
+    assert.deepEqual(indexed.body.result, { indexed: 1, skipped: 0, errors: 0, total: 1, removed: 0 });
     assert.equal(hits.statusCode, 200);
     assert.equal(hits.body.query, 'фонарь');
     assert.equal(hits.body.count, 1);
@@ -159,6 +212,70 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     assert.equal(embedIndex.body.result.embedded, 0);
     assert.equal(embedIndex.body.result.remaining, 1);
     assert.equal(embedIndex.body.result.setup.apiKeyEnv, 'LOCAL_OPENAI_API_KEY');
+  } finally {
+    child.kill();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('server API rejects missing launch token, hostile Host, and cross-origin requests', async () => {
+  const root = await createTempRoot();
+  const child = spawnTestServer(root, path.join(root, 'config.json'));
+
+  try {
+    const port = await waitForServer(child);
+    const missingToken = await requestJson(port, 'GET', '/api/config');
+    const hostileHost = await requestRaw(port, 'GET', '/', {
+      headers: { host: `attacker.example:${port}` },
+    });
+    const cookie = await getApiCookie(port);
+    const hostileOrigin = await requestJson(port, 'GET', '/api/config', undefined, {
+      cookie,
+      origin: 'https://attacker.example',
+    });
+    const paidGet = await requestJson(port, 'GET', '/api/ask?q=test', undefined, { cookie });
+
+    assert.equal(missingToken.statusCode, 403);
+    assert.equal(hostileHost.statusCode, 403);
+    assert.equal(hostileOrigin.statusCode, 403);
+    assert.equal(paidGet.statusCode, 405);
+  } finally {
+    child.kill();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('server API returns clean errors for unsupported content types and malformed or oversized JSON', async () => {
+  const root = await createTempRoot();
+  const child = spawnTestServer(root, path.join(root, 'config.json'));
+
+  try {
+    const port = await waitForServer(child);
+    const cookie = await getApiCookie(port);
+    const commonHeaders = { cookie };
+    const unsupported = await requestRaw(port, 'POST', '/api/config', {
+      rawBody: '{}',
+      headers: { ...commonHeaders, 'content-type': 'text/plain' },
+    });
+    const malformed = await requestRaw(port, 'POST', '/api/config', {
+      rawBody: '{not-json',
+      headers: { ...commonHeaders, 'content-type': 'application/json' },
+    });
+    const oversized = await requestRaw(port, 'POST', '/api/config', {
+      rawBody: '{}',
+      headers: {
+        ...commonHeaders,
+        'content-type': 'application/json',
+        'content-length': String((1024 * 1024) + 1),
+      },
+    });
+
+    assert.equal(unsupported.statusCode, 415);
+    assert.match(JSON.parse(unsupported.body).error, /application\/json/);
+    assert.equal(malformed.statusCode, 400);
+    assert.match(JSON.parse(malformed.body).error, /valid JSON/);
+    assert.equal(oversized.statusCode, 413);
+    assert.match(JSON.parse(oversized.body).error, /too large/);
   } finally {
     child.kill();
     await fs.rm(root, { recursive: true, force: true });

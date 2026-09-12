@@ -165,17 +165,21 @@ Those builds start the local server and open the system browser. The desktop bui
 
 The local server exposes JSON endpoints used by the UI:
 
-- `GET /api/config`
+- `GET /api/config` (saved keys are redacted)
 - `POST /api/config`
 - `GET /api/books`
 - `POST /api/index`
 - `POST /api/embed-index`
 - `GET /api/search`
-- `GET /api/semantic-search`
-- `GET /api/ask`
-- `GET /api/extract-fact`
+- `POST /api/semantic-search`
+- `POST /api/ask`
+- `POST /api/extract-fact`
 
 Annotation browsing through `/api/books` does not require AI keys. Indexing/search uses local SQLite. AI-backed answer generation and embeddings require provider configuration.
+
+The UI receives a random per-launch HttpOnly cookie before it can access `/api/*`. The server rejects unexpected Host/Origin values, and provider-capable or state-changing endpoints accept JSON POST requests only. OpenRouter keys are never returned by the config API after saving.
+
+Hermes transport is not included yet, so Hermes is not shown as a working provider choice. Its internal scaffold is reserved for a future dedicated adapter.
 
 ## Notes
 

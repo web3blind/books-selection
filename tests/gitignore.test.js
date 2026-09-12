@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const gitignore = fs.readFileSync(path.join(__dirname, '..', '.gitignore'), 'utf8');
+const ignoreLines = new Set(gitignore.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
 
 test('gitignore excludes local config files and generated SQLite databases', () => {
   for (const marker of [
@@ -12,10 +13,11 @@ test('gitignore excludes local config files and generated SQLite databases', () 
     '.books-selection/',
     'config.json',
     '*.local.json',
-    'data/*.sqlite',
-    'data/*.sqlite-*',
-    'data/*.db',
+    '*.sqlite',
+    '*.sqlite-*',
+    '*.db',
+    '*.db-*',
   ]) {
-    assert.ok(gitignore.includes(marker), `missing .gitignore marker: ${marker}`);
+    assert.ok(ignoreLines.has(marker), `missing .gitignore marker: ${marker}`);
   }
 });

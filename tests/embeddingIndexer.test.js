@@ -128,7 +128,7 @@ test('indexMissingChunkEmbeddings re-embeds changed chunk hashes without duplica
     assert.equal(first.embedded, 1);
     assert.equal(second.embedded, 0);
     assert.deepEqual(client.calls, ['changed cached chunk after edit']);
-    assert.deepEqual(rows.map((row) => row.content_hash), ['new-hash', 'old-hash']);
+    assert.deepEqual(rows.map((row) => row.content_hash), ['new-hash']);
   } finally {
     db.close();
   }

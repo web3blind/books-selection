@@ -9,6 +9,7 @@ const {
   isAppConfigured,
   normalizeAppConfig,
   readAppConfig,
+  redactAppConfig,
   toProviderOverrides,
   writeAppConfig,
 } = require('../src/appConfig');
@@ -33,7 +34,7 @@ test('app config normalizes settings and stores explicitly provided local API ke
   assert.equal(config.booksRoot, '/books');
   assert.equal(config.dbPath, '/tmp/books.sqlite');
   assert.equal(config.providers.openrouter.maxSessionUsageUsd, 2);
-  assert.equal(config.providers.openrouter.baselineUsageUsd, 10.5);
+  assert.equal(config.providers.openrouter.baselineUsageUsd, undefined);
   assert.equal(isAppConfigured(config), true);
   assert.equal(config.providers.openrouter.apiKey, 'api-key-fixture');
 });
@@ -96,6 +97,91 @@ test('app config converts UI settings to provider overrides for AI calls', () =>
   assert.equal(overrides.activeEmbeddingsProvider, 'openrouter');
   assert.equal(overrides.providers.local.model, 'local-chat');
   assert.equal(overrides.providers.openrouter.budget.maxSessionUsageUsd, 2);
-  assert.equal(overrides.providers.openrouter.budget.baselineUsageUsd, 5);
+  assert.equal(overrides.providers.openrouter.budget.baselineUsageUsd, undefined);
   assert.equal(overrides.providers.openrouter.apiKey, 'openrouter-key-fixture');
+});
+
+test('app config keeps Hermes unavailable until its transport adapter exists', () => {
+  const config = normalizeAppConfig({ activeProvider: 'hermes', activeEmbeddingsProvider: 'hermes' });
+  assert.equal(config.activeProvider, 'openrouter');
+  assert.equal(config.activeEmbeddingsProvider, 'openrouter');
+});
+
+test('app config preserves a zero OpenRouter session budget', () => {
+  const config = normalizeAppConfig({ providers: { openrouter: { maxSessionUsageUsd: 0 } } });
+  const overrides = toProviderOverrides(config);
+
+  assert.equal(config.providers.openrouter.maxSessionUsageUsd, 0);
+  assert.equal(overrides.providers.openrouter.budget.maxSessionUsageUsd, 0);
+});
+
+test('app config redaction reports key presence without returning saved or environment keys', () => {
+  const redacted = redactAppConfig(normalizeAppConfig({
+    providers: {
+      openrouter: { apiKey: 'saved-secret' },
+      local: { apiKey: '' },
+    },
+  }), { LOCAL_OPENAI_API_KEY: 'environment-secret' });
+
+  assert.equal(redacted.providers.openrouter.apiKey, '');
+  assert.equal(redacted.providers.openrouter.hasApiKey, true);
+  assert.equal(redacted.providers.local.apiKey, '');
+  assert.equal(redacted.providers.local.hasApiKey, true);
+  assert.doesNotMatch(JSON.stringify(redacted), /saved-secret|environment-secret/);
+});
+
+test('writing blank or masked API key fields preserves existing saved keys', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-'));
+  const env = { BOOKS_SELECTION_CONFIG_PATH: path.join(dir, 'config.json') };
+
+  try {
+    await writeAppConfig({
+      providers: {
+        openrouter: { apiKey: 'saved-openrouter-secret' },
+        local: { apiKey: 'saved-local-secret' },
+      },
+    }, env);
+    await writeAppConfig({
+      providers: {
+        openrouter: { apiKey: '' },
+        local: { apiKey: '********' },
+      },
+    }, env);
+
+    const readBack = await readAppConfig(env);
+    assert.equal(readBack.config.providers.openrouter.apiKey, 'saved-openrouter-secret');
+    assert.equal(readBack.config.providers.local.apiKey, 'saved-local-secret');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeAppConfig clears a saved API key only through an explicit clear action', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-clear-'));
+  const env = { BOOKS_SELECTION_CONFIG_PATH: path.join(dir, 'config.json') };
+  try {
+    await writeAppConfig({ providers: { openrouter: { apiKey: 'saved-secret' } } }, env);
+    await writeAppConfig({ providers: { openrouter: { apiKey: '', clearApiKey: true } } }, env);
+    const readBack = await readAppConfig(env);
+    assert.equal(readBack.config.providers.openrouter.apiKey, '');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeAppConfig repairs restrictive permissions on existing config paths', async () => {
+  if (process.platform === 'win32') return;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-mode-'));
+  const configPath = path.join(dir, '.books-selection', 'config.json');
+  const env = { ...process.env, BOOKS_SELECTION_CONFIG_PATH: configPath };
+  await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o755 });
+  await fs.writeFile(configPath, '{}', { mode: 0o644 });
+
+  try {
+    await writeAppConfig({ booksRoot: '/books' }, env);
+    assert.equal((await fs.stat(configPath)).mode & 0o777, 0o600);
+    assert.equal((await fs.stat(path.dirname(configPath))).mode & 0o777, 0o700);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

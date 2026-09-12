@@ -37,6 +37,10 @@ function cosineSimilarity(left, right) {
 function storeChunkEmbedding(db, { chunkId, provider, model, contentHash, embedding }) {
   assertEmbedding(embedding);
 
+  db.prepare(`
+    DELETE FROM chunk_embeddings
+    WHERE chunk_id = ? AND provider = ? AND model = ?
+  `).run(chunkId, provider, model);
   return db.prepare(`
     INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json)
     VALUES (?, ?, ?, ?, ?)
@@ -79,6 +83,7 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
     JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
     JOIN books ON books.id = chunks.book_id
     WHERE chunk_embeddings.provider = ? AND chunk_embeddings.model = ?
+      AND chunk_embeddings.content_hash = chunks.content_hash
   `).all(provider, model);
 
   return rows

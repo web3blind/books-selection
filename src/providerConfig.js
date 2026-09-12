@@ -32,6 +32,56 @@ const DEFAULT_CONFIG = {
   },
 };
 
+const ALLOWED_API_KEY_ENV_NAMES = new Set([
+  'OPENROUTER_API_KEY',
+  'LOCAL_OPENAI_API_KEY',
+]);
+
+function validateProviderBaseUrl(providerName, value) {
+  let url;
+  try {
+    url = new URL(String(value || ''));
+  } catch {
+    throw new Error(`${providerName === 'openrouter' ? 'OpenRouter' : 'Local provider'} base URL is invalid.`);
+  }
+
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error(`${providerName === 'openrouter' ? 'OpenRouter' : 'Local provider'} base URL must not include credentials, query parameters, or fragments.`);
+  }
+
+  if (providerName === 'openrouter') {
+    if (url.protocol !== 'https:' || url.hostname !== 'openrouter.ai') {
+      throw new Error('OpenRouter base URL must use HTTPS on openrouter.ai.');
+    }
+  } else {
+    const loopbackHosts = new Set(['127.0.0.1', 'localhost', '[::1]']);
+    if (!['http:', 'https:'].includes(url.protocol) || !loopbackHosts.has(url.hostname)) {
+      throw new Error('Local provider base URL must use HTTP or HTTPS on a loopback host.');
+    }
+  }
+
+  return String(value);
+}
+
+function sanitizeProvider(providerName, provider) {
+  const defaultProvider = DEFAULT_CONFIG.providers[providerName];
+  const sanitized = {
+    ...provider,
+    baseUrl: validateProviderBaseUrl(providerName, provider.baseUrl),
+    apiKeyEnv: provider.apiKeyEnv === defaultProvider.apiKeyEnv
+      ? provider.apiKeyEnv
+      : defaultProvider.apiKeyEnv,
+  };
+  if (providerName === 'openrouter') {
+    sanitized.budget = {
+      ...provider.budget,
+      maxSessionUsageEnv: defaultProvider.budget.maxSessionUsageEnv,
+      baselineUsageEnv: defaultProvider.budget.baselineUsageEnv,
+    };
+  }
+  return sanitized;
+}
+
 function mergeProvider(defaultProvider, overrideProvider = {}) {
   return {
     ...defaultProvider,
@@ -72,7 +122,7 @@ function applyBudgetEnv(provider, env) {
 
 function loadProviderConfig(overrides = {}, env = process.env) {
   const openrouter = applyBudgetEnv(
-    mergeProvider(DEFAULT_CONFIG.providers.openrouter, overrides.providers?.openrouter),
+    sanitizeProvider('openrouter', mergeProvider(DEFAULT_CONFIG.providers.openrouter, overrides.providers?.openrouter)),
     env,
   );
 
@@ -81,7 +131,7 @@ function loadProviderConfig(overrides = {}, env = process.env) {
     activeEmbeddingsProvider: overrides.activeEmbeddingsProvider || DEFAULT_CONFIG.activeEmbeddingsProvider,
     providers: {
       openrouter,
-      local: mergeProvider(DEFAULT_CONFIG.providers.local, overrides.providers?.local),
+      local: sanitizeProvider('local', mergeProvider(DEFAULT_CONFIG.providers.local, overrides.providers?.local)),
       hermes: mergeProvider(DEFAULT_CONFIG.providers.hermes, overrides.providers?.hermes),
     },
   };
@@ -100,6 +150,10 @@ function getApiKey(providerConfig, env = process.env) {
     return '';
   }
 
+  if (!ALLOWED_API_KEY_ENV_NAMES.has(providerConfig.apiKeyEnv)) {
+    return '';
+  }
+
   return env[providerConfig.apiKeyEnv] || '';
 }
 
@@ -107,4 +161,5 @@ module.exports = {
   DEFAULT_CONFIG,
   getApiKey,
   loadProviderConfig,
+  validateProviderBaseUrl,
 };

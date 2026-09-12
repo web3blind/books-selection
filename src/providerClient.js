@@ -1,4 +1,4 @@
-const { checkProviderBudget } = require('./providerBudget');
+const { checkProviderBudget, runWithProviderBudget } = require('./providerBudget');
 
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
@@ -36,36 +36,44 @@ function createOpenAiCompatibleClient({
     throw new Error('OpenAI-compatible provider requires fetch support or injected fetchImpl.');
   }
 
-  async function assertBudgetAllowsRequest() {
+  async function runBudgeted(operation) {
     if (typeof budgetGuard !== 'function') {
-      return { status: 'disabled' };
+      return operation();
     }
-    return budgetGuard({ provider, apiKey, fetchImpl, budgetState });
+    return runWithProviderBudget({
+      provider,
+      apiKey,
+      fetchImpl,
+      budgetState,
+      budgetGuard,
+      operation,
+    });
   }
 
   return {
     async chatCompletion({ messages, temperature = 0.2 }) {
-      await assertBudgetAllowsRequest();
-      const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: provider.model,
-          messages,
-          temperature,
-          response_format: { type: 'json_object' },
-        }),
+      return runBudgeted(async () => {
+        const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: provider.model,
+            messages,
+            temperature,
+            response_format: { type: 'json_object' },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Provider chat completion failed with HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        return parseJsonContent(payload?.choices?.[0]?.message?.content || '');
       });
-
-      if (!response.ok) {
-        throw new Error(`Provider chat completion failed with HTTP ${response.status}`);
-      }
-
-      const payload = await response.json();
-      return parseJsonContent(payload?.choices?.[0]?.message?.content || '');
     },
 
     async createEmbedding({ input }) {
@@ -73,29 +81,30 @@ function createOpenAiCompatibleClient({
         throw new Error('OpenAI-compatible provider requires embeddingModel for embeddings.');
       }
 
-      await assertBudgetAllowsRequest();
-      const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/embeddings`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: provider.embeddingModel,
-          input,
-        }),
+      return runBudgeted(async () => {
+        const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}/embeddings`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: provider.embeddingModel,
+            input,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Provider embeddings request failed with HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const embedding = payload?.data?.[0]?.embedding;
+        if (!Array.isArray(embedding)) {
+          throw new Error('Provider embeddings response did not include an embedding vector.');
+        }
+        return embedding;
       });
-
-      if (!response.ok) {
-        throw new Error(`Provider embeddings request failed with HTTP ${response.status}`);
-      }
-
-      const payload = await response.json();
-      const embedding = payload?.data?.[0]?.embedding;
-      if (!Array.isArray(embedding)) {
-        throw new Error('Provider embeddings response did not include an embedding vector.');
-      }
-      return embedding;
     },
   };
 }

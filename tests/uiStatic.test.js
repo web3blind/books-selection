@@ -18,6 +18,8 @@ test('index page exposes simplified accessible AI question flow without committe
     'aria-live="polite"',
     'id="aiResults"',
     'id="updateBanner"',
+    'role="status"',
+    'aria-atomic="true"',
     'id="updateBannerLinks"',
     '/api/update-check',
     'updateAvailableTitle',
@@ -26,6 +28,10 @@ test('index page exposes simplified accessible AI question flow without committe
     'renderAiProcessingStatus(result)',
     'renderAiProcessingError(error.message)',
     'renderCandidates(candidates)',
+    'uncertaintyLabel',
+    'result.uncertainty',
+    'setControlBusy(askButton, true)',
+    'setControlBusy(askButton, false)',
     'Найденные варианты',
     'Доказательных фрагментов:',
     'Found candidates',
@@ -45,6 +51,8 @@ test('index page exposes simplified accessible AI question flow without committe
     'id="saveSettingsButton"',
     'id="settingsActiveProvider"',
     'id="settingsOpenrouterApiKey"',
+    'id="settingsClearOpenrouterApiKey"',
+    'id="settingsClearLocalApiKey"',
     'type="password"',
     'id="settingsOpenrouterBudget"',
     'id="settingsPickBooksRootButton"',
@@ -63,6 +71,15 @@ test('index page exposes simplified accessible AI question flow without committe
   assert.ok(!html.includes('id="embedIndexButton"'), 'question flow should not expose a separate semantic setup button');
   assert.ok(!html.includes('settingsOpenrouterApiKeyEnv'), 'settings should collect API key directly instead of asking for env variable names');
   assert.ok(!html.includes('settingsLocalApiKeyEnv'), 'local settings should collect API key directly instead of asking for env variable names');
+  assert.ok(!html.includes('<option value="hermes">'), 'Hermes must not be presented as working until its adapter exists');
+  for (const key of [
+    'mainViewButtonText', 'settingsViewButtonText', 'settingsTitleText', 'settingsIntroText',
+    'settingsBooksRootLabel', 'settingsDbPathLabel', 'settingsActiveProviderLabel',
+    'settingsEmbeddingProviderLabel', 'saveSettingsButtonText', 'settingsSaved',
+    'uncertaintyLabel',
+  ]) {
+    assert.ok(html.includes(`${key}:`), `missing localized UI key: ${key}`);
+  }
   assert.ok(!html.includes('Локальный FTS поиск'), 'RU UI should not ask users to choose a separate FTS action');
   assert.ok(!html.includes('Optional: prepare semantic embeddings'), 'EN UI should not expose semantic setup as a separate button');
   assert.ok(!html.includes('sk-'), 'index.html must not contain API-key looking values');

@@ -4,21 +4,53 @@ const RELEASES_API_URL = 'https://api.github.com/repos/web3blind/books-selection
 const RELEASES_PAGE_URL = 'https://github.com/web3blind/books-selection/releases/latest';
 
 function normalizeVersion(version) {
-  return String(version || '').trim().replace(/^v/i, '');
+  return String(version || '').trim().replace(/^v/i, '').split('+', 1)[0];
+}
+
+function parseVersion(version) {
+  const normalized = normalizeVersion(version);
+  const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
+  if (!match) return null;
+  return {
+    core: match.slice(1, 4).map(Number),
+    prerelease: match[4] ? match[4].split('.') : [],
+  };
+}
+
+function comparePrerelease(left, right) {
+  if (left.length === 0 || right.length === 0) {
+    if (left.length === right.length) return 0;
+    return left.length === 0 ? 1 : -1;
+  }
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] === undefined) return -1;
+    if (right[index] === undefined) return 1;
+    const leftNumeric = /^\d+$/.test(left[index]);
+    const rightNumeric = /^\d+$/.test(right[index]);
+    if (leftNumeric && rightNumeric) {
+      const diff = Number(left[index]) - Number(right[index]);
+      if (diff !== 0) return diff > 0 ? 1 : -1;
+    } else if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    } else if (left[index] !== right[index]) {
+      return left[index] > right[index] ? 1 : -1;
+    }
+  }
+  return 0;
 }
 
 function compareVersions(a, b) {
-  const left = normalizeVersion(a).split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
-  const right = normalizeVersion(b).split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
-  const length = Math.max(left.length, right.length, 3);
-
-  for (let index = 0; index < length; index += 1) {
-    const diff = (left[index] || 0) - (right[index] || 0);
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (!left || !right) return 0;
+  for (let index = 0; index < 3; index += 1) {
+    const diff = left.core[index] - right.core[index];
     if (diff !== 0) {
       return diff > 0 ? 1 : -1;
     }
   }
-  return 0;
+  return comparePrerelease(left.prerelease, right.prerelease);
 }
 
 function getAssetKind(filename) {

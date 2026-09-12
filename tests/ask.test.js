@@ -39,6 +39,8 @@ test('buildEvidencePrompt groups retrieved snippets by cycle and book without fu
   assert.match(prompt, /Книга: Lantern Book/);
   assert.match(prompt, /Фрагмент 0/);
   assert.match(prompt, /Героиня нашла фонарь в башне/);
+  assert.match(prompt, /недоверенные данные/i);
+  assert.match(prompt, /evidence_1/);
   assert.match(prompt, /Цикл: Forest Cycle/);
   assert.doesNotMatch(prompt, /Полный текст первого релевантного фрагмента/);
   assert.doesNotMatch(prompt, /Дракон помогает героине пройти через библиотеку/);
@@ -82,7 +84,7 @@ test('answerLibraryQuestion returns deterministic local candidates without extra
     providerClient: {
       chatCompletion: async () => {
         providerCalls += 1;
-        return { answer: 'Один общий ответ.', confidence: 'medium' };
+        return { answer: 'Один общий ответ.', confidence: 'medium', evidence: ['evidence_1'] };
       },
     },
   });
@@ -166,6 +168,7 @@ test('answerLibraryQuestion sends hybrid FTS semantic and fact evidence only to 
           answer: 'Lantern Book подходит по фрагментам и факту.',
           confidence: 'medium',
           uncertainty: 'Проверены только найденные hybrid evidence.',
+          evidence: ['evidence_1', 'evidence_2'],
         };
       },
     },
@@ -185,6 +188,44 @@ test('answerLibraryQuestion sends hybrid FTS semantic and fact evidence only to 
   assert.equal(result.evidence.length, 3);
   assert.deepEqual(result.checked.books, ['Lantern Book']);
   assert.deepEqual(result.checked.cycles, ['Dragon Cycle']);
+  assert.deepEqual(result.citedEvidence.map((item) => item.evidenceId), ['evidence_1', 'evidence_2']);
+});
+
+test('answerLibraryQuestion rejects provider citations outside retrieved evidence', async () => {
+  await assert.rejects(answerLibraryQuestion({
+    db: {},
+    question: 'Где есть фонарь?',
+    env: { OPENROUTER_API_KEY: 'test-key' },
+    searchFn: () => sampleHits,
+    providerClient: {
+      chatCompletion: async () => ({
+        answer: 'Поддельный ответ.',
+        confidence: 'high',
+        evidence: ['invented_evidence'],
+      }),
+    },
+  }), /unknown evidence/i);
+});
+
+test('answerLibraryQuestion does not call a provider when retrieval found no evidence', async () => {
+  let providerCalls = 0;
+  const result = await answerLibraryQuestion({
+    db: {},
+    question: 'Несуществующий сюжет?',
+    env: { OPENROUTER_API_KEY: 'test-key' },
+    searchFn: () => [],
+    providerClient: {
+      chatCompletion: async () => {
+        providerCalls += 1;
+        return { answer: 'should not happen', evidence: [] };
+      },
+    },
+  });
+
+  assert.equal(providerCalls, 0);
+  assert.equal(result.status, 'no_evidence');
+  assert.deepEqual(result.evidence, []);
+  assert.deepEqual(result.candidates, []);
 });
 
 test('answerLibraryQuestion converts a natural-language question into a safe FTS retrieval query', async () => {

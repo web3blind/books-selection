@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS books (
   title TEXT NOT NULL,
   annotation TEXT NOT NULL,
   index_status TEXT NOT NULL DEFAULT 'pending',
-  indexed_at TEXT
+  indexed_at TEXT,
+  indexed_root TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chunks (

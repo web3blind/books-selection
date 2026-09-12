@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { checkProviderBudget, parseCreditsPayload } = require('../src/providerBudget');
+const { checkProviderBudget, getBudgetSessionKey, parseCreditsPayload } = require('../src/providerBudget');
 const { createOpenAiCompatibleClient } = require('../src/providerClient');
 
 const openRouterProvider = {
@@ -55,7 +55,7 @@ test('checkProviderBudget establishes a baseline and allows requests below the s
 
 test('createOpenAiCompatibleClient blocks provider calls after OpenRouter session budget is reached', async () => {
   const calledUrls = [];
-  const budgetState = new Map([['https://openrouter.ai/api/v1\u0000OPENROUTER_API_KEY\u0000openrouter-credits', 10]]);
+  const budgetState = new Map([[getBudgetSessionKey(openRouterProvider, 'secret-key'), 10]]);
   const client = createOpenAiCompatibleClient({
     provider: openRouterProvider,
     apiKey: 'secret-key',
@@ -111,4 +111,92 @@ test('createOpenAiCompatibleClient checks OpenRouter budget before embeddings re
     'https://openrouter.ai/api/v1/credits',
     'https://openrouter.ai/api/v1/embeddings',
   ]);
+});
+
+test('zero OpenRouter budget blocks paid calls without being replaced by the default', async () => {
+  const calledUrls = [];
+  const client = createOpenAiCompatibleClient({
+    provider: { ...openRouterProvider, budget: { ...openRouterProvider.budget, maxSessionUsageUsd: 0 } },
+    apiKey: 'zero-budget-key',
+    fetchImpl: async (url) => {
+      calledUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { data: { total_credits: 20, total_usage: 0 } }; },
+      };
+    },
+  });
+
+  await assert.rejects(
+    () => client.chatCompletion({ messages: [{ role: 'user', content: 'test' }] }),
+    /budget limit reached/,
+  );
+  assert.deepEqual(calledUrls, ['https://openrouter.ai/api/v1/credits']);
+});
+
+test('budget session key distinguishes credentials without containing raw keys', () => {
+  const first = getBudgetSessionKey(openRouterProvider, 'credential-one');
+  const second = getBudgetSessionKey(openRouterProvider, 'credential-two');
+
+  assert.notEqual(first, second);
+  assert.doesNotMatch(first, /credential-one/);
+  assert.doesNotMatch(second, /credential-two/);
+});
+
+test('budget guard rejects a configured baseline later than current provider usage', async () => {
+  await assert.rejects(
+    () => checkProviderBudget({
+      provider: {
+        ...openRouterProvider,
+        budget: { ...openRouterProvider.budget, baselineUsageUsd: 11 },
+      },
+      apiKey: 'baseline-key',
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        async json() { return { data: { total_credits: 20, total_usage: 10 } }; },
+      }),
+    }),
+    /baseline cannot exceed current OpenRouter usage/,
+  );
+});
+
+test('concurrent paid calls serialize budget check and provider operation per credential', async () => {
+  let usage = 0;
+  let paidCalls = 0;
+  const client = createOpenAiCompatibleClient({
+    provider: {
+      ...openRouterProvider,
+      budget: { ...openRouterProvider.budget, baselineUsageUsd: 0 },
+    },
+    apiKey: 'concurrent-key',
+    fetchImpl: async (url) => {
+      if (String(url).endsWith('/credits')) {
+        const snapshot = usage;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return {
+          ok: true,
+          status: 200,
+          async json() { return { data: { total_credits: 20, total_usage: snapshot } }; },
+        };
+      }
+      paidCalls += 1;
+      usage += 1.1;
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { choices: [{ message: { content: '{"answer":"ok"}' } }] }; },
+      };
+    },
+  });
+
+  const results = await Promise.allSettled([
+    client.chatCompletion({ messages: [{ role: 'user', content: 'first' }] }),
+    client.chatCompletion({ messages: [{ role: 'user', content: 'second' }] }),
+  ]);
+
+  assert.equal(paidCalls, 1);
+  assert.deepEqual(results.map((result) => result.status).sort(), ['fulfilled', 'rejected']);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /budget limit reached/);
 });

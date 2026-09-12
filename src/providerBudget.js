@@ -1,4 +1,7 @@
+const { createHash } = require('node:crypto');
+
 const defaultBudgetState = new Map();
+const budgetOperationTails = new Map();
 
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
@@ -6,11 +9,12 @@ function trimTrailingSlash(value) {
 
 function getBudgetLimit(provider) {
   const value = Number(provider?.budget?.maxSessionUsageUsd);
-  return Number.isFinite(value) && value > 0 ? value : 1;
+  return Number.isFinite(value) && value >= 0 ? value : 1;
 }
 
-function getBaselineKey(provider) {
-  return `${provider?.baseUrl || ''}\u0000${provider?.apiKeyEnv || ''}\u0000${provider?.budget?.type || ''}`;
+function getBudgetSessionKey(provider, apiKey) {
+  const credentialFingerprint = createHash('sha256').update(String(apiKey || '')).digest('hex');
+  return `${provider?.baseUrl || ''}\u0000${provider?.apiKeyEnv || ''}\u0000${provider?.budget?.type || ''}\u0000${credentialFingerprint}`;
 }
 
 function parseCreditsPayload(payload) {
@@ -64,8 +68,12 @@ async function checkProviderBudget({
   }
 
   const credits = await fetchOpenRouterCredits({ provider, apiKey, fetchImpl });
-  const key = getBaselineKey(provider);
+  const key = getBudgetSessionKey(provider, apiKey);
   let baselineUsage = Number(budget.baselineUsageUsd);
+
+  if (Number.isFinite(baselineUsage) && baselineUsage > credits.totalUsage) {
+    throw new Error('Configured budget baseline cannot exceed current OpenRouter usage.');
+  }
 
   if (!Number.isFinite(baselineUsage)) {
     if (!budgetState.has(key)) {
@@ -95,8 +103,41 @@ async function checkProviderBudget({
   };
 }
 
+async function runWithProviderBudget({
+  provider,
+  apiKey,
+  fetchImpl,
+  budgetState,
+  budgetGuard = checkProviderBudget,
+  operation,
+}) {
+  if (!provider?.budget?.enabled) {
+    await budgetGuard({ provider, apiKey, fetchImpl, budgetState });
+    return operation();
+  }
+
+  const key = getBudgetSessionKey(provider, apiKey);
+  const previous = budgetOperationTails.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  budgetOperationTails.set(key, current);
+
+  await previous.catch(() => {});
+  try {
+    await budgetGuard({ provider, apiKey, fetchImpl, budgetState });
+    return await operation();
+  } finally {
+    release();
+    if (budgetOperationTails.get(key) === current) {
+      budgetOperationTails.delete(key);
+    }
+  }
+}
+
 module.exports = {
   checkProviderBudget,
   defaultBudgetState,
+  getBudgetSessionKey,
   parseCreditsPayload,
+  runWithProviderBudget,
 };

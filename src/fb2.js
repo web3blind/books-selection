@@ -3,6 +3,10 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
+const MAX_ZIP_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
+const MAX_ZIP_COMPRESSION_RATIO = 1000;
+
 function detectXmlEncoding(buffer) {
   const header = buffer.subarray(0, Math.min(buffer.length, 512)).toString('ascii');
   const match = header.match(/encoding\s*=\s*["']([^"']+)["']/i);
@@ -79,48 +83,53 @@ function hashText(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
-function splitSentences(text) {
-  return text.match(/[^.!?。！？]+[.!?。！？]?/gu)?.map((part) => part.trim()).filter(Boolean) || [];
-}
-
 function chunkText(text, options = {}) {
   const maxChars = options.maxChars || 4000;
+  if (!Number.isSafeInteger(maxChars) || maxChars <= 0) {
+    throw new Error('maxChars must be a positive integer.');
+  }
   const normalized = normalizeWhitespace(text);
-  const sentences = splitSentences(normalized);
-  const chunkTexts = [];
-  let current = '';
+  const chunks = [];
+  let cursor = 0;
 
-  for (const sentence of sentences) {
-    const candidate = current ? `${current} ${sentence}` : sentence;
-    if (current && candidate.length > maxChars) {
-      chunkTexts.push(current);
-      current = sentence;
-    } else {
-      current = candidate;
+  while (cursor < normalized.length) {
+    while (cursor < normalized.length && /\s/u.test(normalized[cursor])) cursor += 1;
+    if (cursor >= normalized.length) break;
+
+    const hardEnd = Math.min(cursor + maxChars, normalized.length);
+    let end = hardEnd;
+    if (hardEnd < normalized.length) {
+      const window = normalized.slice(cursor, hardEnd);
+      let sentenceEnd = -1;
+      for (const match of window.matchAll(/[.!?。！？](?=\s|$)/gu)) {
+        sentenceEnd = match.index + match[0].length;
+      }
+      if (sentenceEnd > 0) {
+        end = cursor + sentenceEnd;
+      } else {
+        const whitespace = Math.max(window.lastIndexOf(' '), window.lastIndexOf('\n'), window.lastIndexOf('\t'));
+        if (whitespace > 0) end = cursor + whitespace;
+      }
     }
-  }
 
-  if (current) {
-    chunkTexts.push(current);
-  }
-
-  let searchFrom = 0;
-  return chunkTexts.map((chunk, index) => {
-    const startOffset = normalized.indexOf(chunk, searchFrom);
-    const endOffset = startOffset + chunk.length;
-    searchFrom = endOffset;
-
-    return {
-      index,
+    while (end > cursor && /\s/u.test(normalized[end - 1])) end -= 1;
+    if (end <= cursor) end = hardEnd;
+    const chunk = normalized.slice(cursor, end);
+    chunks.push({
+      index: chunks.length,
       text: chunk,
       contentHash: hashText(chunk),
-      startOffset,
-      endOffset,
-    };
-  });
+      startOffset: cursor,
+      endOffset: end,
+    });
+    cursor = end;
+  }
+
+  return chunks;
 }
 
 function findEndOfCentralDirectory(buffer) {
+  if (buffer.length < 22) throw new Error('ZIP central directory not found');
   const signature = 0x06054b50;
   for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
     if (buffer.readUInt32LE(offset) === signature) {
@@ -138,10 +147,14 @@ function readZipEntries(buffer) {
 
   let offset = centralDirectoryOffset;
   for (let index = 0; index < entriesCount; index += 1) {
+    if (offset < 0 || offset + 46 > buffer.length) {
+      throw new Error('Invalid ZIP central directory bounds');
+    }
     if (buffer.readUInt32LE(offset) !== 0x02014b50) {
       throw new Error('Invalid ZIP central directory header');
     }
 
+    const flags = buffer.readUInt16LE(offset + 8);
     const compressionMethod = buffer.readUInt16LE(offset + 10);
     const compressedSize = buffer.readUInt32LE(offset + 20);
     const uncompressedSize = buffer.readUInt32LE(offset + 24);
@@ -149,10 +162,16 @@ function readZipEntries(buffer) {
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+    const entryEnd = offset + 46 + fileNameLength + extraLength + commentLength;
+    if (entryEnd > buffer.length) throw new Error('Invalid ZIP central directory entry bounds');
+    if ([compressedSize, uncompressedSize, localHeaderOffset].includes(0xffffffff)) {
+      throw new Error('ZIP64 entries are not supported');
+    }
     const fileName = buffer.subarray(offset + 46, offset + 46 + fileNameLength).toString('utf8');
 
     entries.push({
       fileName,
+      flags,
       compressionMethod,
       compressedSize,
       uncompressedSize,
@@ -167,6 +186,9 @@ function readZipEntries(buffer) {
 
 function extractZipEntry(buffer, entry) {
   const offset = entry.localHeaderOffset;
+  if (offset < 0 || offset + 30 > buffer.length) {
+    throw new Error('Invalid ZIP local file header bounds');
+  }
   if (buffer.readUInt32LE(offset) !== 0x04034b50) {
     throw new Error('Invalid ZIP local file header');
   }
@@ -174,14 +196,30 @@ function extractZipEntry(buffer, entry) {
   const fileNameLength = buffer.readUInt16LE(offset + 26);
   const extraLength = buffer.readUInt16LE(offset + 28);
   const dataOffset = offset + 30 + fileNameLength + extraLength;
-  const compressedData = buffer.subarray(dataOffset, dataOffset + entry.compressedSize);
+  const dataEnd = dataOffset + entry.compressedSize;
+  if ((entry.flags & 1) !== 0 || (buffer.readUInt16LE(offset + 6) & 1) !== 0) {
+    throw new Error('Encrypted ZIP entries are not supported');
+  }
+  if (entry.uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) {
+    throw new Error('ZIP entry exceeds the uncompressed safety limit');
+  }
+  if (entry.compressedSize > MAX_ZIP_FILE_BYTES || dataOffset < 0 || dataEnd > buffer.length) {
+    throw new Error('ZIP entry exceeds compressed data bounds');
+  }
+  if (entry.compressedSize === 0 && entry.uncompressedSize > 0) {
+    throw new Error('ZIP entry has an invalid compression ratio');
+  }
+  if (entry.compressedSize > 0 && entry.uncompressedSize / entry.compressedSize > MAX_ZIP_COMPRESSION_RATIO) {
+    throw new Error('ZIP entry exceeds the compression-ratio safety limit');
+  }
+  const compressedData = buffer.subarray(dataOffset, dataEnd);
 
   if (entry.compressionMethod === 0) {
     return compressedData;
   }
 
   if (entry.compressionMethod === 8) {
-    return zlib.inflateRawSync(compressedData);
+    return zlib.inflateRawSync(compressedData, { maxOutputLength: MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES });
   }
 
   throw new Error(`Unsupported ZIP compression method: ${entry.compressionMethod}`);
@@ -193,6 +231,10 @@ async function readFb2File(filePath) {
 }
 
 async function readFb2FromZip(filePath) {
+  const stat = await fs.stat(filePath);
+  if (stat.size > MAX_ZIP_FILE_BYTES) {
+    throw new Error(`Не удалось прочитать zip: ${path.basename(filePath)} archive exceeds safety limit`);
+  }
   const buffer = await fs.readFile(filePath);
   const entries = readZipEntries(buffer);
   const entry = entries.find((item) => item.fileName.toLowerCase().endsWith('.fb2'));

@@ -1,10 +1,11 @@
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
+const { randomBytes, timingSafeEqual } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
-const { readAppConfig, isAppConfigured, toProviderOverrides, writeAppConfig } = require('./appConfig');
+const { readAppConfig, redactAppConfig, isAppConfigured, toProviderOverrides, writeAppConfig } = require('./appConfig');
 const { answerLibraryQuestion, createFtsQueryFromQuestion } = require('./ask');
 const { indexMissingChunkEmbeddings } = require('./embeddingIndexer');
 const { semanticSearchIfConfigured } = require('./embeddings');
@@ -15,16 +16,29 @@ const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
 
 const publicDir = path.join(__dirname, '..', 'public');
+const API_COOKIE_NAME = 'books_selection_api_token';
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
+class HttpError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
 
 
 function sendJson(response, statusCode, payload) {
-  response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+  response.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
   response.end(JSON.stringify(payload, null, 2));
 }
 
-async function sendFile(response, filePath, contentType) {
+async function sendFile(response, filePath, contentType, headers = {}) {
   const content = await fs.readFile(filePath);
-  response.writeHead(200, { 'content-type': `${contentType}; charset=utf-8` });
+  response.writeHead(200, { 'content-type': `${contentType}; charset=utf-8`, ...headers });
   response.end(content);
 }
 
@@ -58,15 +72,28 @@ function openBrowser(url) {
 function readJsonBody(request) {
   return new Promise((resolve, reject) => {
     let body = '';
+    let size = 0;
+    let rejected = false;
+    const declaredLength = Number(request.headers['content-length']);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      request.resume();
+      reject(new HttpError(413, 'Request body is too large.'));
+      return;
+    }
+
     request.setEncoding('utf8');
     request.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > 1024 * 1024) {
-        reject(new Error('Request body is too large.'));
-        request.destroy();
+      if (rejected) return;
+      size += Buffer.byteLength(chunk, 'utf8');
+      if (size > MAX_JSON_BODY_BYTES) {
+        rejected = true;
+        reject(new HttpError(413, 'Request body is too large.'));
+        return;
       }
+      body += chunk;
     });
     request.on('end', () => {
+      if (rejected) return;
       if (!body.trim()) {
         resolve({});
         return;
@@ -74,11 +101,45 @@ function readJsonBody(request) {
       try {
         resolve(JSON.parse(body));
       } catch {
-        reject(new Error('Request body must be valid JSON.'));
+        reject(new HttpError(400, 'Request body must be valid JSON.'));
       }
     });
     request.on('error', reject);
   });
+}
+
+function expectedOrigin(request) {
+  return `http://127.0.0.1:${request.socket.localPort}`;
+}
+
+function hasExpectedHost(request) {
+  return request.headers.host === `127.0.0.1:${request.socket.localPort}`;
+}
+
+function hasAllowedOrigin(request) {
+  const origin = request.headers.origin;
+  return !origin || origin === expectedOrigin(request);
+}
+
+function parseCookies(header = '') {
+  return Object.fromEntries(String(header).split(';').map((part) => {
+    const separator = part.indexOf('=');
+    if (separator < 0) return ['', ''];
+    return [part.slice(0, separator).trim(), part.slice(separator + 1).trim()];
+  }).filter(([name]) => name));
+}
+
+function tokensEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function requireJsonRequest(request) {
+  const type = String(request.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+  if (type !== 'application/json') {
+    throw new HttpError(415, 'Request Content-Type must be application/json.');
+  }
 }
 
 function getRootPath(url, appConfig, defaultRoot = '') {
@@ -101,10 +162,20 @@ async function withSearchDatabase(databasePath, callback) {
 function createRequestHandler(options = {}) {
   const defaultRoot = options.defaultRoot || '';
   const updateCheckOptions = options.updateCheckOptions || {};
+  const apiToken = options.apiToken || randomBytes(32).toString('base64url');
 
   return async function handleRequest(request, response) {
   try {
-    const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
+    if (!hasExpectedHost(request) || !hasAllowedOrigin(request)) {
+      return sendJson(response, 403, { error: 'Request origin is not allowed.' });
+    }
+    const url = new URL(request.url, expectedOrigin(request));
+    if (url.pathname.startsWith('/api/')) {
+      const requestToken = parseCookies(request.headers.cookie)[API_COOKIE_NAME];
+      if (!tokensEqual(requestToken, apiToken)) {
+        return sendJson(response, 403, { error: 'Missing or invalid local API token.' });
+      }
+    }
     const configState = await readAppConfig(process.env);
     const appConfig = configState.config;
     const providerOverrides = toProviderOverrides(appConfig);
@@ -112,17 +183,18 @@ function createRequestHandler(options = {}) {
     if (url.pathname === '/api/config') {
       if (request.method === 'GET') {
         return sendJson(response, 200, {
-          config: appConfig,
+          config: redactAppConfig(appConfig, process.env),
           path: configState.path,
           exists: configState.exists,
           isConfigured: isAppConfigured(appConfig),
         });
       }
       if (request.method === 'POST') {
+        requireJsonRequest(request);
         const payload = await readJsonBody(request);
         const saved = await writeAppConfig(payload, process.env);
         return sendJson(response, 200, {
-          config: saved.config,
+          config: redactAppConfig(saved.config, process.env),
           path: saved.path,
           exists: true,
           isConfigured: isAppConfigured(saved.config),
@@ -147,9 +219,12 @@ function createRequestHandler(options = {}) {
       return sendJson(response, 200, { root, count: books.length, books });
     }
 
-    if (url.pathname === '/api/index' && request.method === 'POST') {
-      const root = getRootPath(url, appConfig, defaultRoot);
-      const databasePath = getDbPath(url, appConfig);
+    if (url.pathname === '/api/index') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const root = String(payload.root || appConfig.booksRoot || defaultRoot);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
 
       if (!root) {
         return sendJson(response, 400, { error: 'Нужен путь к папке с книгами.' });
@@ -180,8 +255,11 @@ function createRequestHandler(options = {}) {
     }
 
     if (url.pathname === '/api/ask') {
-      const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url, appConfig);
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const query = String(payload.q || '');
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
 
       if (!query.trim()) {
         return sendJson(response, 400, { error: 'Нужен вопрос q.' });
@@ -196,8 +274,11 @@ function createRequestHandler(options = {}) {
     }
 
     if (url.pathname === '/api/semantic-search') {
-      const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url, appConfig);
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const query = String(payload.q || '');
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
 
       if (!query.trim()) {
         return sendJson(response, 400, { error: 'Нужен поисковый запрос q.' });
@@ -211,10 +292,13 @@ function createRequestHandler(options = {}) {
       return sendJson(response, 200, { query, result });
     }
 
-    if (url.pathname === '/api/embed-index' && request.method === 'POST') {
-      const databasePath = getDbPath(url, appConfig);
-      const limit = Number(url.searchParams.get('limit') || 100);
-      const batchSize = Number(url.searchParams.get('batchSize') || 16);
+    if (url.pathname === '/api/embed-index') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      const limit = Number(payload.limit ?? 100);
+      const batchSize = Number(payload.batchSize ?? 16);
 
       if (!databasePath) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
@@ -225,11 +309,14 @@ function createRequestHandler(options = {}) {
     }
 
     if (url.pathname === '/api/extract-fact') {
-      const query = url.searchParams.get('q') || '';
-      const databasePath = getDbPath(url, appConfig);
-      const bookId = Number(url.searchParams.get('bookId') || 0);
-      const factKey = url.searchParams.get('factKey') || '';
-      const factType = url.searchParams.get('factType') || 'generic';
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const query = String(payload.q || '');
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      const bookId = Number(payload.bookId || 0);
+      const factKey = String(payload.factKey || '');
+      const factType = String(payload.factType || 'generic');
 
       if (!query.trim()) {
         return sendJson(response, 400, { error: 'Нужен вопрос q.' });
@@ -239,8 +326,8 @@ function createRequestHandler(options = {}) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      if (!bookId) {
-        return sendJson(response, 400, { error: 'Нужен числовой bookId.' });
+      if (!Number.isSafeInteger(bookId) || bookId <= 0) {
+        return sendJson(response, 400, { error: 'Нужен положительный целочисленный bookId.' });
       }
 
       if (!factKey.trim()) {
@@ -249,21 +336,24 @@ function createRequestHandler(options = {}) {
 
       const result = await withSearchDatabase(databasePath, async (db) => {
         const retrievalQuery = createFtsQueryFromQuestion(query);
-        const evidenceRows = searchChunks(db, retrievalQuery, { limit: 12 })
-          .filter((row) => row.book_id === bookId);
+        const evidenceRows = searchChunks(db, retrievalQuery, { limit: 12, bookId });
         return extractFactFromEvidence({ db, bookId, factKey, factType, question: query, evidenceRows, providerOverrides });
       });
       return sendJson(response, 200, { query, result });
     }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
-      return sendFile(response, path.join(publicDir, 'index.html'), 'text/html');
+      return sendFile(response, path.join(publicDir, 'index.html'), 'text/html', {
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'set-cookie': `${API_COOKIE_NAME}=${apiToken}; HttpOnly; SameSite=Strict; Path=/api`,
+      });
     }
 
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   } catch (error) {
-    sendJson(response, 500, { error: error.message });
+    sendJson(response, error.statusCode || 500, { error: error.message });
   }
   };
 }

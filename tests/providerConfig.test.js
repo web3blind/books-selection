@@ -71,3 +71,34 @@ test('provider config lets env lower or raise the OpenRouter session budget with
   assert.equal(config.providers.openrouter.budget.baselineUsageUsd, 10.5);
   assert.doesNotMatch(JSON.stringify(config), /api-key-fixture/);
 });
+
+test('provider config rejects non-OpenRouter cloud URLs and non-loopback local URLs', () => {
+  assert.throws(
+    () => loadProviderConfig({ providers: { openrouter: { baseUrl: 'https://attacker.example/v1' } } }, {}),
+    /OpenRouter base URL/,
+  );
+  assert.throws(
+    () => loadProviderConfig({ providers: { openrouter: { baseUrl: 'http://openrouter.ai/api/v1' } } }, {}),
+    /OpenRouter base URL/,
+  );
+  assert.throws(
+    () => loadProviderConfig({ providers: { local: { baseUrl: 'http://192.168.1.10:11434/v1' } } }, {}),
+    /Local provider base URL/,
+  );
+
+  const local = loadProviderConfig({ providers: { local: { baseUrl: 'https://[::1]:11434/v1' } } }, {});
+  assert.equal(local.providers.local.baseUrl, 'https://[::1]:11434/v1');
+});
+
+test('provider config only reads allowlisted API key environment names', () => {
+  const config = loadProviderConfig({
+    providers: {
+      openrouter: { apiKeyEnv: 'OTHER_SECRET' },
+      local: { apiKeyEnv: 'HOME' },
+    },
+  }, { OTHER_SECRET: 'cloud-secret', HOME: 'local-secret' });
+
+  assert.equal(config.providers.openrouter.apiKeyEnv, 'OPENROUTER_API_KEY');
+  assert.equal(config.providers.local.apiKeyEnv, 'LOCAL_OPENAI_API_KEY');
+  assert.equal(getApiKey({ apiKeyEnv: 'OTHER_SECRET' }, { OTHER_SECRET: 'cloud-secret' }), '');
+});

@@ -20,8 +20,14 @@ test('startServer can run on an ephemeral port without opening a browser', async
   const started = await startServer({ port: 0, openBrowser: false, log: false });
   try {
     assert.ok(started.port > 0);
+    const cookie = await new Promise((resolve, reject) => {
+      http.get(started.url, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.headers['set-cookie'][0].split(';', 1)[0]));
+      }).on('error', reject);
+    });
     const response = await new Promise((resolve, reject) => {
-      http.get(`${started.url}/api/config`, (res) => {
+      http.get(`${started.url}/api/config`, { headers: { cookie } }, (res) => {
         let body = '';
         res.setEncoding('utf8');
         res.on('data', (chunk) => { body += chunk; });

@@ -1,6 +1,7 @@
 const path = require('node:path');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { startServer } = require('../src/server');
+const { isAllowedExternalUrl, isTrustedRendererUrl } = require('./security');
 
 let mainWindow;
 let serverHandle;
@@ -14,9 +15,16 @@ function configureDesktopEnvironment() {
   }
 }
 
-async function createMainWindow() {
+async function ensureServer() {
   configureDesktopEnvironment();
-  serverHandle = await startServer({ defaultRoot: '', port: 0, openBrowser: false, log: true });
+  if (!serverHandle) {
+    serverHandle = await startServer({ defaultRoot: '', port: 0, openBrowser: false, log: true });
+  }
+  return serverHandle;
+}
+
+async function createMainWindow() {
+  await ensureServer();
 
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -28,7 +36,7 @@ async function createMainWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -36,8 +44,16 @@ async function createMainWindow() {
     mainWindow = null;
   });
 
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedRendererUrl(url, serverHandle.url)) {
+      event.preventDefault();
+    }
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
     return { action: 'deny' };
   });
 
@@ -60,7 +76,10 @@ async function createMainWindow() {
   }
 }
 
-ipcMain.handle('books-selection:pick-directory', async () => {
+ipcMain.handle('books-selection:pick-directory', async (event) => {
+  if (!serverHandle || !isTrustedRendererUrl(event.senderFrame?.url, serverHandle.url)) {
+    throw new Error('Directory picker request came from an untrusted renderer.');
+  }
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose books folder',
     properties: ['openDirectory'],

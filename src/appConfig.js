@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { DEFAULT_CONFIG } = require('./providerConfig');
+const { DEFAULT_CONFIG, validateProviderBaseUrl } = require('./providerConfig');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -34,7 +34,7 @@ function defaultAppConfig() {
         apiKeyEnv: openrouter.apiKeyEnv,
         apiKey: '',
         maxSessionUsageUsd: openrouter.budget.maxSessionUsageUsd,
-        baselineUsageUsd: '',
+
       },
       local: {
         baseUrl: local.baseUrl,
@@ -60,7 +60,7 @@ function cleanOptionalNumber(value) {
 }
 
 function normalizeProviderName(value, fallback) {
-  return ['openrouter', 'local', 'hermes'].includes(value) ? value : fallback;
+  return ['openrouter', 'local'].includes(value) ? value : fallback;
 }
 
 function normalizeAppConfig(input = {}) {
@@ -75,19 +75,21 @@ function normalizeAppConfig(input = {}) {
     activeEmbeddingsProvider: normalizeProviderName(input.activeEmbeddingsProvider, defaults.activeEmbeddingsProvider),
     providers: {
       openrouter: {
-        baseUrl: cleanString(openrouter.baseUrl) || defaults.providers.openrouter.baseUrl,
+        baseUrl: validateProviderBaseUrl('openrouter', cleanString(openrouter.baseUrl) || defaults.providers.openrouter.baseUrl),
         model: cleanString(openrouter.model) || defaults.providers.openrouter.model,
         embeddingModel: cleanString(openrouter.embeddingModel) || defaults.providers.openrouter.embeddingModel,
-        apiKeyEnv: cleanString(openrouter.apiKeyEnv) || defaults.providers.openrouter.apiKeyEnv,
+        apiKeyEnv: defaults.providers.openrouter.apiKeyEnv,
         apiKey: cleanString(openrouter.apiKey),
-        maxSessionUsageUsd: cleanOptionalNumber(openrouter.maxSessionUsageUsd) || defaults.providers.openrouter.maxSessionUsageUsd,
-        baselineUsageUsd: cleanOptionalNumber(openrouter.baselineUsageUsd),
+        maxSessionUsageUsd: cleanOptionalNumber(openrouter.maxSessionUsageUsd) === ''
+          ? defaults.providers.openrouter.maxSessionUsageUsd
+          : cleanOptionalNumber(openrouter.maxSessionUsageUsd),
+
       },
       local: {
-        baseUrl: cleanString(local.baseUrl) || defaults.providers.local.baseUrl,
+        baseUrl: validateProviderBaseUrl('local', cleanString(local.baseUrl) || defaults.providers.local.baseUrl),
         model: cleanString(local.model) || defaults.providers.local.model,
         embeddingModel: cleanString(local.embeddingModel) || defaults.providers.local.embeddingModel,
-        apiKeyEnv: cleanString(local.apiKeyEnv) || defaults.providers.local.apiKeyEnv,
+        apiKeyEnv: defaults.providers.local.apiKeyEnv,
         apiKey: cleanString(local.apiKey),
       },
     },
@@ -101,11 +103,9 @@ function isAppConfigured(config) {
 function toProviderOverrides(config) {
   const normalized = normalizeAppConfig(config);
   const openrouterBudget = {
-    maxSessionUsageUsd: Number(normalized.providers.openrouter.maxSessionUsageUsd) || 1,
+    maxSessionUsageUsd: Number(normalized.providers.openrouter.maxSessionUsageUsd),
   };
-  if (normalized.providers.openrouter.baselineUsageUsd !== '') {
-    openrouterBudget.baselineUsageUsd = Number(normalized.providers.openrouter.baselineUsageUsd);
-  }
+
 
   return {
     activeProvider: normalized.activeProvider,
@@ -130,6 +130,16 @@ function toProviderOverrides(config) {
   };
 }
 
+function redactAppConfig(config, env = process.env) {
+  const normalized = normalizeAppConfig(config);
+  for (const providerName of ['openrouter', 'local']) {
+    const provider = normalized.providers[providerName];
+    provider.hasApiKey = Boolean(provider.apiKey || env[provider.apiKeyEnv]);
+    provider.apiKey = '';
+  }
+  return normalized;
+}
+
 async function readAppConfig(env = process.env) {
   const filePath = getConfigPath(env);
   try {
@@ -145,9 +155,50 @@ async function readAppConfig(env = process.env) {
 
 async function writeAppConfig(input, env = process.env) {
   const filePath = getConfigPath(env);
-  const config = normalizeAppConfig(input);
-  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  let existingConfig = defaultAppConfig();
+  try {
+    existingConfig = (await readAppConfig(env)).config;
+  } catch (error) {
+    if (error.name !== 'SyntaxError') {
+      throw error;
+    }
+  }
+
+  const mergedInput = structuredClone(input || {});
+  mergedInput.providers ||= {};
+  for (const providerName of ['openrouter', 'local']) {
+    mergedInput.providers[providerName] ||= {};
+    const submittedKey = cleanString(mergedInput.providers[providerName].apiKey);
+    if (mergedInput.providers[providerName].clearApiKey === true) {
+      mergedInput.providers[providerName].apiKey = '';
+    } else if (!submittedKey || /^[*•]+$/.test(submittedKey)) {
+      mergedInput.providers[providerName].apiKey = existingConfig.providers[providerName].apiKey;
+    }
+    delete mergedInput.providers[providerName].clearApiKey;
+  }
+
+  const config = normalizeAppConfig(mergedInput);
+  const directory = path.dirname(filePath);
+  let directoryExisted = true;
+  try {
+    await fs.stat(directory);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    directoryExisted = false;
+  }
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32' && (!directoryExisted || path.basename(directory) === '.books-selection')) {
+    await fs.chmod(directory, 0o700);
+  }
+  const temporaryPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    if (process.platform !== 'win32') await fs.chmod(temporaryPath, 0o600);
+    await fs.rename(temporaryPath, filePath);
+    if (process.platform !== 'win32') await fs.chmod(filePath, 0o600);
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
   return { config, path: filePath, exists: true };
 }
 
@@ -159,6 +210,7 @@ module.exports = {
   isAppConfigured,
   normalizeAppConfig,
   readAppConfig,
+  redactAppConfig,
   toProviderOverrides,
   writeAppConfig,
 };

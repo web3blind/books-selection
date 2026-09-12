@@ -39,12 +39,12 @@
   <h1 id="pageTitle">Выбор книги по аннотации</h1>
   <p id="introText">Путь к папке книг и SQLite базе берётся из настроек. На главной странице остаются только загрузка, поиск и вопросы.</p>
 
-  <nav class="actions" aria-label="Основные разделы">
+  <nav id="mainNav" class="actions" aria-label="Основные разделы">
     <button id="mainViewButton" type="button">Главная</button>
     <button id="settingsViewButton" type="button">Настройки</button>
   </nav>
 
-  <section id="updateBanner" class="update-banner" aria-labelledby="updateBannerTitle" hidden>
+  <section id="updateBanner" class="update-banner" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="updateBannerTitle" hidden>
     <h2 id="updateBannerTitle">Доступна новая версия</h2>
     <p id="updateBannerMessage"></p>
     <div id="updateBannerLinks" class="actions"></div>
@@ -56,57 +56,55 @@
 
   <section id="settingsPanel" class="panel" aria-labelledby="settingsTitle" hidden>
     <h2 id="settingsTitle">Настройки</h2>
-    <p class="meta">Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.</p>
+    <p id="settingsIntro" class="meta">Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.</p>
 
-    <label for="settingsBooksRoot">Путь к папке книг</label>
+    <label id="settingsBooksRootLabel" for="settingsBooksRoot">Путь к папке книг</label>
     <div class="actions">
       <button id="settingsPickBooksRootButton" type="button">Выбрать папку книг</button>
     </div>
     <input id="settingsBooksRoot" type="text" autocomplete="off" placeholder="Например: /home/denis/Книги">
 
-    <label for="settingsDbPath">Путь к SQLite базе</label>
+    <label id="settingsDbPathLabel" for="settingsDbPath">Путь к SQLite базе</label>
     <input id="settingsDbPath" type="text" autocomplete="off" placeholder="Например: /home/denis/books-selection.sqlite">
 
-    <label for="settingsActiveProvider">Provider для ответов</label>
+    <label id="settingsActiveProviderLabel" for="settingsActiveProvider">Provider для ответов</label>
     <select id="settingsActiveProvider">
       <option value="openrouter">OpenRouter</option>
       <option value="local">Local OpenAI-compatible</option>
-      <option value="hermes">Hermes</option>
     </select>
 
-    <label for="settingsEmbeddingProvider">Provider для semantic embeddings</label>
+    <label id="settingsEmbeddingProviderLabel" for="settingsEmbeddingProvider">Provider для semantic embeddings</label>
     <select id="settingsEmbeddingProvider">
       <option value="openrouter">OpenRouter</option>
       <option value="local">Local OpenAI-compatible</option>
-      <option value="hermes">Hermes</option>
     </select>
 
     <fieldset id="openrouterSettings">
-      <legend>OpenRouter</legend>
-      <label for="settingsOpenrouterBaseUrl">Base URL</label>
+      <legend id="openrouterLegend">OpenRouter</legend>
+      <label id="settingsOpenrouterBaseUrlLabel" for="settingsOpenrouterBaseUrl">Base URL</label>
       <input id="settingsOpenrouterBaseUrl" type="text" autocomplete="off">
-      <label for="settingsOpenrouterModel">Chat model</label>
+      <label id="settingsOpenrouterModelLabel" for="settingsOpenrouterModel">Chat model</label>
       <input id="settingsOpenrouterModel" type="text" autocomplete="off">
-      <label for="settingsOpenrouterEmbeddingModel">Embedding model</label>
+      <label id="settingsOpenrouterEmbeddingModelLabel" for="settingsOpenrouterEmbeddingModel">Embedding model</label>
       <input id="settingsOpenrouterEmbeddingModel" type="text" autocomplete="off">
-      <label for="settingsOpenrouterApiKey">OpenRouter API key</label>
+      <label id="settingsOpenrouterApiKeyLabel" for="settingsOpenrouterApiKey">OpenRouter API key</label>
       <input id="settingsOpenrouterApiKey" type="password" autocomplete="off" placeholder="Вставь отдельный OpenRouter API key">
-      <label for="settingsOpenrouterBudget">OpenRouter spend limit in dollars</label>
+      <label><input id="settingsClearOpenrouterApiKey" type="checkbox"> <span id="settingsClearOpenrouterApiKeyText">Удалить сохранённый API key</span></label>
+      <label id="settingsOpenrouterBudgetLabel" for="settingsOpenrouterBudget">OpenRouter spend limit in dollars</label>
       <input id="settingsOpenrouterBudget" type="number" min="0" step="0.01">
-      <label for="settingsOpenrouterBaseline">Optional OpenRouter usage baseline</label>
-      <input id="settingsOpenrouterBaseline" type="number" min="0" step="0.0001" placeholder="Leave empty for current process baseline">
     </fieldset>
 
     <fieldset id="localProviderSettings">
-      <legend>Local OpenAI-compatible provider</legend>
-      <label for="settingsLocalBaseUrl">Base URL</label>
+      <legend id="localProviderLegend">Local OpenAI-compatible provider</legend>
+      <label id="settingsLocalBaseUrlLabel" for="settingsLocalBaseUrl">Base URL</label>
       <input id="settingsLocalBaseUrl" type="text" autocomplete="off">
-      <label for="settingsLocalModel">Chat model</label>
+      <label id="settingsLocalModelLabel" for="settingsLocalModel">Chat model</label>
       <input id="settingsLocalModel" type="text" autocomplete="off">
-      <label for="settingsLocalEmbeddingModel">Embedding model</label>
+      <label id="settingsLocalEmbeddingModelLabel" for="settingsLocalEmbeddingModel">Embedding model</label>
       <input id="settingsLocalEmbeddingModel" type="text" autocomplete="off">
-      <label for="settingsLocalApiKey">Local provider API key, если нужен</label>
+      <label id="settingsLocalApiKeyLabel" for="settingsLocalApiKey">Local provider API key, если нужен</label>
       <input id="settingsLocalApiKey" type="password" autocomplete="off">
+      <label><input id="settingsClearLocalApiKey" type="checkbox"> <span id="settingsClearLocalApiKeyText">Удалить сохранённый API key</span></label>
     </fieldset>
 
     <div class="actions">
@@ -156,7 +154,7 @@
     </div>
 
     <div id="aiStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
-    <div id="aiResults" aria-live="polite"></div>
+    <div id="aiResults" aria-live="polite" tabindex="-1"></div>
   </section>
 
   <div id="status" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -182,10 +180,12 @@
       openrouterEmbeddingModel: document.getElementById('settingsOpenrouterEmbeddingModel'),
       openrouterApiKey: document.getElementById('settingsOpenrouterApiKey'),
       openrouterBudget: document.getElementById('settingsOpenrouterBudget'),
-      openrouterBaseline: document.getElementById('settingsOpenrouterBaseline'),
+      clearOpenrouterApiKey: document.getElementById('settingsClearOpenrouterApiKey'),
+
       localBaseUrl: document.getElementById('settingsLocalBaseUrl'),
       localModel: document.getElementById('settingsLocalModel'),
       localEmbeddingModel: document.getElementById('settingsLocalEmbeddingModel'),
+      clearLocalApiKey: document.getElementById('settingsClearLocalApiKey'),
       localApiKey: document.getElementById('settingsLocalApiKey'),
     };
     const openrouterSettings = document.getElementById('openrouterSettings');
@@ -245,6 +245,30 @@
 
     const messages = {
       ru: {
+        mainNavLabel: 'Основные разделы',
+        mainViewButtonText: 'Главная',
+        settingsViewButtonText: 'Настройки',
+        settingsTitleText: 'Настройки',
+        settingsIntroText: 'Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.',
+        settingsBooksRootLabel: 'Путь к папке книг',
+        settingsDbPathLabel: 'Путь к SQLite базе',
+        settingsActiveProviderLabel: 'Provider для ответов',
+        settingsEmbeddingProviderLabel: 'Provider для semantic embeddings',
+        openrouterBaseUrlLabel: 'Base URL OpenRouter',
+        openrouterModelLabel: 'Модель для ответов',
+        openrouterEmbeddingModelLabel: 'Модель embeddings',
+        openrouterApiKeyLabel: 'API key OpenRouter',
+        clearApiKeyLabel: 'Удалить сохранённый API key',
+        openrouterBudgetLabel: 'Лимит расходов OpenRouter в долларах',
+        localProviderLegend: 'Локальный OpenAI-совместимый provider',
+        localBaseUrlLabel: 'Локальный Base URL',
+        localModelLabel: 'Локальная модель для ответов',
+        localEmbeddingModelLabel: 'Локальная модель embeddings',
+        localApiKeyLabel: 'API key локального provider, если нужен',
+        saveSettingsButtonText: 'Сохранить настройки',
+        settingsRequired: 'Заполни настройки и сохрани их. После сохранения откроется главная страница.',
+        settingsSaving: 'Сохраняю настройки...',
+        settingsSaved: (path) => `Настройки сохранены: ${path}`,
         pageTitle: 'Выбор книги по аннотации',
         introText: 'Путь к папке книг и SQLite базе берётся из настроек. На главной странице остаются только загрузка, поиск и вопросы.',
         pickFolderButton: 'Выбрать папку книг',
@@ -271,8 +295,8 @@
         indexing: 'Готовлю локальный индекс: читаю книги, создаю SQLite и проверяю семантический кэш...',
         asking: 'Собираю evidence и запускаю Ask mode...',
         indexDone: (result) => `Индекс готов: обработано ${result.total}, обновлено ${result.indexed}, пропущено ${result.skipped}, ошибок ${result.errors}.`,
-        semanticStepDone: (result) => result.status === 'needs_embedding_provider_key'
-          ? `Базовый индекс готов. Для семантического поиска добавь ${result.setup.apiKeyEnv} для provider ${result.setup.provider}. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
+        semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
+          ? `Базовый индекс готов. Настрой provider ${result.setup.provider} для семантического поиска. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
           : `Индекс и semantic cache готовы: embedded ${result.embedded}, пропущено ${result.skipped}, осталось ${result.remaining}.`,
         askDone: 'Ответ готов.',
         aiProcessingStatusHeading: 'Статус ИИ',
@@ -290,6 +314,7 @@
         checkedHeading: 'Проверенные книги',
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Уверенность:',
+        uncertaintyLabel: 'Неопределённость:',
         statusShown: (shown, total, hidden) => `Показано ${shown} из ${total}, скрыто ${hidden}`,
         titleLabel: 'Название:',
         fileLabel: 'Файл:',
@@ -315,6 +340,30 @@
         updateSkip: 'Не показывать эту версию'
       },
       en: {
+        mainNavLabel: 'Main sections',
+        mainViewButtonText: 'Main',
+        settingsViewButtonText: 'Settings',
+        settingsTitleText: 'Settings',
+        settingsIntroText: 'Configure the books folder, SQLite database, providers, models, API keys, and the OpenRouter limit here.',
+        settingsBooksRootLabel: 'Books folder path',
+        settingsDbPathLabel: 'SQLite database path',
+        settingsActiveProviderLabel: 'Answer provider',
+        settingsEmbeddingProviderLabel: 'Semantic embeddings provider',
+        openrouterBaseUrlLabel: 'OpenRouter base URL',
+        openrouterModelLabel: 'Answer model',
+        openrouterEmbeddingModelLabel: 'Embedding model',
+        openrouterApiKeyLabel: 'OpenRouter API key',
+        clearApiKeyLabel: 'Delete saved API key',
+        openrouterBudgetLabel: 'OpenRouter spending limit in dollars',
+        localProviderLegend: 'Local OpenAI-compatible provider',
+        localBaseUrlLabel: 'Local base URL',
+        localModelLabel: 'Local answer model',
+        localEmbeddingModelLabel: 'Local embedding model',
+        localApiKeyLabel: 'Local provider API key, if required',
+        saveSettingsButtonText: 'Save settings',
+        settingsRequired: 'Complete and save Settings. The main page will open after saving.',
+        settingsSaving: 'Saving settings...',
+        settingsSaved: (path) => `Settings saved: ${path}`,
         pageTitle: 'Choose a book by annotation',
         introText: 'The books folder and SQLite database are loaded from Settings. The main page only keeps loading, search, and questions.',
         pickFolderButton: 'Choose books folder',
@@ -341,8 +390,8 @@
         indexing: 'Preparing the local index: reading books, creating SQLite, and checking semantic cache...',
         asking: 'Collecting evidence and running Ask mode...',
         indexDone: (result) => `Index ready: processed ${result.total}, updated ${result.indexed}, skipped ${result.skipped}, errors ${result.errors}.`,
-        semanticStepDone: (result) => result.status === 'needs_embedding_provider_key'
-          ? `Base index is ready. Add ${result.setup.apiKeyEnv} for provider ${result.setup.provider} to enable semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
+        semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
+          ? `The base index is ready. Configure provider ${result.setup.provider} for semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
           : `Index and semantic cache are ready: embedded ${result.embedded}, skipped ${result.skipped}, remaining ${result.remaining}.`,
         askDone: 'Answer ready.',
         aiProcessingStatusHeading: 'AI status',
@@ -360,6 +409,7 @@
         checkedHeading: 'Checked books',
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Confidence:',
+        uncertaintyLabel: 'Uncertainty:',
         statusShown: (shown, total, hidden) => `Showing ${shown} of ${total}, hidden ${hidden}`,
         titleLabel: 'Title:',
         fileLabel: 'File:',
@@ -414,6 +464,28 @@
 
     function applyLanguage() {
       document.documentElement.lang = currentLanguage;
+      document.getElementById('mainNav').setAttribute('aria-label', t('mainNavLabel'));
+      mainViewButton.textContent = t('mainViewButtonText');
+      settingsViewButton.textContent = t('settingsViewButtonText');
+      document.getElementById('settingsTitle').textContent = t('settingsTitleText');
+      document.getElementById('settingsIntro').textContent = t('settingsIntroText');
+      document.getElementById('settingsBooksRootLabel').textContent = t('settingsBooksRootLabel');
+      document.getElementById('settingsDbPathLabel').textContent = t('settingsDbPathLabel');
+      document.getElementById('settingsActiveProviderLabel').textContent = t('settingsActiveProviderLabel');
+      document.getElementById('settingsEmbeddingProviderLabel').textContent = t('settingsEmbeddingProviderLabel');
+      document.getElementById('settingsOpenrouterBaseUrlLabel').textContent = t('openrouterBaseUrlLabel');
+      document.getElementById('settingsOpenrouterModelLabel').textContent = t('openrouterModelLabel');
+      document.getElementById('settingsOpenrouterEmbeddingModelLabel').textContent = t('openrouterEmbeddingModelLabel');
+      document.getElementById('settingsOpenrouterApiKeyLabel').textContent = t('openrouterApiKeyLabel');
+      document.getElementById('settingsClearOpenrouterApiKeyText').textContent = t('clearApiKeyLabel');
+      document.getElementById('settingsOpenrouterBudgetLabel').textContent = t('openrouterBudgetLabel');
+      document.getElementById('localProviderLegend').textContent = t('localProviderLegend');
+      document.getElementById('settingsLocalBaseUrlLabel').textContent = t('localBaseUrlLabel');
+      document.getElementById('settingsLocalModelLabel').textContent = t('localModelLabel');
+      document.getElementById('settingsLocalEmbeddingModelLabel').textContent = t('localEmbeddingModelLabel');
+      document.getElementById('settingsLocalApiKeyLabel').textContent = t('localApiKeyLabel');
+      document.getElementById('settingsClearLocalApiKeyText').textContent = t('clearApiKeyLabel');
+      saveSettingsButton.textContent = t('saveSettingsButtonText');
       pageTitle.textContent = t('pageTitle');
       introText.textContent = t('introText');
       pickFolderButton.textContent = t('pickFolderButton');
@@ -480,10 +552,12 @@
       settingsFields.openrouterEmbeddingModel.value = openrouter.embeddingModel || '';
       settingsFields.openrouterApiKey.value = openrouter.apiKey || '';
       settingsFields.openrouterBudget.value = openrouter.maxSessionUsageUsd ?? 1;
-      settingsFields.openrouterBaseline.value = openrouter.baselineUsageUsd ?? '';
+      settingsFields.clearOpenrouterApiKey.checked = false;
+
       settingsFields.localBaseUrl.value = local.baseUrl || '';
       settingsFields.localModel.value = local.model || '';
       settingsFields.localEmbeddingModel.value = local.embeddingModel || '';
+      settingsFields.clearLocalApiKey.checked = false;
       settingsFields.localApiKey.value = local.apiKey || '';
       rootInput.value = config.booksRoot || rootInput.value;
       dbPathInput.value = config.dbPath || dbPathInput.value;
@@ -503,12 +577,14 @@
             embeddingModel: settingsFields.openrouterEmbeddingModel.value.trim(),
             apiKey: settingsFields.openrouterApiKey.value.trim(),
             maxSessionUsageUsd: settingsFields.openrouterBudget.value,
-            baselineUsageUsd: settingsFields.openrouterBaseline.value,
+            clearApiKey: settingsFields.clearOpenrouterApiKey.checked,
+
           },
           local: {
             baseUrl: settingsFields.localBaseUrl.value.trim(),
             model: settingsFields.localModel.value.trim(),
             embeddingModel: settingsFields.localEmbeddingModel.value.trim(),
+            clearApiKey: settingsFields.clearLocalApiKey.checked,
             apiKey: settingsFields.localApiKey.value.trim(),
           },
         },
@@ -520,7 +596,7 @@
         const data = await fetchJson('/api/config');
         fillSettingsForm(data.config || {});
         if (!data.isConfigured) {
-          setSettingsStatus('Заполни настройки и сохрани их. После сохранения откроется главная страница.');
+          setSettingsStatus(t('settingsRequired'));
           showView('settings');
         }
       } catch (error) {
@@ -530,7 +606,7 @@
     }
 
     async function saveSettings() {
-      setSettingsStatus('Сохраняю настройки...');
+      setSettingsStatus(t('settingsSaving'));
       saveSettingsButton.disabled = true;
       try {
         const data = await fetchJson('/api/config', {
@@ -539,7 +615,7 @@
           body: JSON.stringify(collectSettingsForm()),
         });
         fillSettingsForm(data.config || {});
-        setSettingsStatus(`Настройки сохранены: ${data.path}`);
+        setSettingsStatus(t('settingsSaved', data.path));
         if (data.isConfigured) {
           showView('main');
         }
@@ -631,25 +707,33 @@
       return dbPath;
     }
 
-    async function pickBooksRoot() {
-      const desktopApi = window.booksSelectionDesktop;
-      if (desktopApi?.pickDirectory) {
-        const result = await desktopApi.pickDirectory();
-        if (result?.canceled) {
-          setSettingsStatus(t('folderNotChosen'));
-          return;
+    async function pickBooksRoot({ loadAfterPick = false } = {}) {
+      try {
+        const desktopApi = window.booksSelectionDesktop;
+        if (desktopApi?.pickDirectory) {
+          const result = await desktopApi.pickDirectory();
+          if (result?.canceled) {
+            setStatus(t('folderNotChosen'));
+            setSettingsStatus(t('folderNotChosen'));
+            return;
+          }
+          if (result?.path) {
+            settingsFields.booksRoot.value = result.path;
+            rootInput.value = result.path;
+            localStorage.setItem(storageKey, result.path);
+            setStatus(t('folderChosen', result.path));
+            setSettingsStatus(t('folderChosen', result.path));
+            if (loadAfterPick) await loadBooks();
+            return;
+          }
         }
-        if (result?.path) {
-          settingsFields.booksRoot.value = result.path;
-          rootInput.value = result.path;
-          localStorage.setItem(storageKey, result.path);
-          setSettingsStatus(t('folderChosen', result.path));
-          return;
-        }
-      }
 
-      setSettingsStatus(t('nativePickerUnavailable'));
-      showView('settings');
+        setSettingsStatus(t('nativePickerUnavailable'));
+        showView('settings');
+      } catch (error) {
+        setStatus(error.message);
+        setSettingsStatus(error.message);
+      }
     }
 
     function renderAiProcessingStatus(result) {
@@ -740,6 +824,7 @@
         ${renderSetupStatus(setup)}
         ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
         ${result.confidence ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
+        ${result.uncertainty ? `<p><strong>${escapeHtml(t('uncertaintyLabel'))}</strong> ${escapeHtml(result.uncertainty)}</p>` : ''}
         ${renderCandidates(candidates)}
         <h3>${escapeHtml(t('evidenceHeading'))}</h3>
         <ul>${evidence.map((item) => `
@@ -872,9 +957,17 @@
       setControlBusy(buildIndexButton, true);
       setControlBusy(askButton, true);
       try {
-        const indexData = await fetchJson(`/api/index?root=${encodeURIComponent(root)}&db=${encodeURIComponent(dbPath)}`, { method: 'POST' });
+        const indexData = await fetchJson('/api/index', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ root, db: dbPath }),
+        });
         setAiStatus(t('indexDone', indexData.result));
-        const semanticData = await fetchJson(`/api/embed-index?db=${encodeURIComponent(dbPath)}&limit=100&batchSize=16`, { method: 'POST' });
+        const semanticData = await fetchJson('/api/embed-index', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, limit: 100, batchSize: 16 }),
+        });
         setAiStatus(t('semanticStepDone', semanticData.result));
         aiResultsNode.innerHTML = `
           <h3>${escapeHtml(t('resultHeading'))}</h3>
@@ -908,8 +1001,14 @@
 
       setAiStatus(t('asking'));
       aiResultsNode.innerHTML = '';
+      setControlBusy(askButton, true);
+      setControlBusy(buildIndexButton, true);
       try {
-        const data = await fetchJson(`/api/ask?q=${encodeURIComponent(query)}&db=${encodeURIComponent(dbPath)}`);
+        const data = await fetchJson('/api/ask', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ q: query, db: dbPath }),
+        });
         const result = data.result || {};
         if (result.status === 'needs_provider_key' && result.setup) {
           setAiStatus(t('providerNeeded', result.setup));
@@ -917,15 +1016,20 @@
           setAiStatus(t('askDone'));
         }
         renderAskResult(result);
+        aiResultsNode.focus();
       } catch (error) {
         setAiStatus(error.message);
         aiResultsNode.innerHTML = renderAiProcessingError(error.message);
+        aiResultsNode.focus();
+      } finally {
+        setControlBusy(askButton, false);
+        setControlBusy(buildIndexButton, false);
       }
     }
 
     pickFolderButton.addEventListener('click', async () => {
       if (window.booksSelectionDesktop?.pickDirectory) {
-        await pickBooksRoot();
+        await pickBooksRoot({ loadAfterPick: true });
         return;
       }
       if (window.showDirectoryPicker) {
@@ -935,7 +1039,7 @@
       }
       folderPicker.click();
     });
-    settingsFields.pickBooksRoot.addEventListener('click', pickBooksRoot);
+    settingsFields.pickBooksRoot.addEventListener('click', () => pickBooksRoot());
 
     folderPicker.addEventListener('change', () => {
       const files = [...folderPicker.files];
