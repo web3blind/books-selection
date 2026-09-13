@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { initializeSearchDatabase } = require('../src/searchDb');
-const { getEmbeddingIndexStatus, indexMissingChunkEmbeddings } = require('../src/embeddingIndexer');
+const { getEmbeddingIndexStatus, indexMissingChunkEmbeddings, iterateCurrentEmbeddingBatches } = require('../src/embeddingIndexer');
 const { storeChunkEmbedding } = require('../src/embeddings');
 
 function insertBookWithChunks(db, chunks) {
@@ -144,7 +144,7 @@ test('indexMissingChunkEmbeddings skips already embedded unchanged chunks', asyn
     assert.equal(result.embedded, 0);
     assert.equal(result.skipped, 1);
     assert.equal(result.remaining, 0);
-    assert.deepEqual(client.calls, ['already cached chunk']);
+    assert.deepEqual(client.calls, []);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 1);
   } finally {
     db.close();
@@ -174,7 +174,7 @@ test('indexMissingChunkEmbeddings re-embeds changed chunk hashes without duplica
     const rows = db.prepare('SELECT content_hash FROM chunk_embeddings WHERE chunk_id = ? ORDER BY content_hash').all(chunkId);
     assert.equal(first.embedded, 1);
     assert.equal(second.embedded, 0);
-    assert.deepEqual(client.calls, ['changed cached chunk after edit', 'changed cached chunk after edit']);
+    assert.deepEqual(client.calls, ['changed cached chunk after edit']);
     assert.deepEqual(rows.map((row) => row.content_hash), ['new-hash']);
   } finally {
     db.close();
@@ -213,6 +213,70 @@ test('indexMissingChunkEmbeddings respects limit and batchSize for bounded cache
     assert.equal(second.remaining, 0);
     assert.deepEqual(client.calls, ['chunk one', 'chunk two', 'chunk three']);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 3);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings processes the complete remaining corpus when limit is null', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const batches = [];
+  const client = {
+    async createEmbeddings({ inputs }) {
+      batches.push(inputs.length);
+      return inputs.map((input) => [input.length]);
+    },
+  };
+
+  try {
+    const chunks = Array.from({ length: 1001 }, (_, index) => ({
+      text: `chunk ${index}`,
+      contentHash: `hash-${index}`,
+    }));
+    insertBookWithChunks(db, chunks);
+
+    const result = await indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'secret-key' },
+      providerClient: client,
+      limit: null,
+      batchSize: 128,
+    });
+
+    assert.equal(result.embedded, 1001);
+    assert.equal(result.remaining, 0);
+    assert.equal(batches.length, 8);
+    assert.equal(Math.max(...batches), 128);
+  } finally {
+    db.close();
+  }
+});
+
+test('cached embedding validation reads rows in bounded keyset batches', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const chunks = Array.from({ length: 513 }, (_, index) => ({
+      text: `cached ${index}`,
+      contentHash: `cached-hash-${index}`,
+    }));
+    const chunkIds = insertBookWithChunks(db, chunks);
+    for (let index = 0; index < chunkIds.length; index += 1) {
+      storeChunkEmbedding(db, {
+        chunkId: chunkIds[index],
+        provider: 'openrouter',
+        model: 'openai/text-embedding-3-small',
+        contentHash: chunks[index].contentHash,
+        embedding: [index, 1],
+      });
+    }
+
+    const sizes = [...iterateCurrentEmbeddingBatches(db, {
+      provider: 'openrouter',
+      model: 'openai/text-embedding-3-small',
+      batchSize: 64,
+    })].map((rows) => rows.length);
+
+    assert.deepEqual(sizes, [64, 64, 64, 64, 64, 64, 64, 64, 1]);
   } finally {
     db.close();
   }
@@ -283,6 +347,37 @@ test('indexMissingChunkEmbeddings falls back to scalar requests when a compatibl
   }
 });
 
+test('consent-bounded runs never retransmit a rejected batch through scalar fallback', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const calls = [];
+  const client = {
+    async createEmbeddings({ inputs }) {
+      calls.push(['batch', ...inputs]);
+      throw new Error('Provider embeddings request failed with HTTP 422');
+    },
+    async createEmbedding({ input }) {
+      calls.push(['scalar', input]);
+      return [input.length];
+    },
+  };
+  try {
+    insertBookWithChunks(db, [{ text: 'approved once', contentHash: 'hash-1' }]);
+    await assert.rejects(indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'secret-key' },
+      providerClient: client,
+      limit: null,
+      batchSize: 64,
+      maxTransmittedChunks: 1,
+    }), /HTTP 422/);
+
+    assert.deepEqual(calls, [['batch', 'approved once']]);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 0);
+  } finally {
+    db.close();
+  }
+});
+
 test('indexMissingChunkEmbeddings removes malformed current cache rows and re-embeds them', async () => {
   const db = initializeSearchDatabase(':memory:');
   try {
@@ -329,7 +424,7 @@ test('indexMissingChunkEmbeddings rejects an invalid batch before storing any ve
   }
 });
 
-test('indexMissingChunkEmbeddings rebuilds a fully populated cache when provider dimension changes', async () => {
+test('indexMissingChunkEmbeddings does not probe or rebuild a fully populated cache without remaining consent', async () => {
   const db = initializeSearchDatabase(':memory:');
   try {
     const chunkIds = insertBookWithChunks(db, [
@@ -352,10 +447,10 @@ test('indexMissingChunkEmbeddings rebuilds a fully populated cache when provider
     });
     const dimensions = db.prepare('SELECT embedding_json FROM chunk_embeddings ORDER BY chunk_id').all()
       .map((row) => JSON.parse(row.embedding_json).length);
-    assert.deepEqual(dimensions, [3, 3]);
+    assert.deepEqual(dimensions, [2, 2]);
     assert.equal(result.remaining, 0);
-    assert.equal(result.embedded, 2);
-    assert.equal(calls[0].length, 1);
+    assert.equal(result.embedded, 0);
+    assert.deepEqual(calls, []);
   } finally {
     db.close();
   }

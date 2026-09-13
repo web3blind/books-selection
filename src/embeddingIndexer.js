@@ -6,6 +6,7 @@ const ACTIVE_CORPUS_FILTER = `(
   NOT EXISTS (SELECT 1 FROM corpus_state WHERE id = 1)
   OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
 )`;
+const EMBEDDING_ROW_BATCH_SIZE = 256;
 
 function normalizePositiveInteger(value, fallback, maximum) {
   const parsed = Number(value);
@@ -56,6 +57,30 @@ function countChunksWithCurrentEmbedding(db, { provider, model }) {
   `).get(provider, model).count);
 }
 
+function* iterateCurrentEmbeddingBatches(db, { provider, model, batchSize = EMBEDDING_ROW_BATCH_SIZE }) {
+  const normalizedBatchSize = normalizePositiveInteger(batchSize, EMBEDDING_ROW_BATCH_SIZE, 1000);
+  const statement = db.prepare(`
+    SELECT chunk_embeddings.chunk_id, chunk_embeddings.embedding_json
+    FROM chunk_embeddings
+    JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER}
+      AND chunk_embeddings.provider = ?
+      AND chunk_embeddings.model = ?
+      AND chunk_embeddings.content_hash = chunks.content_hash
+      AND chunk_embeddings.chunk_id > ?
+    ORDER BY chunk_embeddings.chunk_id
+    LIMIT ?
+  `);
+  let afterChunkId = 0;
+  while (true) {
+    const rows = statement.all(provider, model, afterChunkId, normalizedBatchSize);
+    if (rows.length === 0) return;
+    yield rows;
+    afterChunkId = rows[rows.length - 1].chunk_id;
+  }
+}
+
 function selectChunksMissingEmbeddings(db, { provider, model, limit }) {
   return db.prepare(`
     SELECT chunks.id, chunks.text, chunks.content_hash
@@ -79,25 +104,19 @@ function getEmbeddingIndexStatus({ db, providerOverrides = {}, env = process.env
   const { providerName, provider } = getEmbeddingProvider(providerOverrides, env);
   const model = provider?.embeddingModel || '';
   const total = countChunks(db);
-  const rows = model ? db.prepare(`
-    SELECT chunk_embeddings.embedding_json
-    FROM chunk_embeddings
-    JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
-    JOIN books ON books.id = chunks.book_id
-    WHERE ${ACTIVE_CORPUS_FILTER}
-      AND chunk_embeddings.provider = ?
-      AND chunk_embeddings.model = ?
-      AND chunk_embeddings.content_hash = chunks.content_hash
-  `).all(providerName, model) : [];
   const dimensionCounts = new Map();
-  for (const row of rows) {
-    try {
-      const vector = JSON.parse(row.embedding_json);
-      const valid = Array.isArray(vector) && vector.length > 0
-        && vector.every((value) => typeof value === 'number' && Number.isFinite(value));
-      if (valid) dimensionCounts.set(vector.length, (dimensionCounts.get(vector.length) || 0) + 1);
-    } catch {
-      // Malformed cached vectors are not ready.
+  if (model) {
+    for (const rows of iterateCurrentEmbeddingBatches(db, { provider: providerName, model })) {
+      for (const row of rows) {
+        try {
+          const vector = JSON.parse(row.embedding_json);
+          const valid = Array.isArray(vector) && vector.length > 0
+            && vector.every((value) => typeof value === 'number' && Number.isFinite(value));
+          if (valid) dimensionCounts.set(vector.length, (dimensionCounts.get(vector.length) || 0) + 1);
+        } catch {
+          // Malformed cached vectors are not ready.
+        }
+      }
     }
   }
   const normalizedExpectedDimension = Number.isInteger(expectedDimension) && expectedDimension > 0
@@ -123,18 +142,7 @@ function getEmbeddingIndexStatus({ db, providerOverrides = {}, env = process.env
 }
 
 function pruneInvalidCurrentEmbeddings(db, { provider, model }) {
-  const rows = db.prepare(`
-    SELECT chunk_embeddings.chunk_id, chunk_embeddings.embedding_json
-    FROM chunk_embeddings
-    JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
-    JOIN books ON books.id = chunks.book_id
-    WHERE ${ACTIVE_CORPUS_FILTER}
-      AND chunk_embeddings.provider = ?
-      AND chunk_embeddings.model = ?
-      AND chunk_embeddings.content_hash = chunks.content_hash
-    ORDER BY chunk_embeddings.chunk_id
-  `).all(provider, model);
-  const parsedRows = rows.map((row) => {
+  function parseEmbedding(row) {
     try {
       const embedding = JSON.parse(row.embedding_json);
       const valid = Array.isArray(embedding)
@@ -144,18 +152,25 @@ function pruneInvalidCurrentEmbeddings(db, { provider, model }) {
     } catch {
       return { chunkId: row.chunk_id, embedding: null };
     }
-  });
+  }
+
   const dimensionCounts = new Map();
-  for (const row of parsedRows) {
-    if (!row.embedding) continue;
-    dimensionCounts.set(row.embedding.length, (dimensionCounts.get(row.embedding.length) || 0) + 1);
+  for (const rows of iterateCurrentEmbeddingBatches(db, { provider, model })) {
+    for (const rawRow of rows) {
+      const row = parseEmbedding(rawRow);
+      if (!row.embedding) continue;
+      dimensionCounts.set(row.embedding.length, (dimensionCounts.get(row.embedding.length) || 0) + 1);
+    }
   }
   const expectedDimension = [...dimensionCounts.entries()]
     .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0] || null;
   const deleteRow = db.prepare('DELETE FROM chunk_embeddings WHERE chunk_id = ? AND provider = ? AND model = ?');
-  for (const row of parsedRows) {
-    if (!row.embedding || row.embedding.length !== expectedDimension) {
-      deleteRow.run(row.chunkId, provider, model);
+  for (const rows of iterateCurrentEmbeddingBatches(db, { provider, model })) {
+    for (const rawRow of rows) {
+      const row = parseEmbedding(rawRow);
+      if (!row.embedding || row.embedding.length !== expectedDimension) {
+        deleteRow.run(row.chunkId, provider, model);
+      }
     }
   }
   return expectedDimension;
@@ -186,6 +201,7 @@ async function indexMissingChunkEmbeddings({
   signal,
   limit = 100,
   batchSize = 16,
+  maxTransmittedChunks = null,
 } = {}) {
   if (!db) {
     throw new Error('Embedding indexing requires a database.');
@@ -206,11 +222,14 @@ async function indexMissingChunkEmbeddings({
 
   const model = provider.embeddingModel;
   const currentEmbeddingDimension = pruneInvalidCurrentEmbeddings(db, { provider: providerName, model });
+  const totalChunks = countChunks(db);
   let skipped = countChunksWithCurrentEmbedding(db, { provider: providerName, model });
-  const runLimit = normalizePositiveInteger(limit, 100, 1000);
+  const approvedTransmissionLimit = Number.isSafeInteger(maxTransmittedChunks) && maxTransmittedChunks >= 0
+    ? Math.min(maxTransmittedChunks, totalChunks)
+    : totalChunks;
+  const runLimit = limit === null ? approvedTransmissionLimit : normalizePositiveInteger(limit, 100, 1000);
   const runBatchSize = normalizePositiveInteger(batchSize, 16, 128);
-  const totalMissing = Math.max(0, countChunks(db) - skipped);
-  let missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
+  const totalMissing = Math.max(0, totalChunks - skipped);
 
   if (!apiKey) {
     return {
@@ -230,7 +249,8 @@ async function indexMissingChunkEmbeddings({
       try {
         return await client.createEmbeddings({ inputs: chunks.map((chunk) => chunk.text), signal });
       } catch (error) {
-        const canFallBackToScalar = typeof client.createEmbedding === 'function'
+        const canFallBackToScalar = maxTransmittedChunks === null
+          && typeof client.createEmbedding === 'function'
           && /Provider embeddings request failed with HTTP (400|404|405|413|422)\b/.test(error.message || '');
         if (!canFallBackToScalar) throw error;
       }
@@ -242,28 +262,14 @@ async function indexMissingChunkEmbeddings({
   let expectedDimension = currentEmbeddingDimension;
   let dimensionTransitionHandled = false;
 
-  if (totalMissing === 0 && skipped > 0 && expectedDimension) {
-    const probeChunk = db.prepare(`
-      SELECT chunks.id, chunks.text, chunks.content_hash
-      FROM chunks JOIN books ON books.id = chunks.book_id
-      WHERE ${ACTIVE_CORPUS_FILTER}
-      ORDER BY chunks.id LIMIT 1
-    `).get();
-    if (probeChunk) {
-      const probeEmbeddings = await requestEmbeddingsForChunks([probeChunk]);
-      const providerDimension = validateEmbeddingBatch(probeEmbeddings, 1);
-      if (providerDimension !== expectedDimension) {
-        db.prepare('DELETE FROM chunk_embeddings WHERE provider = ? AND model = ?').run(providerName, model);
-        dimensionTransitionHandled = true;
-        expectedDimension = providerDimension;
-        skipped = 0;
-        missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
-      }
-    }
-  }
-
-  for (let offset = 0; offset < missingChunks.length;) {
-    const batch = missingChunks.slice(offset, offset + runBatchSize);
+  let processedThisRun = 0;
+  while (processedThisRun < runLimit) {
+    const batch = selectChunksMissingEmbeddings(db, {
+      provider: providerName,
+      model,
+      limit: Math.min(runBatchSize, runLimit - processedThisRun),
+    });
+    if (batch.length === 0) break;
     const embeddings = await requestEmbeddingsForChunks(batch);
     const batchDimension = validateEmbeddingBatch(embeddings, batch.length);
     if (expectedDimension && batchDimension !== expectedDimension) {
@@ -275,9 +281,6 @@ async function indexMissingChunkEmbeddings({
       expectedDimension = batchDimension;
       skipped = 0;
       embedded = 0;
-      missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
-      offset = 0;
-      continue;
     }
     expectedDimension = batchDimension;
     for (let index = 0; index < batch.length; index += 1) {
@@ -292,7 +295,7 @@ async function indexMissingChunkEmbeddings({
       });
       embedded += 1;
     }
-    offset += runBatchSize;
+    processedThisRun += batch.length;
   }
 
   const remaining = Math.max(0, countChunks(db) - countChunksWithCurrentEmbedding(db, {
@@ -315,5 +318,6 @@ async function indexMissingChunkEmbeddings({
 module.exports = {
   getEmbeddingIndexStatus,
   indexMissingChunkEmbeddings,
+  iterateCurrentEmbeddingBatches,
   selectChunksMissingEmbeddings,
 };

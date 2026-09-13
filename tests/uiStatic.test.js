@@ -111,7 +111,7 @@ test('settings exposes an accessible required books-path error and cannot announ
   assert.ok(html.includes("throw new Error(t('booksRootRequired'))"));
 });
 
-test('one preparation button builds local FTS and one consented embedding batch', () => {
+test('one preparation button builds local FTS and one consented complete embedding run', () => {
   for (const marker of [
     'id="buildIndexButton"',
     'id="embeddingReadiness"',
@@ -123,10 +123,14 @@ test('one preparation button builds local FTS and one consented embedding batch'
     'embeddingChunkCount',
     'embeddingConsentRequired',
   ]) assert.ok(html.includes(marker), `missing embedding consent marker: ${marker}`);
-  assert.ok(html.includes('Up to 1000 text snippets'));
-  assert.ok(html.includes('До 1000 текстовых фрагментов'));
+  assert.ok(html.includes('All remaining text snippets'));
+  assert.ok(html.includes('Все оставшиеся текстовые фрагменты'));
   assert.equal(html.split("fetchJson('/api/embed-index'").length - 1, 1);
   assert.ok(!html.includes('while (semanticResult.remaining > 0)'));
+  assert.ok(html.includes('allRemaining: true'));
+  assert.ok(html.includes('expectedRemaining'));
+  assert.ok(html.includes('embeddingConsentVolumeChanged'));
+  assert.ok(!html.includes('limit: 999'));
   assert.ok(!html.includes('storageKey'));
   assert.ok(!html.includes('id="embedIndexButton"'));
   assert.ok(html.includes('prepareSearch'));
@@ -136,7 +140,7 @@ test('one preparation button builds local FTS and one consented embedding batch'
   assert.ok(html.includes('expectedProvider: savedEmbeddingProvider'));
   assert.ok(html.includes('cloudConsent: embeddingConsent.checked'));
   assert.ok(html.includes('let activeAiOperation = false'));
-  assert.ok(html.includes('split into several technical requests'));
+  assert.ok(html.includes('sequential bounded technical batches'));
 });
 
 test('primary controls and results are inside the main landmark', () => {

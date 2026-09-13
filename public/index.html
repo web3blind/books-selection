@@ -155,9 +155,9 @@
       <ul>
         <li><span id="embeddingProviderLabel">Provider:</span> <strong id="embeddingProvider">—</strong></li>
         <li><span id="embeddingDestinationLabel">Назначение:</span> <strong id="embeddingDestination">—</strong></li>
-        <li><span id="embeddingChunkCountLabel">Объём:</span> <strong id="embeddingChunkCount">До 1000 текстовых фрагментов за запуск</strong></li>
+        <li><span id="embeddingChunkCountLabel">Объём:</span> <strong id="embeddingChunkCount">Все оставшиеся текстовые фрагменты</strong></li>
       </ul>
-      <label><input id="embeddingConsent" type="checkbox" aria-describedby="embeddingConsentDetails"> <span id="embeddingConsentLabel">Я понимаю, какие данные и куда будут отправлены, и согласен на этот запуск.</span></label>
+      <label><input id="embeddingConsent" type="checkbox" aria-describedby="embeddingConsentDetails"> <span id="embeddingConsentLabel">Я понимаю, какие данные и куда будут отправлены, и согласен обработать все оставшиеся фрагменты.</span></label>
       <div class="actions">
         <button id="cancelProviderButton" type="button" hidden>Отменить операцию</button>
       </div>
@@ -302,7 +302,7 @@
         searchPlaceholder: 'Например: попаданец, гоблины, клан',
         showReadyOnly: 'Показывать только циклы с аннотацией и без ошибок',
         aiSearchTitle: 'Вопрос по циклам',
-        aiSearchIntro: 'Одна кнопка сначала обновляет локальный FTS-индекс, затем готовит один пакет embeddings. Перед каждым облачным пакетом нужно подтвердить provider, адрес назначения и объём данных.',
+        aiSearchIntro: 'Одна кнопка обновляет локальный FTS-индекс, затем подготавливает embeddings для всех оставшихся фрагментов. Перед отправкой в облако нужно один раз подтвердить provider, адрес назначения и полный объём данных.',
         dbPathLabel: 'SQLite база берётся из настроек.',
         dbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
         buildIndexButton: 'Подготовить поиск и embeddings',
@@ -315,14 +315,15 @@
         embeddingReadinessError: 'Не удалось проверить готовность embeddings.',
         cancelProviderButton: 'Отменить операцию',
         providerCancelled: 'Операция отменена.',
-        embeddingConsentDetails: 'После локального индекса эта же кнопка подготавливает embeddings. До 1000 фрагментов за запуск могут быть разделены на несколько технических запросов. Локальный provider работает на этом устройстве; OpenRouter получает выбранные фрагменты через интернет.',
+        embeddingConsentDetails: 'После локального индекса эта же кнопка подготавливает все оставшиеся embeddings за один запуск, последовательно отправляя ограниченные технические пакеты. Операцию можно отменить и позже продолжить с оставшегося места. Локальный provider работает на этом устройстве; OpenRouter получает фрагменты через интернет.',
         embeddingProviderLabel: 'Provider:',
         embeddingDestinationLabel: 'Назначение:',
         embeddingChunkCountLabel: 'Объём:',
-        embeddingChunkCount: 'До 1000 текстовых фрагментов за запуск',
-        embeddingConsentLabel: 'Я понимаю, какие данные и куда будут отправлены, и согласен на этот запуск.',
+        embeddingChunkCount: (remaining) => Number.isFinite(remaining) ? `Все оставшиеся текстовые фрагменты: ${remaining}` : 'Все оставшиеся текстовые фрагменты',
+        embeddingConsentLabel: 'Я понимаю, какие данные и куда будут отправлены, и согласен обработать все оставшиеся фрагменты.',
         embeddingDestination: (provider, destination) => provider === 'local' ? `Локальное устройство (${destination})` : `Облако OpenRouter (${destination})`,
         embeddingConsentRequired: 'Подтверди provider, назначение и объём данных для этого запуска.',
+        embeddingConsentVolumeChanged: (remaining) => `После обновления локального индекса объём изменился: осталось ${remaining} фрагментов. Проверь новый объём, снова установи флажок согласия и нажми кнопку.`,
         ftsQuestionLabel: 'Вопрос по циклам',
         ftsQuestionPlaceholder: 'Например: найди цикл, где герои любят друг друга, действуют вместе и оба живы в финале',
         askButton: 'Найти ответ',
@@ -334,7 +335,7 @@
         semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
           ? `Базовый индекс готов. Настрой provider ${result.setup.provider} для семантического поиска. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
           : result.remaining > 0
-            ? `Пакет готов: добавлено ${result.embedded}, осталось ${result.remaining}. Чтобы отправить следующий пакет, снова подтверди согласие.`
+            ? `Обработка остановилась: добавлено ${result.embedded}, осталось ${result.remaining}. Повторный запуск продолжит с оставшихся фрагментов.`
             : `Индекс и semantic cache полностью готовы: добавлено ${result.embedded}, ранее готово ${result.skipped}, осталось 0.`,
         semanticIndexStalled: (remaining) => `Не удалось завершить semantic cache. Осталось фрагментов: ${remaining}. Повтори подготовку индекса.`,
         askDone: 'Ответ готов.',
@@ -431,7 +432,7 @@
         searchPlaceholder: 'For example: goblins, clan, portal fantasy',
         showReadyOnly: 'Show only cycles with annotations and without errors',
         aiSearchTitle: 'Question about series',
-        aiSearchIntro: 'One button first updates the local FTS index, then prepares one embedding batch. Before each cloud batch you must confirm the provider, destination, and amount of data.',
+        aiSearchIntro: 'One button updates the local FTS index, then prepares embeddings for every remaining snippet. Before sending data to the cloud, confirm the provider, destination, and full amount once.',
         dbPathLabel: 'SQLite database is loaded from Settings.',
         dbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
         buildIndexButton: 'Prepare search and embeddings',
@@ -444,14 +445,15 @@
         embeddingReadinessError: 'Could not check embeddings readiness.',
         cancelProviderButton: 'Cancel operation',
         providerCancelled: 'Operation cancelled.',
-        embeddingConsentDetails: 'After the local index, the same button prepares embeddings. Up to 1000 snippets per run may be split into several technical requests. A local provider runs on this device; OpenRouter receives selected snippets over the internet.',
+        embeddingConsentDetails: 'After the local index, the same button prepares all remaining embeddings in one run using sequential bounded technical batches. You can cancel and later resume from the remaining snippets. A local provider runs on this device; OpenRouter receives snippets over the internet.',
         embeddingProviderLabel: 'Provider:',
         embeddingDestinationLabel: 'Destination:',
         embeddingChunkCountLabel: 'Amount:',
-        embeddingChunkCount: 'Up to 1000 text snippets per run',
-        embeddingConsentLabel: 'I understand what data will be sent and where, and consent to this run.',
+        embeddingChunkCount: (remaining) => Number.isFinite(remaining) ? `All remaining text snippets: ${remaining}` : 'All remaining text snippets',
+        embeddingConsentLabel: 'I understand what data will be sent and where, and consent to processing all remaining snippets.',
         embeddingDestination: (provider, destination) => provider === 'local' ? `This device (${destination})` : `OpenRouter cloud (${destination})`,
         embeddingConsentRequired: 'Confirm the provider, destination, and amount of data for this run.',
+        embeddingConsentVolumeChanged: (remaining) => `The volume changed after updating the local index: ${remaining} snippets remain. Review the new amount, confirm consent again, and press the button.`,
         ftsQuestionLabel: 'Question about series',
         ftsQuestionPlaceholder: 'For example: find a series where the heroes love each other, act together, and both survive the finale',
         askButton: 'Find answer',
@@ -463,7 +465,7 @@
         semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
           ? `The base index is ready. Configure provider ${result.setup.provider} for semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
           : result.remaining > 0
-            ? `Batch complete: embedded ${result.embedded}, remaining ${result.remaining}. Confirm consent again before sending the next batch.`
+            ? `Processing stopped: embedded ${result.embedded}, remaining ${result.remaining}. A retry resumes from the remaining snippets.`
             : `Index and semantic cache are complete: added ${result.embedded}, already ready ${result.skipped}, remaining 0.`,
         semanticIndexStalled: (remaining) => `The semantic cache could not be completed. Remaining snippets: ${remaining}. Run index preparation again.`,
         askDone: 'Answer ready.',
@@ -603,7 +605,7 @@
       document.getElementById('embeddingDestinationLabel').textContent = t('embeddingDestinationLabel');
       document.getElementById('embeddingChunkCountLabel').textContent = t('embeddingChunkCountLabel');
       document.getElementById('embeddingConsentLabel').textContent = t('embeddingConsentLabel');
-      embeddingChunkCount.textContent = t('embeddingChunkCount');
+      embeddingChunkCount.textContent = t('embeddingChunkCount', currentEmbeddingStatus?.remaining);
       updateEmbeddingDisclosure();
       ftsQuestionLabel.textContent = t('ftsQuestionLabel');
       ftsQuestionInput.placeholder = t('ftsQuestionPlaceholder');
@@ -852,6 +854,7 @@
         const data = await fetchJson(`/api/embedding-status?db=${encodeURIComponent(dbPath)}`);
         currentEmbeddingStatus = data.result;
         embeddingReadiness.textContent = t(embeddingReadinessKey(currentEmbeddingStatus.status), currentEmbeddingStatus);
+        embeddingChunkCount.textContent = t('embeddingChunkCount', currentEmbeddingStatus.remaining);
         return currentEmbeddingStatus;
       } catch {
         currentEmbeddingStatus = null;
@@ -1109,7 +1112,7 @@
       }
     }
 
-    async function prepareEmbeddings() {
+    async function prepareEmbeddings(expectedRemaining) {
       const dbPath = getDbPath();
       if (!dbPath) {
         setAiStatus(t('noDbPath'));
@@ -1130,7 +1133,8 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             db: dbPath,
-            limit: 999,
+            allRemaining: true,
+            expectedRemaining,
             batchSize: 64,
             expectedProvider: savedEmbeddingProvider,
             cloudConsent: embeddingConsent.checked,
@@ -1158,12 +1162,24 @@
         embeddingConsent.focus();
         return;
       }
+      const consentedRemaining = currentEmbeddingStatus?.remaining;
       activeAiOperation = true;
       setControlBusy(buildIndexButton, true);
       setControlBusy(askButton, true);
       try {
         const indexed = await buildLocalIndex();
-        if (indexed) await prepareEmbeddings();
+        if (indexed) {
+          if (
+            requiresConsent
+            && (!Number.isSafeInteger(consentedRemaining) || currentEmbeddingStatus?.remaining !== consentedRemaining)
+          ) {
+            setAiStatus(t('embeddingConsentVolumeChanged', currentEmbeddingStatus?.remaining ?? 0));
+            embeddingConsent.checked = false;
+            embeddingConsent.focus();
+          } else {
+            await prepareEmbeddings(currentEmbeddingStatus?.remaining ?? 0);
+          }
+        }
       } finally {
         activeAiOperation = false;
         setControlBusy(buildIndexButton, false);

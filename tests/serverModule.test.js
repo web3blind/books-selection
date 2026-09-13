@@ -80,6 +80,70 @@ test('startServer can run on an ephemeral port without opening a browser', async
   }
 });
 
+test('all-remaining API does not probe or rebuild a fully cached corpus beyond approved volume', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-server-full-cache-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({
+    booksRoot: dir,
+    dbPath,
+    activeProvider: 'openrouter',
+    activeEmbeddingsProvider: 'openrouter',
+    providers: { openrouter: { baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'fixture-key' } },
+  }, process.env);
+  const db = initializeSearchDatabase(dbPath);
+  const bookId = Number(db.prepare(`
+    INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status)
+    VALUES ('Cycle', ?, ?, 1, 1, 'book-hash', 'Book', 'Annotation', 'indexed')
+  `).run(dir, path.join(dir, 'book.fb2')).lastInsertRowid);
+  const chunkId = Number(db.prepare(`
+    INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset)
+    VALUES (?, 0, 'cached evidence', 'chunk-hash', 0, 15)
+  `).run(bookId).lastInsertRowid);
+  db.prepare(`INSERT INTO chunk_embeddings
+    (chunk_id, provider, model, content_hash, embedding_json)
+    VALUES (?, 'openrouter', 'openai/text-embedding-3-small', 'chunk-hash', '[1,2]')`).run(chunkId);
+  db.close();
+
+  let fetchCalls = 0;
+  const started = await startServer({
+    port: 0,
+    openBrowser: false,
+    log: false,
+    providerFetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error('provider must not be called for approved volume zero');
+    },
+  });
+
+  try {
+    const home = await request(started, 'GET', '/', null);
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    const response = await request(started, 'POST', '/api/embed-index', cookie, {
+      db: dbPath,
+      expectedProvider: 'openrouter',
+      cloudConsent: true,
+      allRemaining: true,
+      expectedRemaining: 0,
+    });
+    const verifiedDb = initializeSearchDatabase(dbPath);
+    const stored = verifiedDb.prepare('SELECT embedding_json FROM chunk_embeddings WHERE chunk_id = ?').get(chunkId);
+    verifiedDb.close();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.result.embedded, 0);
+    assert.equal(response.body.result.remaining, 0);
+    assert.equal(fetchCalls, 0);
+    assert.equal(stored.embedding_json, '[1,2]');
+  } finally {
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('desktop provider fetch is injected through the server and network failures create a safe log', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-server-fetch-'));
   const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
@@ -126,8 +190,18 @@ test('desktop provider fetch is injected through the server and network failures
     const missingConsent = await request(started, 'POST', '/api/embed-index', cookie, {
       db: path.join(dir, 'search.sqlite'), expectedProvider: 'openrouter', cloudConsent: false,
     });
+    const missingVolume = await request(started, 'POST', '/api/embed-index', cookie, {
+      db: path.join(dir, 'search.sqlite'), expectedProvider: 'openrouter', cloudConsent: true, allRemaining: true,
+    });
+    const staleVolume = await request(started, 'POST', '/api/embed-index', cookie, {
+      db: path.join(dir, 'search.sqlite'), expectedProvider: 'openrouter', cloudConsent: true,
+      allRemaining: true, expectedRemaining: 0,
+    });
     assert.equal(mismatchedConsent.statusCode, 409);
     assert.equal(missingConsent.statusCode, 400);
+    assert.equal(missingVolume.statusCode, 400);
+    assert.equal(staleVolume.statusCode, 409);
+    assert.match(staleVolume.body.error, /осталось 1 фрагментов/);
     assert.equal(fetchCalls, 0);
     const routes = [
       ['/api/ask', { q: 'indexed evidence' }],

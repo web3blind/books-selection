@@ -322,8 +322,9 @@ function createRequestHandler(options = {}) {
       requireJsonRequest(request);
       const payload = await readJsonBody(request);
       const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
-      const limit = Number(payload.limit ?? 100);
+      const limit = payload.allRemaining === true ? null : Number(payload.limit ?? 100);
       const batchSize = Number(payload.batchSize ?? 16);
+      const expectedRemaining = Number(payload.expectedRemaining);
       const configuredProvider = String(appConfig.activeEmbeddingsProvider || 'openrouter');
       const expectedProvider = String(payload.expectedProvider || '');
 
@@ -336,10 +337,22 @@ function createRequestHandler(options = {}) {
       if (configuredProvider === 'openrouter' && payload.cloudConsent !== true) {
         throw new HttpError(400, 'Для отправки фрагментов в OpenRouter требуется явное согласие.');
       }
+      if (payload.allRemaining === true && (!Number.isSafeInteger(expectedRemaining) || expectedRemaining < 0)) {
+        throw new HttpError(400, 'Для полной подготовки нужен подтверждённый объём оставшихся фрагментов.');
+      }
 
-      const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({
-        db, limit, batchSize, providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
-      }));
+      const result = await withSearchDatabase(databasePath, (db) => {
+        if (payload.allRemaining === true) {
+          const status = getEmbeddingIndexStatus({ db, providerOverrides });
+          if (status.remaining !== expectedRemaining) {
+            throw new HttpError(409, `Объём изменился: сейчас осталось ${status.remaining} фрагментов. Подтверди новый объём.`);
+          }
+        }
+        return indexMissingChunkEmbeddings({
+          db, limit, batchSize, maxTransmittedChunks: expectedRemaining,
+          providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
+        });
+      });
       return sendJson(response, 200, { db: databasePath, result });
     }
 

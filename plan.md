@@ -2,11 +2,25 @@
 
 ## Status
 
-Статус: регрессия главной страницы исправлена для `v0.3.10`: UI снова показывает один цикл с одной аннотацией, а полный набор книг используется только внутренним индексатором. Проверено `179/179` тестами и browser/API smoke на библиотеке с несколькими книгами в цикле. Обновление защищённого `AGENTS.md` не входило в реализацию. Hermes provider transport Денис реализует отдельно; до появления транспорта Hermes остаётся внутренним scaffold и не показывается как рабочий выбор в UI.
+Статус: для `v0.3.11` подготовка embeddings переведена на один полный запуск: все оставшиеся фрагменты обрабатываются последовательными пакетами без загрузки всего корпуса в память. Облачное согласие связано с показанным числом remaining и требует повторного подтверждения только если локальная переиндексация реально изменила объём. Проверено `183/183` тестами и RU/EN browser smoke. Обновление защищённого `AGENTS.md` не входило в реализацию. Hermes provider transport Денис реализует отдельно; до появления транспорта Hermes остаётся внутренним scaffold и не показывается как рабочий выбор в UI.
 
 Основной annotation-browser выполнен. Стратегическое направление: превратить Books Selection в локальный AI/semantic search tool по FB2-библиотеке с SQLite, FTS5, embeddings, графом фактов и несколькими AI provider modes.
 
 ## Active audit remediation
+
+## One-click complete embedding preparation
+
+- `outcome`: одно подтверждение и одно нажатие подготавливают embeddings для всех оставшихся фрагментов; повторные пакеты по 1000 и повторные подтверждения не требуются.
+- `verification`: indexer обрабатывает весь remaining corpus внутренними provider-batches, UI отправляет `allRemaining`, показывает понятный полный объём и сохраняет отмену/возобновление.
+- `constraints`: OpenRouter всё ещё требует явного согласия; provider requests остаются bounded batch-ами; успешные batches сохраняются, поэтому повтор после отмены/ошибки продолжает с остатка.
+- `boundaries`: embedding indexer/API/UI, focused tests, version/release artifacts; не менять модели, стоимость provider или пользовательский corpus.
+- `stop_when`: provider запрещает batch/объём либо публикация требует замены существующего релиза.
+
+## Release v0.3.11
+
+- `outcome`: опубликовать one-click complete embedding preparation с четырьмя стабильными desktop-артефактами и прямой Windows-ссылкой.
+- `verification`: полная desktop-сборка, Electron smoke, проверка архивов и SHA-256, read-back GitHub Release и HTTP range-проверка каждого файла.
+- `constraints`: не обращаться к реальному provider при тестировании и не изменять пользовательскую SQLite/config; не заменять артефакты прошлых релизов.
 
 ## Cycle-only annotation browser regression
 
