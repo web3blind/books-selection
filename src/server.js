@@ -7,7 +7,7 @@ const { URL } = require('node:url');
 
 const { readAppConfig, redactAppConfig, isAppConfigured, toProviderOverrides, writeAppConfig } = require('./appConfig');
 const { answerLibraryQuestion } = require('./ask');
-const { indexMissingChunkEmbeddings } = require('./embeddingIndexer');
+const { getEmbeddingIndexStatus, indexMissingChunkEmbeddings } = require('./embeddingIndexer');
 const { semanticSearchIfConfigured } = require('./embeddings');
 const { extractFactFromEvidence } = require('./factExtractor');
 const { indexLibrary, searchChunks } = require('./indexer');
@@ -249,6 +249,16 @@ function createRequestHandler(options = {}) {
       return sendJson(response, 200, { root, db: databasePath, result });
     }
 
+    if (url.pathname === '/api/embedding-status') {
+      if (request.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed.' });
+      const databasePath = getDbPath(url, appConfig);
+      if (!databasePath) return sendJson(response, 400, { error: 'Нужен путь к SQLite базе.' });
+      const result = await withSearchDatabase(databasePath, (db) => getEmbeddingIndexStatus({
+        db, providerOverrides,
+      }));
+      return sendJson(response, 200, { db: databasePath, result });
+    }
+
     if (url.pathname === '/api/search') {
       const query = url.searchParams.get('q') || '';
       const databasePath = getDbPath(url, appConfig);
@@ -314,9 +324,17 @@ function createRequestHandler(options = {}) {
       const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
       const limit = Number(payload.limit ?? 100);
       const batchSize = Number(payload.batchSize ?? 16);
+      const configuredProvider = String(appConfig.activeEmbeddingsProvider || 'openrouter');
+      const expectedProvider = String(payload.expectedProvider || '');
 
       if (!databasePath) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+      if (expectedProvider !== configuredProvider) {
+        throw new HttpError(409, 'Настройки provider изменились. Сохрани настройки и повтори операцию.');
+      }
+      if (configuredProvider === 'openrouter' && payload.cloudConsent !== true) {
+        throw new HttpError(400, 'Для отправки фрагментов в OpenRouter требуется явное согласие.');
       }
 
       const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({

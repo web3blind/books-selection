@@ -96,6 +96,10 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
     JOIN books ON books.id = chunks.book_id
     WHERE chunk_embeddings.provider = ? AND chunk_embeddings.model = ?
       AND chunk_embeddings.content_hash = chunks.content_hash
+      AND (
+        NOT EXISTS (SELECT 1 FROM corpus_state WHERE id = 1)
+        OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
+      )
   `).all(provider, model);
 
   const ranked = rows
@@ -112,7 +116,31 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
       score: cosineSimilarity(queryEmbedding, embedding),
     }))
     .sort((left, right) => right.score - left.score);
-  if (!maxPerBook) return ranked.slice(0, limit);
+  const totals = db.prepare(`
+    SELECT COUNT(DISTINCT books.cycle_name) AS cycles,
+           COUNT(DISTINCT books.id) AS books,
+           COUNT(chunks.id) AS chunks
+    FROM books LEFT JOIN chunks ON chunks.book_id = books.id
+    WHERE books.index_status = 'indexed'
+      AND (
+        NOT EXISTS (SELECT 1 FROM corpus_state WHERE id = 1)
+        OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
+      )
+  `).get();
+  const coverage = {
+    scoredCycles: new Set(ranked.map((row) => row.cycle_name)).size,
+    scoredBooks: new Set(ranked.map((row) => row.book_id)).size,
+    scoredChunks: ranked.length,
+    totalCycles: Number(totals.cycles),
+    totalBooks: Number(totals.books),
+    totalChunks: Number(totals.chunks),
+    embeddingsComplete: ranked.length === Number(totals.chunks),
+  };
+  const attachCoverage = (result) => {
+    Object.defineProperty(result, 'coverage', { value: coverage, enumerable: false });
+    return result;
+  };
+  if (!maxPerBook) return attachCoverage(ranked.slice(0, limit));
 
   const counts = new Map();
   const diversified = [];
@@ -123,7 +151,7 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
     diversified.push(row);
     if (diversified.length >= limit) break;
   }
-  return diversified;
+  return attachCoverage(diversified);
 }
 
 function createEmbeddingSetup({ providerName, provider }) {

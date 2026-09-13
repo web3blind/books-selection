@@ -2,6 +2,11 @@ const { storeChunkEmbedding } = require('./embeddings');
 const { getApiKey, loadProviderConfig } = require('./providerConfig');
 const { createOpenAiCompatibleClient } = require('./providerClient');
 
+const ACTIVE_CORPUS_FILTER = `(
+  NOT EXISTS (SELECT 1 FROM corpus_state WHERE id = 1)
+  OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
+)`;
+
 function normalizePositiveInteger(value, fallback, maximum) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -28,14 +33,19 @@ function getEmbeddingProvider(providerOverrides, env) {
 }
 
 function countChunks(db) {
-  return Number(db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count);
+  return Number(db.prepare(`
+    SELECT COUNT(*) AS count FROM chunks
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER}
+  `).get().count);
 }
 
 function countChunksWithCurrentEmbedding(db, { provider, model }) {
   return Number(db.prepare(`
     SELECT COUNT(*) AS count
     FROM chunks
-    WHERE EXISTS (
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER} AND EXISTS (
       SELECT 1
       FROM chunk_embeddings
       WHERE chunk_embeddings.chunk_id = chunks.id
@@ -50,7 +60,8 @@ function selectChunksMissingEmbeddings(db, { provider, model, limit }) {
   return db.prepare(`
     SELECT chunks.id, chunks.text, chunks.content_hash
     FROM chunks
-    WHERE NOT EXISTS (
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER} AND NOT EXISTS (
       SELECT 1
       FROM chunk_embeddings
       WHERE chunk_embeddings.chunk_id = chunks.id
@@ -63,12 +74,62 @@ function selectChunksMissingEmbeddings(db, { provider, model, limit }) {
   `).all(provider, model, limit);
 }
 
+function getEmbeddingIndexStatus({ db, providerOverrides = {}, env = process.env, expectedDimension = null } = {}) {
+  if (!db) throw new Error('Embedding status requires a database.');
+  const { providerName, provider } = getEmbeddingProvider(providerOverrides, env);
+  const model = provider?.embeddingModel || '';
+  const total = countChunks(db);
+  const rows = model ? db.prepare(`
+    SELECT chunk_embeddings.embedding_json
+    FROM chunk_embeddings
+    JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER}
+      AND chunk_embeddings.provider = ?
+      AND chunk_embeddings.model = ?
+      AND chunk_embeddings.content_hash = chunks.content_hash
+  `).all(providerName, model) : [];
+  const dimensionCounts = new Map();
+  for (const row of rows) {
+    try {
+      const vector = JSON.parse(row.embedding_json);
+      const valid = Array.isArray(vector) && vector.length > 0
+        && vector.every((value) => typeof value === 'number' && Number.isFinite(value));
+      if (valid) dimensionCounts.set(vector.length, (dimensionCounts.get(vector.length) || 0) + 1);
+    } catch {
+      // Malformed cached vectors are not ready.
+    }
+  }
+  const normalizedExpectedDimension = Number.isInteger(expectedDimension) && expectedDimension > 0
+    ? expectedDimension
+    : null;
+  const ready = normalizedExpectedDimension
+    ? (dimensionCounts.get(normalizedExpectedDimension) || 0)
+    : ([...dimensionCounts.values()].sort((left, right) => right - left)[0] || 0);
+  const remaining = Math.max(0, total - ready);
+  const corpusState = db.prepare('SELECT errors, complete FROM corpus_state WHERE id = 1').get() || null;
+  const status = corpusState && Number(corpusState.errors) > 0
+    ? 'index_errors'
+    : total === 0 ? 'empty' : remaining === 0 ? 'ready' : ready > 0 ? 'partial' : 'missing';
+  const result = {
+    status, provider: providerName, model, ready, total, remaining,
+    percent: total > 0 ? Math.round((ready / total) * 100) : 0,
+  };
+  if (corpusState) {
+    result.indexErrors = Number(corpusState.errors);
+    result.corpusComplete = corpusState.complete === 1;
+  }
+  return result;
+}
+
 function pruneInvalidCurrentEmbeddings(db, { provider, model }) {
   const rows = db.prepare(`
     SELECT chunk_embeddings.chunk_id, chunk_embeddings.embedding_json
     FROM chunk_embeddings
     JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
-    WHERE chunk_embeddings.provider = ?
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER}
+      AND chunk_embeddings.provider = ?
       AND chunk_embeddings.model = ?
       AND chunk_embeddings.content_hash = chunks.content_hash
     ORDER BY chunk_embeddings.chunk_id
@@ -182,7 +243,12 @@ async function indexMissingChunkEmbeddings({
   let dimensionTransitionHandled = false;
 
   if (totalMissing === 0 && skipped > 0 && expectedDimension) {
-    const probeChunk = db.prepare('SELECT id, text, content_hash FROM chunks ORDER BY id LIMIT 1').get();
+    const probeChunk = db.prepare(`
+      SELECT chunks.id, chunks.text, chunks.content_hash
+      FROM chunks JOIN books ON books.id = chunks.book_id
+      WHERE ${ACTIVE_CORPUS_FILTER}
+      ORDER BY chunks.id LIMIT 1
+    `).get();
     if (probeChunk) {
       const probeEmbeddings = await requestEmbeddingsForChunks([probeChunk]);
       const providerDimension = validateEmbeddingBatch(probeEmbeddings, 1);
@@ -229,18 +295,10 @@ async function indexMissingChunkEmbeddings({
     offset += runBatchSize;
   }
 
-  const remaining = Number(db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM chunks
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM chunk_embeddings
-      WHERE chunk_embeddings.chunk_id = chunks.id
-        AND chunk_embeddings.provider = ?
-        AND chunk_embeddings.model = ?
-        AND chunk_embeddings.content_hash = chunks.content_hash
-    )
-  `).get(providerName, model).count);
+  const remaining = Math.max(0, countChunks(db) - countChunksWithCurrentEmbedding(db, {
+    provider: providerName,
+    model,
+  }));
 
   return {
     status: 'embedded',
@@ -255,6 +313,7 @@ async function indexMissingChunkEmbeddings({
 }
 
 module.exports = {
+  getEmbeddingIndexStatus,
   indexMissingChunkEmbeddings,
   selectChunksMissingEmbeddings,
 };

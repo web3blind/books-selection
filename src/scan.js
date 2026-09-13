@@ -25,14 +25,14 @@ async function listDirectories(rootPath) {
   return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(naturalSort);
 }
 
-async function findBookFile(folderPath) {
+async function findBookFiles(folderPath) {
   const entries = await fs.readdir(folderPath, { withFileTypes: true });
   const files = entries
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
     .sort(naturalSort);
 
-  return files.find((name) => /\.fb2(\.zip)?$/i.test(name)) || null;
+  return files.filter((name) => /\.fb2(\.zip)?$/i.test(name));
 }
 
 async function scanBooks(rootPath, { readInfo = true } = {}) {
@@ -41,9 +41,9 @@ async function scanBooks(rootPath, { readInfo = true } = {}) {
 
   for (const folderName of folderNames) {
     const folderPath = path.join(rootPath, folderName);
-    const fileName = await findBookFile(folderPath);
+    const fileNames = await findBookFiles(folderPath);
 
-    if (!fileName) {
+    if (fileNames.length === 0) {
       results.push({
         folderName,
         fileName: null,
@@ -56,34 +56,36 @@ async function scanBooks(rootPath, { readInfo = true } = {}) {
       continue;
     }
 
-    const filePath = path.join(folderPath, fileName);
+    for (const fileName of fileNames) {
+      const filePath = path.join(folderPath, fileName);
 
-    if (!readInfo) {
-      results.push({ folderName, fileName, status: BOOK_STATUSES.OK });
-      continue;
-    }
+      if (!readInfo) {
+        results.push({ folderName, fileName, status: BOOK_STATUSES.OK });
+        continue;
+      }
 
-    try {
-      const info = await readBookInfo(filePath);
-      results.push({
-        folderName,
-        fileName,
-        title: info.title,
-        annotation: info.annotation,
-        status: BOOK_STATUSES.OK,
-        reason: info.annotation === ANNOTATION_MISSING_TEXT ? BOOK_REASONS.ANNOTATION_MISSING : BOOK_REASONS.OK,
-        hasAnnotation: info.annotation !== ANNOTATION_MISSING_TEXT,
-      });
-    } catch (error) {
-      results.push({
-        folderName,
-        fileName,
-        title: BOOK_READ_ERROR_TITLE,
-        annotation: error.message,
-        status: BOOK_STATUSES.ERROR,
-        reason: BOOK_REASONS.BOOK_READ_ERROR,
-        hasAnnotation: false,
-      });
+      try {
+        const info = await readBookInfo(filePath);
+        results.push({
+          folderName,
+          fileName,
+          title: info.title,
+          annotation: info.annotation,
+          status: BOOK_STATUSES.OK,
+          reason: info.annotation === ANNOTATION_MISSING_TEXT ? BOOK_REASONS.ANNOTATION_MISSING : BOOK_REASONS.OK,
+          hasAnnotation: info.annotation !== ANNOTATION_MISSING_TEXT,
+        });
+      } catch (error) {
+        results.push({
+          folderName,
+          fileName,
+          title: BOOK_READ_ERROR_TITLE,
+          annotation: error.message,
+          status: BOOK_STATUSES.ERROR,
+          reason: BOOK_REASONS.BOOK_READ_ERROR,
+          hasAnnotation: false,
+        });
+      }
     }
   }
 

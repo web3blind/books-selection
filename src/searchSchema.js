@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS derived_facts (
   UNIQUE(book_id, fact_key)
 );
 
+CREATE TABLE IF NOT EXISTS corpus_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  indexed_root TEXT NOT NULL,
+  discovered_cycles INTEGER NOT NULL,
+  discovered_books INTEGER NOT NULL,
+  indexed_cycles INTEGER NOT NULL,
+  indexed_books INTEGER NOT NULL,
+  indexed_chunks INTEGER NOT NULL,
+  errors INTEGER NOT NULL,
+  complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_books_hash_mtime ON books(content_hash, mtime_ms);
 CREATE INDEX IF NOT EXISTS idx_chunks_book ON chunks(book_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_provider_model_hash ON chunk_embeddings(provider, model, content_hash);

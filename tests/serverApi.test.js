@@ -161,13 +161,16 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     });
     const books = await apiRequest('GET', '/api/books');
     const indexed = await apiRequest('POST', '/api/index', { root, db: dbPath });
+    const embeddingStatus = await apiRequest('GET', `/api/embedding-status?db=${encodeURIComponent(dbPath)}`);
     const hits = await apiRequest('GET', `/api/search?q=${encodeURIComponent('фонарь')}&db=${encodeURIComponent(dbPath)}`);
     const answer = await apiRequest('POST', '/api/ask', { q: 'Где есть фонарь?', db: dbPath });
     const extracted = await apiRequest('POST', '/api/extract-fact', {
       q: 'Есть ли фонарь?', bookId: 1, factKey: 'has_lantern', factType: 'plot_trait', db: dbPath,
     });
     const semantic = await apiRequest('POST', '/api/semantic-search', { q: 'Где есть фонарь?', db: dbPath });
-    const embedIndex = await apiRequest('POST', '/api/embed-index', { db: dbPath, limit: 2 });
+    const embedIndex = await apiRequest('POST', '/api/embed-index', {
+      db: dbPath, limit: 2, expectedProvider: 'local', cloudConsent: false,
+    });
 
     assert.equal(configBefore.statusCode, 200);
     assert.equal(configBefore.body.isConfigured, false);
@@ -185,6 +188,10 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     assert.equal(books.body.books[0].title, 'API Indexed Book');
     assert.equal(indexed.statusCode, 200);
     assert.deepEqual(indexed.body.result, { indexed: 1, skipped: 0, errors: 0, total: 1, removed: 0 });
+    assert.equal(embeddingStatus.statusCode, 200);
+    assert.equal(embeddingStatus.body.result.ready, 0);
+    assert.ok(embeddingStatus.body.result.total > 0);
+    assert.equal(embeddingStatus.body.result.remaining, embeddingStatus.body.result.total);
     assert.equal(hits.statusCode, 200);
     assert.equal(hits.body.query, 'фонарь');
     assert.equal(hits.body.count, 1);
@@ -192,9 +199,9 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
     assert.match(hits.body.results[0].text, /фонарь/);
     assert.equal(answer.statusCode, 200);
     assert.equal(answer.body.query, 'Где есть фонарь?');
-    assert.equal(answer.body.result.status, 'needs_provider_key');
-    assert.equal(answer.body.result.evidence.length, 1);
-    assert.equal(answer.body.result.checked.books[0], 'API Indexed Book');
+    assert.equal(answer.body.result.status, 'corpus_not_ready');
+    assert.equal(answer.body.result.evidence.length, 0);
+    assert.deepEqual(answer.body.result.checked.books, []);
     assert.equal(extracted.statusCode, 200);
     assert.equal(extracted.body.query, 'Есть ли фонарь?');
     assert.equal(extracted.body.result.status, 'needs_provider_key');

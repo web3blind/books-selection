@@ -120,10 +120,19 @@ test('desktop provider fetch is injected through the server and network failures
   try {
     const home = await request(started, 'GET', '/');
     const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    const mismatchedConsent = await request(started, 'POST', '/api/embed-index', cookie, {
+      db: path.join(dir, 'search.sqlite'), expectedProvider: 'local', cloudConsent: false,
+    });
+    const missingConsent = await request(started, 'POST', '/api/embed-index', cookie, {
+      db: path.join(dir, 'search.sqlite'), expectedProvider: 'openrouter', cloudConsent: false,
+    });
+    assert.equal(mismatchedConsent.statusCode, 409);
+    assert.equal(missingConsent.statusCode, 400);
+    assert.equal(fetchCalls, 0);
     const routes = [
       ['/api/ask', { q: 'indexed evidence' }],
       ['/api/semantic-search', { q: 'indexed evidence' }],
-      ['/api/embed-index', { limit: 1 }],
+      ['/api/embed-index', { limit: 1, expectedProvider: 'openrouter', cloudConsent: true }],
       ['/api/extract-fact', { q: 'indexed evidence', bookId, factKey: 'test_fact' }],
     ];
     const responses = [];

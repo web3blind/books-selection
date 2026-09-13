@@ -72,9 +72,9 @@ The renderer page does not get full Node.js access:
 7. Optionally configure OpenRouter or a local OpenAI-compatible provider.
 8. Save settings.
 9. On the main page, press **Load list**.
-10. Press **Prepare local index** when you want full-text Q&A. This step stays on the device.
-11. If semantic search is needed, review the provider, destination, and chunk count, then explicitly consent and press **Prepare embeddings**. OpenRouter receives the book-text chunks used to build that cache; a local provider keeps them on your device.
-12. Enter a question and press **Find answer**.
+10. Press **Prepare search and embeddings**. The same action indexes every supported FB2/FB2.ZIP file in each series and then prepares up to 1,000 missing embeddings.
+11. For OpenRouter, review the destination and amount and explicitly consent before every run. Repeat until readiness reaches 100%; a local provider keeps text on the device.
+12. Enter a question and press **Find answer**. Ask runs only when all indexed chunks can be ranked, then reports whole-corpus consideration separately from the bounded evidence sent to the answer provider.
 
 ## Writable data
 
@@ -105,10 +105,10 @@ The diagnostic log records only the failed provider stage, endpoint, safe networ
 - Uses native folder selection in desktop builds.
 - In normal browser mode, asks for the filesystem path manually because browsers do not expose a reliable absolute folder path.
 - Builds a local SQLite FTS index for full-text search.
-- Caches embeddings in SQLite only after a separate user-confirmed embeddings operation. OpenRouter embedding preparation can upload the selected corpus chunks; a local embeddings provider keeps them on the device.
+- Caches embeddings in SQLite only after a user-confirmed combined preparation operation. OpenRouter embedding preparation can upload the selected corpus chunks; a local embeddings provider keeps them on the device.
 - Supports hybrid Ask mode over local FTS snippets, cached semantic hits, and cached derived facts.
 - Shows deterministic local candidate groups by series/book from the already retrieved evidence, without extra AI provider calls.
-- Ask sends only retrieved evidence snippets to the answer provider. The separate, explicitly confirmed OpenRouter embeddings operation sends corpus chunks needed to build the semantic cache.
+- Ask sends only retrieved evidence snippets to the answer provider. The explicitly confirmed OpenRouter embedding stage of the combined preparation action sends corpus chunks needed to build the semantic cache.
 - Supports OpenRouter and local OpenAI-compatible provider settings.
 - Guards OpenRouter calls with a configurable `$1` default soft stop threshold and bounded answer output. The threshold is checked before requests but is not a provider-enforced hard maximum.
 - If provider keys are missing, Ask returns local evidence/setup status instead of silently failing or calling the network.
@@ -177,6 +177,9 @@ The local server exposes JSON endpoints used by the UI:
 - `GET /api/books`
 - `POST /api/index`
 - `POST /api/embed-index`
+  - requires `expectedProvider` matching the saved embeddings provider;
+  - OpenRouter requests additionally require explicit `cloudConsent: true`;
+  - one run may split its bounded fragment set into several provider requests.
 - `GET /api/search`
 - `POST /api/semantic-search`
 - `POST /api/ask`

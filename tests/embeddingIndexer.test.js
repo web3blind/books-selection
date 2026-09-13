@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { initializeSearchDatabase } = require('../src/searchDb');
-const { indexMissingChunkEmbeddings } = require('../src/embeddingIndexer');
+const { getEmbeddingIndexStatus, indexMissingChunkEmbeddings } = require('../src/embeddingIndexer');
 const { storeChunkEmbedding } = require('../src/embeddings');
 
 function insertBookWithChunks(db, chunks) {
@@ -24,6 +24,53 @@ function createMockEmbeddingClient() {
     },
   };
 }
+
+test('getEmbeddingIndexStatus reports overall readiness', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const ids = insertBookWithChunks(db, [
+      { text: 'ready', contentHash: 'hash-a' },
+      { text: 'missing', contentHash: 'hash-b' },
+    ]);
+    storeChunkEmbedding(db, {
+      chunkId: ids[0], provider: 'openrouter',
+      model: 'openai/text-embedding-3-small',
+      contentHash: 'hash-a', embedding: [1, 2],
+    });
+    const status = getEmbeddingIndexStatus({ db });
+    assert.deepEqual(status, {
+      status: 'partial', provider: 'openrouter',
+      model: 'openai/text-embedding-3-small',
+      ready: 1, total: 2, remaining: 1, percent: 50,
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings reports remaining only for the active corpus root', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const insertBook = db.prepare(`INSERT INTO books
+      (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status, indexed_root)
+      VALUES (?, ?, ?, 1, 1, ?, ?, 'Annotation', 'indexed', ?)`);
+    const stale = Number(insertBook.run('Old', '/old', '/old/book.fb2', 'old', 'Old', '/old').lastInsertRowid);
+    const active = Number(insertBook.run('New', '/new', '/new/book.fb2', 'new', 'New', '/new').lastInsertRowid);
+    const insertChunk = db.prepare('INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset) VALUES (?, 0, ?, ?, 0, 4)');
+    insertChunk.run(stale, 'old', 'old-hash');
+    insertChunk.run(active, 'new', 'new-hash');
+    db.prepare(`INSERT INTO corpus_state
+      (id, indexed_root, discovered_cycles, discovered_books, indexed_cycles, indexed_books, indexed_chunks, errors, complete)
+      VALUES (1, '/new', 1, 1, 1, 1, 1, 0, 1)`).run();
+    const result = await indexMissingChunkEmbeddings({
+      db, env: { OPENROUTER_API_KEY: 'test-key' }, providerClient: createMockEmbeddingClient(),
+    });
+    assert.equal(result.embedded, 1);
+    assert.equal(result.remaining, 0);
+  } finally {
+    db.close();
+  }
+});
 
 test('indexMissingChunkEmbeddings returns setup status without provider key and does not call provider', async () => {
   const db = initializeSearchDatabase(':memory:');

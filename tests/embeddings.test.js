@@ -165,6 +165,15 @@ test('cosineSimilarity and semanticSearchChunks rank cached DB vectors locally',
     assert.equal(results[0].chunk_index, 0);
     assert.equal(results[0].title, 'Vector Book');
     assert.ok(results[0].score > results[1].score);
+    assert.deepEqual(results.coverage, {
+      scoredCycles: 1,
+      scoredBooks: 1,
+      scoredChunks: 2,
+      totalCycles: 1,
+      totalBooks: 1,
+      totalChunks: 2,
+      embeddingsComplete: true,
+    });
   } finally {
     db.close();
   }

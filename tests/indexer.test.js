@@ -76,6 +76,31 @@ test('indexLibrary stores a scanned FB2 book, writes chunks, and makes body text
   }
 });
 
+test('indexLibrary indexes every book in a cycle and removes only a deleted file', async () => {
+  const root = await createTempRoot();
+  const first = await writeSampleBook(root, 'Multi Cycle');
+  const second = path.join(path.dirname(first), 'book2.fb2');
+  const source = await fs.readFile(first, 'utf8');
+  await fs.writeFile(second, source.replace('FTS Test Book', 'Second Book').replace('маяк', 'компас'));
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const indexed = await indexLibrary(db, root);
+    assert.equal(indexed.total, 2);
+    assert.equal(indexed.indexed, 2);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM books').get().count, 2);
+    assert.deepEqual({ ...db.prepare('SELECT discovered_cycles, discovered_books, indexed_cycles, indexed_books, errors, complete FROM corpus_state WHERE id = 1').get() }, {
+      discovered_cycles: 1, discovered_books: 2, indexed_cycles: 1, indexed_books: 2, errors: 0, complete: 1,
+    });
+    await fs.unlink(second);
+    const refreshed = await indexLibrary(db, root);
+    assert.equal(refreshed.removed, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM books').get().count, 1);
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('indexLibrary reads each changed plain FB2 file only once', async () => {
   const root = await createTempRoot();
   const filePath = await writeSampleBook(root);
@@ -92,6 +117,37 @@ test('indexLibrary reads each changed plain FB2 file only once', async () => {
     assert.equal(reads, 1);
   } finally {
     fs.readFile = originalReadFile;
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('indexLibrary ignores empty non-book directories when declaring corpus readiness', async () => {
+  const root = await createTempRoot();
+  await fs.mkdir(path.join(root, 'Notes'));
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const result = await indexLibrary(db, root);
+    const state = db.prepare('SELECT discovered_cycles, discovered_books, errors, complete FROM corpus_state WHERE id = 1').get();
+    assert.equal(result.errors, 0);
+    assert.deepEqual({ ...state }, { discovered_cycles: 0, discovered_books: 0, errors: 0, complete: 1 });
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('indexLibrary records a book without searchable body text as completely considered', async () => {
+  const root = await createTempRoot();
+  const filePath = await writeSampleBook(root, 'Empty');
+  const xml = await fs.readFile(filePath, 'utf8');
+  await fs.writeFile(filePath, xml.replace(/<body>[\s\S]*<\/body>/, '<body></body>'));
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    await indexLibrary(db, root);
+    assert.equal(db.prepare('SELECT index_status FROM books').get().index_status, 'no_searchable_text');
+    assert.equal(db.prepare('SELECT complete FROM corpus_state WHERE id = 1').get().complete, 1);
+  } finally {
     db.close();
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -180,6 +236,8 @@ test('indexLibrary removes missing books and FTS rows only for the indexed root'
 
     assert.equal(result.removed, 1);
     assert.deepEqual(books, ['Second Cycle']);
+    assert.equal(searchChunks(db, 'маяк').length, 0);
+    await indexLibrary(db, secondRoot);
     assert.equal(searchChunks(db, 'маяк').length, 1);
   } finally {
     db.close();

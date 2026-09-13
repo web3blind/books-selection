@@ -225,12 +225,14 @@ async function collectSemanticRows({
     return { status: embeddingResult.status, rows: [], setup: embeddingResult.setup };
   }
 
-  const rows = diversifyRowsByBook(semanticSearchFn(db, embeddingResult.embedding, {
+  const semanticCandidates = semanticSearchFn(db, embeddingResult.embedding, {
     provider: embeddingResult.provider,
     model: embeddingResult.model,
     limit: semanticLimit,
     maxPerBook: MAX_SEMANTIC_ROWS_PER_BOOK,
-  }).map((row) => normalizeChunkRow(row, 'semantic')), {
+  });
+  const coverage = semanticCandidates.coverage;
+  const rows = diversifyRowsByBook(semanticCandidates.map((row) => normalizeChunkRow(row, 'semantic')), {
     limit: semanticLimit,
   });
 
@@ -238,7 +240,9 @@ async function collectSemanticRows({
     status: 'searched',
     provider: embeddingResult.provider,
     model: embeddingResult.model,
+    queryEmbeddingDimension: embeddingResult.embedding.length,
     rows,
+    coverage,
   };
 }
 
@@ -304,7 +308,9 @@ async function collectHybridEvidence({
       status: semantic.status,
       provider: semantic.provider,
       model: semantic.model,
+      queryEmbeddingDimension: semantic.queryEmbeddingDimension,
       setup: semantic.setup,
+      coverage: semantic.coverage,
     },
   };
 }

@@ -142,17 +142,52 @@ function insertChunks(db, bookId, chunks) {
   }
 }
 
+function updateCorpusState(db, { indexedRoot, scanResult, errors }) {
+  const discoveredCycles = new Set(scanResult.filter((item) => item.fileName).map((item) => item.folderName)).size;
+  const discoveredBooks = scanResult.filter((item) => item.fileName).length;
+  const indexed = db.prepare(`
+    SELECT COUNT(DISTINCT books.cycle_name) AS cycles,
+           COUNT(DISTINCT books.id) AS books,
+           COUNT(chunks.id) AS chunks
+    FROM books LEFT JOIN chunks ON chunks.book_id = books.id
+    WHERE books.indexed_root = ? AND books.index_status IN ('indexed', 'no_searchable_text')
+  `).get(indexedRoot);
+  const complete = errors === 0
+    && Number(indexed.books) === discoveredBooks
+    && Number(indexed.cycles) === discoveredCycles;
+  db.prepare(`
+    INSERT INTO corpus_state (
+      id, indexed_root, discovered_cycles, discovered_books,
+      indexed_cycles, indexed_books, indexed_chunks, errors, complete, updated_at
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      indexed_root = excluded.indexed_root,
+      discovered_cycles = excluded.discovered_cycles,
+      discovered_books = excluded.discovered_books,
+      indexed_cycles = excluded.indexed_cycles,
+      indexed_books = excluded.indexed_books,
+      indexed_chunks = excluded.indexed_chunks,
+      errors = excluded.errors,
+      complete = excluded.complete,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    indexedRoot, discoveredCycles, discoveredBooks,
+    Number(indexed.cycles), Number(indexed.books), Number(indexed.chunks), errors, complete ? 1 : 0,
+  );
+}
+
 async function indexLibrary(db, rootPath, options = {}) {
   const indexedRoot = path.resolve(rootPath);
   const scanResult = await scanBooks(indexedRoot, { readInfo: false });
-  const summary = { indexed: 0, skipped: 0, errors: 0, total: scanResult.length };
+  const summary = { indexed: 0, skipped: 0, errors: 0, total: scanResult.filter((item) => item.fileName).length };
   const presentFilePaths = new Set();
   const preparedBooks = [];
 
   for (const item of scanResult) {
-    if (item.fileName) {
-      presentFilePaths.add(path.resolve(indexedRoot, item.folderName, item.fileName));
+    if (!item.fileName) {
+      continue;
     }
+    presentFilePaths.add(path.resolve(indexedRoot, item.folderName, item.fileName));
     if (item.status !== BOOK_STATUSES.OK) {
       summary.errors += 1;
       continue;
@@ -199,12 +234,17 @@ async function indexLibrary(db, rootPath, options = {}) {
       });
       invalidateBookDerivedData(db, bookId);
       deleteChunksForBook(db, bookId);
-      insertChunks(db, bookId, chunkText(document.bodyText, options.chunkOptions));
+      const chunks = chunkText(document.bodyText, options.chunkOptions);
+      insertChunks(db, bookId, chunks);
+      if (chunks.length === 0) {
+        db.prepare("UPDATE books SET index_status = 'no_searchable_text' WHERE id = ?").run(bookId);
+      }
       summary.indexed += 1;
     }
 
     claimCompatibleBooksForRoot(db, indexedRoot);
     summary.removed = removeMissingBooks(db, indexedRoot, presentFilePaths);
+    updateCorpusState(db, { indexedRoot, scanResult, errors: summary.errors });
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -240,6 +280,10 @@ function searchChunks(db, query, options = {}) {
     JOIN chunks ON chunks.id = chunks_fts.rowid
     JOIN books ON books.id = chunks.book_id
     WHERE chunks_fts MATCH ?${whereBook}
+      AND (
+        NOT EXISTS (SELECT 1 FROM corpus_state WHERE id = 1)
+        OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
+      )
     ORDER BY rank
     LIMIT ?
   `).all(...params);

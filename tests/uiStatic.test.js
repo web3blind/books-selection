@@ -72,7 +72,8 @@ test('index page exposes simplified accessible AI question flow without committe
   }
 
   assert.ok(!html.includes('id="localSearchButton"'), 'question flow should not expose a separate local FTS search button');
-  assert.ok(html.includes('id="embedIndexButton"'), 'cloud embedding preparation must be a separate explicit action');
+  assert.ok(!html.includes('id="embedIndexButton"'), 'search preparation should use the single combined button');
+  assert.ok(html.includes('id="embeddingConsent"'), 'cloud embedding preparation must still require explicit consent');
   assert.ok(!html.includes('settingsOpenrouterApiKeyEnv'), 'settings should collect API key directly instead of asking for env variable names');
   assert.ok(!html.includes('settingsLocalApiKeyEnv'), 'local settings should collect API key directly instead of asking for env variable names');
   assert.ok(!html.includes('<option value="hermes">'), 'Hermes must not be presented as working until its adapter exists');
@@ -110,10 +111,10 @@ test('settings exposes an accessible required books-path error and cannot announ
   assert.ok(html.includes("throw new Error(t('booksRootRequired'))"));
 });
 
-test('local FTS preparation is separate from informed cloud embedding consent', () => {
+test('one preparation button builds local FTS and one consented embedding batch', () => {
   for (const marker of [
     'id="buildIndexButton"',
-    'id="embedIndexButton"',
+    'id="embeddingReadiness"',
     'id="embeddingConsent"',
     'id="embeddingConsentDetails"',
     'buildLocalIndex',
@@ -127,6 +128,15 @@ test('local FTS preparation is separate from informed cloud embedding consent', 
   assert.equal(html.split("fetchJson('/api/embed-index'").length - 1, 1);
   assert.ok(!html.includes('while (semanticResult.remaining > 0)'));
   assert.ok(!html.includes('storageKey'));
+  assert.ok(!html.includes('id="embedIndexButton"'));
+  assert.ok(html.includes('prepareSearch'));
+  assert.ok(html.includes("openrouter.hasApiKey ? '••••••••' : ''"));
+  assert.ok(html.includes('id="settingsOpenrouterApiKeyStatus"'));
+  assert.equal(html.split('apiKeySaved:').length - 1, 2);
+  assert.ok(html.includes('expectedProvider: savedEmbeddingProvider'));
+  assert.ok(html.includes('cloudConsent: embeddingConsent.checked'));
+  assert.ok(html.includes('let activeAiOperation = false'));
+  assert.ok(html.includes('split into several technical requests'));
 });
 
 test('primary controls and results are inside the main landmark', () => {

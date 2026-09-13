@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { answerLibraryQuestion, buildEvidencePrompt, createCoverage, createEvidenceCandidates } = require('../src/ask');
 const { createOpenAiCompatibleClient } = require('../src/providerClient');
+const { initializeSearchDatabase } = require('../src/searchDb');
 
 const sampleHits = [
   {
@@ -166,6 +167,109 @@ test('answerLibraryQuestion returns deterministic local candidates without extra
   assert.equal(result.candidates.length, 2);
   assert.deepEqual(result.candidates.map((candidate) => candidate.book), ['Lantern Book', 'Forest Book']);
   assert.deepEqual(result.candidates.map((candidate) => candidate.evidenceCount), [2, 1]);
+});
+
+test('answerLibraryQuestion refuses an answer until every indexed chunk was scored', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  db.prepare(`INSERT INTO corpus_state
+    (id, indexed_root, discovered_cycles, discovered_books, indexed_cycles, indexed_books, indexed_chunks, errors, complete)
+    VALUES (1, '/tmp/library', 1, 1, 1, 1, 3, 0, 1)`).run();
+  let answerCalls = 0;
+  try {
+    const result = await answerLibraryQuestion({
+      db, question: 'Кто выжил?', env: { OPENROUTER_API_KEY: 'test-key' },
+      retrievalFn: async () => ({ evidence: sampleHits, semantic: {
+        status: 'searched', coverage: { scoredCycles: 1, scoredBooks: 1, scoredChunks: 2, embeddingsComplete: false },
+      } }),
+      providerClient: { chatCompletion: async () => { answerCalls += 1; return {}; } },
+    });
+    assert.equal(result.status, 'corpus_not_ready');
+    assert.equal(result.coverage.searchComplete, false);
+    assert.equal(answerCalls, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('answerLibraryQuestion never calls answer provider without semantic coverage', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  db.prepare(`INSERT INTO corpus_state
+    (id, indexed_root, discovered_cycles, discovered_books, indexed_cycles, indexed_books, indexed_chunks, errors, complete)
+    VALUES (1, '/tmp/library', 1, 1, 1, 1, 1, 0, 1)`).run();
+  let calls = 0;
+  try {
+    const result = await answerLibraryQuestion({
+      db, question: 'Кто выжил?', env: { OPENROUTER_API_KEY: 'test-key' },
+      retrievalFn: async () => ({ evidence: sampleHits, semantic: { status: 'needs_embedding_provider_key' } }),
+      providerClient: { chatCompletion: async () => { calls += 1; return {}; } },
+    });
+    assert.equal(result.status, 'corpus_not_ready');
+    assert.equal(calls, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('answerLibraryQuestion verifies complete embedding coverage from the database', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const bookId = Number(db.prepare(`INSERT INTO books
+    (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status, indexed_root)
+    VALUES ('Cycle', '/tmp/library/Cycle', '/tmp/library/Cycle/book.fb2', 1, 1, 'book', 'Book', '', 'indexed', '/tmp/library')`).run().lastInsertRowid);
+  db.prepare(`INSERT INTO chunks
+    (book_id, chunk_index, text, content_hash, start_offset, end_offset)
+    VALUES (?, 0, 'Герои выжили.', 'chunk', 0, 13)`).run(bookId);
+  db.prepare(`INSERT INTO corpus_state
+    (id, indexed_root, discovered_cycles, discovered_books, indexed_cycles, indexed_books, indexed_chunks, errors, complete)
+    VALUES (1, '/tmp/library', 1, 1, 1, 1, 1, 0, 1)`).run();
+  let calls = 0;
+  try {
+    const result = await answerLibraryQuestion({
+      db, question: 'Кто выжил?', env: { OPENROUTER_API_KEY: 'test-key' },
+      retrievalFn: async () => ({ evidence: sampleHits, semantic: {
+        status: 'searched',
+        provider: 'openrouter',
+        model: 'openai/text-embedding-3-small',
+        queryEmbeddingDimension: 2,
+        coverage: { scoredCycles: 1, scoredBooks: 1, scoredChunks: 1, embeddingsComplete: true },
+      } }),
+      providerClient: { chatCompletion: async () => { calls += 1; return {}; } },
+    });
+    assert.equal(result.status, 'corpus_not_ready');
+    assert.equal(result.coverage.searchComplete, false);
+    assert.equal(calls, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('answerLibraryQuestion reports complete local consideration separately from bounded evidence', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = Number(db.prepare(`INSERT INTO books
+      (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status, indexed_root)
+      VALUES ('Cycle', '/tmp/library/Cycle', '/tmp/library/Cycle/book.fb2', 1, 1, 'book', 'Book', 'Annotation', 'indexed', '/tmp/library')`).run().lastInsertRowid);
+    const chunkId = Number(db.prepare(`INSERT INTO chunks
+      (book_id, chunk_index, text, content_hash, start_offset, end_offset)
+      VALUES (?, 0, 'Герои вместе выжили в финале.', 'chunk', 0, 29)`).run(bookId).lastInsertRowid);
+    db.prepare("INSERT INTO chunks_fts(rowid, text) VALUES (?, 'Герои вместе выжили в финале.')").run(chunkId);
+    db.prepare("INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json) VALUES (?, 'openrouter', 'openai/text-embedding-3-small', 'chunk', '[1,0]')").run(chunkId);
+    db.prepare(`INSERT INTO corpus_state
+      (id, indexed_root, discovered_cycles, discovered_books, indexed_cycles, indexed_books, indexed_chunks, errors, complete)
+      VALUES (1, '/tmp/library', 1, 1, 1, 1, 1, 0, 1)`).run();
+    const result = await answerLibraryQuestion({
+      db, question: 'Где герои выжили вместе?', env: { OPENROUTER_API_KEY: 'test-key' },
+      providerClient: {
+        createEmbedding: async () => [1, 0],
+        chatCompletion: async () => ({ answer: 'В Book.', confidence: 'high', evidence: ['evidence_1'] }),
+      },
+    });
+    assert.equal(result.status, 'answered');
+    assert.equal(result.coverage.searchComplete, true);
+    assert.equal(result.coverage.searchedBooks, 1);
+    assert.equal(result.coverage.representedBooks, 1);
+  } finally {
+    db.close();
+  }
 });
 
 test('answerLibraryQuestion returns evidence and setup status without provider key instead of calling network', async () => {

@@ -92,7 +92,8 @@
       <label id="settingsOpenrouterEmbeddingModelLabel" for="settingsOpenrouterEmbeddingModel">Embedding model</label>
       <input id="settingsOpenrouterEmbeddingModel" type="text" autocomplete="off">
       <label id="settingsOpenrouterApiKeyLabel" for="settingsOpenrouterApiKey">OpenRouter API key</label>
-      <input id="settingsOpenrouterApiKey" type="password" autocomplete="off" placeholder="Вставь отдельный OpenRouter API key">
+      <input id="settingsOpenrouterApiKey" type="password" autocomplete="off" aria-describedby="settingsOpenrouterApiKeyStatus" placeholder="Вставь отдельный OpenRouter API key">
+      <span id="settingsOpenrouterApiKeyStatus" class="meta"></span>
       <label><input id="settingsClearOpenrouterApiKey" type="checkbox"> <span id="settingsClearOpenrouterApiKeyText">Удалить сохранённый API key</span></label>
       <label id="settingsOpenrouterBudgetLabel" for="settingsOpenrouterBudget">OpenRouter spend limit in dollars</label>
       <input id="settingsOpenrouterBudget" type="number" min="0" step="0.01">
@@ -107,7 +108,8 @@
       <label id="settingsLocalEmbeddingModelLabel" for="settingsLocalEmbeddingModel">Embedding model</label>
       <input id="settingsLocalEmbeddingModel" type="text" autocomplete="off">
       <label id="settingsLocalApiKeyLabel" for="settingsLocalApiKey">Local provider API key, если нужен</label>
-      <input id="settingsLocalApiKey" type="password" autocomplete="off">
+      <input id="settingsLocalApiKey" type="password" autocomplete="off" aria-describedby="settingsLocalApiKeyStatus">
+      <span id="settingsLocalApiKeyStatus" class="meta"></span>
       <label><input id="settingsClearLocalApiKey" type="checkbox"> <span id="settingsClearLocalApiKeyText">Удалить сохранённый API key</span></label>
     </fieldset>
 
@@ -144,9 +146,10 @@
     <input id="dbPath" name="dbPath" type="hidden">
 
     <div class="actions">
-      <button id="buildIndexButton" type="button">Подготовить локальный индекс</button>
+      <button id="buildIndexButton" type="button">Подготовить поиск и embeddings</button>
     </div>
 
+    <p id="embeddingReadiness" role="status" aria-live="polite">Готовность embeddings: ещё не проверена.</p>
     <div id="embeddingConsentPanel" class="consent">
       <p id="embeddingConsentDetails">Передача в облако отключена до отдельного согласия.</p>
       <ul>
@@ -156,7 +159,6 @@
       </ul>
       <label><input id="embeddingConsent" type="checkbox" aria-describedby="embeddingConsentDetails"> <span id="embeddingConsentLabel">Я понимаю, какие данные и куда будут отправлены, и согласен на этот запуск.</span></label>
       <div class="actions">
-        <button id="embedIndexButton" type="button">Подготовить embeddings</button>
         <button id="cancelProviderButton" type="button" hidden>Отменить операцию</button>
       </div>
     </div>
@@ -217,8 +219,8 @@
     const dbPathLabel = document.getElementById('dbPathLabel');
     const dbPathInput = document.getElementById('dbPath');
     const buildIndexButton = document.getElementById('buildIndexButton');
-    const embedIndexButton = document.getElementById('embedIndexButton');
     const cancelProviderButton = document.getElementById('cancelProviderButton');
+    const embeddingReadiness = document.getElementById('embeddingReadiness');
     const embeddingConsent = document.getElementById('embeddingConsent');
     const embeddingProvider = document.getElementById('embeddingProvider');
     const embeddingDestination = document.getElementById('embeddingDestination');
@@ -248,6 +250,9 @@
     const queryLang = queryParams.get('lang') || '';
     const savedLanguage = localStorage.getItem(languageKey) || 'en';
     let activeProviderController = null;
+    let activeAiOperation = false;
+    let savedEmbeddingProvider = 'openrouter';
+    let currentEmbeddingStatus = null;
 
     const messages = {
       ru: {
@@ -276,6 +281,8 @@
         localModelLabel: 'Локальная модель для ответов',
         localEmbeddingModelLabel: 'Локальная модель embeddings',
         localApiKeyLabel: 'API key локального provider, если нужен',
+        apiKeySaved: 'API key сохранён. В поле показана безопасная маска; введи новый key только для замены.',
+        apiKeyNotSaved: 'API key не сохранён.',
         saveSettingsButtonText: 'Сохранить настройки',
         settingsRequired: 'Заполни настройки и сохрани их. После сохранения откроется главная страница.',
         settingsSaving: 'Сохраняю настройки...',
@@ -295,16 +302,20 @@
         searchPlaceholder: 'Например: попаданец, гоблины, клан',
         showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
         aiSearchTitle: 'Вопрос по циклам',
-        aiSearchIntro: 'Локальный FTS-индекс создаётся без передачи книг в интернет. Embeddings запускаются отдельно: перед каждым облачным запуском нужно подтвердить provider, адрес назначения и объём данных.',
+        aiSearchIntro: 'Одна кнопка сначала обновляет локальный FTS-индекс, затем готовит один пакет embeddings. Перед каждым облачным пакетом нужно подтвердить provider, адрес назначения и объём данных.',
         dbPathLabel: 'SQLite база берётся из настроек.',
         dbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
-        buildIndexButton: 'Подготовить локальный индекс',
+        buildIndexButton: 'Подготовить поиск и embeddings',
         localIndexing: 'Готовлю локальный FTS-индекс. Текст книг остаётся на этом устройстве.',
         localIndexReady: 'Локальный FTS-индекс готов. Данные не отправлялись provider.',
-        embedIndexButton: 'Подготовить embeddings',
+        embeddingReadinessUnknown: 'Готовность embeddings ещё не проверена.',
+        embeddingReadinessEmpty: 'Локальный индекс ещё не подготовлен.',
+        embeddingReadinessIndexErrors: (result) => `Локальный индекс содержит ошибок: ${result.indexErrors}. Исправь файлы и повтори подготовку.`,
+        embeddingReadiness: (result) => `Готовность embeddings: ${result.ready} из ${result.total} (${result.percent}%), осталось ${result.remaining}.`,
+        embeddingReadinessError: 'Не удалось проверить готовность embeddings.',
         cancelProviderButton: 'Отменить операцию',
         providerCancelled: 'Операция отменена.',
-        embeddingConsentDetails: 'Embeddings — отдельная операция. Локальный provider работает на этом устройстве; OpenRouter получает выбранные текстовые фрагменты через интернет.',
+        embeddingConsentDetails: 'После локального индекса эта же кнопка подготавливает embeddings. До 1000 фрагментов за запуск могут быть разделены на несколько технических запросов. Локальный provider работает на этом устройстве; OpenRouter получает выбранные фрагменты через интернет.',
         embeddingProviderLabel: 'Provider:',
         embeddingDestinationLabel: 'Назначение:',
         embeddingChunkCountLabel: 'Объём:',
@@ -341,7 +352,10 @@
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Фрагмент ${chunkIndex}`,
         answerHeading: 'Ответ',
         checkedHeading: 'Книги, представленные в найденных фрагментах',
-        coverageSummary: (coverage) => `Охват поиска: ${coverage.representedCycles} из ${coverage.totalCycles ?? '?'} циклов, ${coverage.representedBooks} из ${coverage.totalBooks ?? '?'} книг, найдено фрагментов: ${coverage.retrievedChunks}.`,
+        coverageSummary: (coverage) => coverage.searchComplete
+          ? `Проверен весь индекс: ${coverage.searchedCycles} циклов, ${coverage.searchedBooks} книг, ${coverage.searchedChunks} фрагментов. Лучшие доказательства: ${coverage.retrievedChunks} фрагментов из ${coverage.representedBooks} книг.`
+          : `Поиск по всему индексу не завершён. Проверено: ${coverage.searchedCycles ?? 0} циклов, ${coverage.searchedBooks ?? 0} книг, ${coverage.searchedChunks ?? 0} фрагментов.`,
+        corpusNotReady: 'Сначала подготовь локальный индекс и embeddings до 100%. Ответ не создавался.',
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Уверенность:',
         uncertaintyLabel: 'Неопределённость:',
@@ -396,6 +410,8 @@
         localModelLabel: 'Local answer model',
         localEmbeddingModelLabel: 'Local embedding model',
         localApiKeyLabel: 'Local provider API key, if required',
+        apiKeySaved: 'API key is saved. The field shows a safe mask; enter a new key only to replace it.',
+        apiKeyNotSaved: 'API key is not saved.',
         saveSettingsButtonText: 'Save settings',
         settingsRequired: 'Complete and save Settings. The main page will open after saving.',
         settingsSaving: 'Saving settings...',
@@ -415,16 +431,20 @@
         searchPlaceholder: 'For example: goblins, clan, portal fantasy',
         showReadyOnly: 'Show only books with annotations and without errors',
         aiSearchTitle: 'Question about series',
-        aiSearchIntro: 'The local FTS index is built without sending books to the internet. Embeddings are separate: before each cloud run you must confirm the provider, destination, and amount of data.',
+        aiSearchIntro: 'One button first updates the local FTS index, then prepares one embedding batch. Before each cloud batch you must confirm the provider, destination, and amount of data.',
         dbPathLabel: 'SQLite database is loaded from Settings.',
         dbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
-        buildIndexButton: 'Prepare local index',
+        buildIndexButton: 'Prepare search and embeddings',
         localIndexing: 'Preparing the local FTS index. Book text stays on this device.',
         localIndexReady: 'Local FTS index is ready. No data was sent to a provider.',
-        embedIndexButton: 'Prepare embeddings',
+        embeddingReadinessUnknown: 'Embeddings readiness has not been checked yet.',
+        embeddingReadinessEmpty: 'The local index has not been prepared yet.',
+        embeddingReadinessIndexErrors: (result) => `The local index has ${result.indexErrors} error(s). Fix the files and run preparation again.`,
+        embeddingReadiness: (result) => `Embeddings ready: ${result.ready} of ${result.total} (${result.percent}%), ${result.remaining} remaining.`,
+        embeddingReadinessError: 'Could not check embeddings readiness.',
         cancelProviderButton: 'Cancel operation',
         providerCancelled: 'Operation cancelled.',
-        embeddingConsentDetails: 'Embeddings are a separate operation. A local provider runs on this device; OpenRouter receives selected text snippets over the internet.',
+        embeddingConsentDetails: 'After the local index, the same button prepares embeddings. Up to 1000 snippets per run may be split into several technical requests. A local provider runs on this device; OpenRouter receives selected snippets over the internet.',
         embeddingProviderLabel: 'Provider:',
         embeddingDestinationLabel: 'Destination:',
         embeddingChunkCountLabel: 'Amount:',
@@ -461,7 +481,10 @@
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Snippet ${chunkIndex}`,
         answerHeading: 'Answer',
         checkedHeading: 'Books represented in retrieved evidence',
-        coverageSummary: (coverage) => `Search coverage: ${coverage.representedCycles} of ${coverage.totalCycles ?? '?'} series, ${coverage.representedBooks} of ${coverage.totalBooks ?? '?'} books, retrieved snippets: ${coverage.retrievedChunks}.`,
+        coverageSummary: (coverage) => coverage.searchComplete
+          ? `Entire index checked: ${coverage.searchedCycles} series, ${coverage.searchedBooks} books, ${coverage.searchedChunks} snippets. Best evidence: ${coverage.retrievedChunks} snippets from ${coverage.representedBooks} books.`
+          : `Full-index search is not ready. Checked: ${coverage.searchedCycles ?? 0} series, ${coverage.searchedBooks ?? 0} books, ${coverage.searchedChunks ?? 0} snippets.`,
+        corpusNotReady: 'Prepare the local index and embeddings to 100% first. No answer was generated.',
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Confidence:',
         uncertaintyLabel: 'Uncertainty:',
@@ -518,6 +541,12 @@
       return typeof value === 'function' ? value(...args) : value;
     }
 
+    function embeddingReadinessKey(status) {
+      if (status === 'empty') return 'embeddingReadinessEmpty';
+      if (status === 'index_errors') return 'embeddingReadinessIndexErrors';
+      return 'embeddingReadiness';
+    }
+
     function applyLanguage() {
       document.documentElement.lang = currentLanguage;
       document.getElementById('languageLabel').textContent = t('languageLabel');
@@ -547,6 +576,8 @@
       document.getElementById('settingsLocalEmbeddingModelLabel').textContent = t('localEmbeddingModelLabel');
       document.getElementById('settingsLocalApiKeyLabel').textContent = t('localApiKeyLabel');
       document.getElementById('settingsClearLocalApiKeyText').textContent = t('clearApiKeyLabel');
+      document.getElementById('settingsOpenrouterApiKeyStatus').textContent = t(settingsFields.openrouterApiKey.value ? 'apiKeySaved' : 'apiKeyNotSaved');
+      document.getElementById('settingsLocalApiKeyStatus').textContent = t(settingsFields.localApiKey.value ? 'apiKeySaved' : 'apiKeyNotSaved');
       saveSettingsButton.textContent = t('saveSettingsButtonText');
       pageTitle.textContent = t('pageTitle');
       introText.textContent = t('introText');
@@ -563,8 +594,10 @@
       dbPathLabel.textContent = t('dbPathLabel');
       dbPathInput.placeholder = t('dbPathPlaceholder');
       buildIndexButton.textContent = t('buildIndexButton');
-      embedIndexButton.textContent = t('embedIndexButton');
       cancelProviderButton.textContent = t('cancelProviderButton');
+      embeddingReadiness.textContent = currentEmbeddingStatus
+        ? t(embeddingReadinessKey(currentEmbeddingStatus.status), currentEmbeddingStatus)
+        : t('embeddingReadinessUnknown');
       document.getElementById('embeddingConsentDetails').textContent = t('embeddingConsentDetails');
       document.getElementById('embeddingProviderLabel').textContent = t('embeddingProviderLabel');
       document.getElementById('embeddingDestinationLabel').textContent = t('embeddingDestinationLabel');
@@ -626,10 +659,12 @@
       settingsFields.dbPath.value = config.dbPath || '';
       settingsFields.activeProvider.value = config.activeProvider || 'openrouter';
       settingsFields.activeEmbeddingsProvider.value = config.activeEmbeddingsProvider || 'local';
+      savedEmbeddingProvider = settingsFields.activeEmbeddingsProvider.value;
       settingsFields.openrouterBaseUrl.value = openrouter.baseUrl || '';
       settingsFields.openrouterModel.value = openrouter.model || '';
       settingsFields.openrouterEmbeddingModel.value = openrouter.embeddingModel || '';
-      settingsFields.openrouterApiKey.value = openrouter.apiKey || '';
+      settingsFields.openrouterApiKey.value = openrouter.hasApiKey ? '••••••••' : '';
+      document.getElementById('settingsOpenrouterApiKeyStatus').textContent = t(openrouter.hasApiKey ? 'apiKeySaved' : 'apiKeyNotSaved');
       settingsFields.openrouterBudget.value = openrouter.maxSessionUsageUsd ?? 1;
       settingsFields.clearOpenrouterApiKey.checked = false;
 
@@ -637,7 +672,8 @@
       settingsFields.localModel.value = local.model || '';
       settingsFields.localEmbeddingModel.value = local.embeddingModel || '';
       settingsFields.clearLocalApiKey.checked = false;
-      settingsFields.localApiKey.value = local.apiKey || '';
+      settingsFields.localApiKey.value = local.hasApiKey ? '••••••••' : '';
+      document.getElementById('settingsLocalApiKeyStatus').textContent = t(local.hasApiKey ? 'apiKeySaved' : 'apiKeyNotSaved');
       rootInput.value = config.booksRoot || rootInput.value;
       dbPathInput.value = config.dbPath || dbPathInput.value;
       updateProviderFieldVisibility();
@@ -675,6 +711,7 @@
       try {
         const data = await fetchJson('/api/config');
         fillSettingsForm(data.config || {});
+        await loadEmbeddingStatus();
         if (!data.isConfigured) {
           setSettingsStatus(t('settingsRequired'));
           showView('settings');
@@ -716,6 +753,7 @@
           throw new Error(t('booksRootRequired'));
         }
         fillSettingsForm(data.config || {});
+        await loadEmbeddingStatus();
         setSettingsStatus(t('settingsSaved', data.path));
         showView('main');
       } catch (error) {
@@ -801,6 +839,25 @@
 
     function getDbPath() {
       return dbPathInput.value.trim();
+    }
+
+    async function loadEmbeddingStatus() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        currentEmbeddingStatus = null;
+        embeddingReadiness.textContent = t('embeddingReadinessUnknown');
+        return null;
+      }
+      try {
+        const data = await fetchJson(`/api/embedding-status?db=${encodeURIComponent(dbPath)}`);
+        currentEmbeddingStatus = data.result;
+        embeddingReadiness.textContent = t(embeddingReadinessKey(currentEmbeddingStatus.status), currentEmbeddingStatus);
+        return currentEmbeddingStatus;
+      } catch {
+        currentEmbeddingStatus = null;
+        embeddingReadiness.textContent = t('embeddingReadinessError');
+        return null;
+      }
     }
 
     async function pickBooksRoot({ loadAfterPick = false } = {}) {
@@ -1032,7 +1089,6 @@
 
       setAiStatus(t('localIndexing'));
       aiResultsNode.innerHTML = '';
-      setControlBusy(buildIndexButton, true);
       try {
         const indexData = await fetchJson('/api/index', {
           method: 'POST',
@@ -1047,10 +1103,11 @@
             <li>Root: ${escapeHtml(indexData.root)}</li>
             <li>${escapeHtml(t('indexDone', indexData.result))}</li>
           </ul>`;
+        await loadEmbeddingStatus();
+        return true;
       } catch (error) {
         setAiStatus(error.message);
-      } finally {
-        setControlBusy(buildIndexButton, false);
+        return false;
       }
     }
 
@@ -1060,7 +1117,8 @@
         setAiStatus(t('noDbPath'));
         return;
       }
-      if (!embeddingConsent.checked) {
+      const requiresConsent = savedEmbeddingProvider === 'openrouter';
+      if (requiresConsent && !embeddingConsent.checked) {
         setAiStatus(t('embeddingConsentRequired'));
         embeddingConsent.focus();
         return;
@@ -1068,13 +1126,17 @@
 
       activeProviderController = new AbortController();
       cancelProviderButton.hidden = false;
-      setControlBusy(embedIndexButton, true);
-      setControlBusy(askButton, true);
       try {
         const semanticData = await fetchJson('/api/embed-index', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ db: dbPath, limit: 999, batchSize: 64 }),
+          body: JSON.stringify({
+            db: dbPath,
+            limit: 999,
+            batchSize: 64,
+            expectedProvider: savedEmbeddingProvider,
+            cloudConsent: embeddingConsent.checked,
+          }),
           signal: activeProviderController.signal,
         });
         const semanticResult = semanticData.result;
@@ -1083,11 +1145,31 @@
       } catch (error) {
         setAiStatus(error.name === 'AbortError' ? t('providerCancelled') : error.message);
       } finally {
+        await loadEmbeddingStatus();
         activeProviderController = null;
         cancelProviderButton.hidden = true;
-        setControlBusy(embedIndexButton, false);
-        setControlBusy(askButton, false);
         embeddingConsent.checked = false;
+      }
+    }
+
+    async function prepareSearch() {
+      if (activeAiOperation) return;
+      const requiresConsent = savedEmbeddingProvider === 'openrouter';
+      if (requiresConsent && !embeddingConsent.checked) {
+        setAiStatus(t('embeddingConsentRequired'));
+        embeddingConsent.focus();
+        return;
+      }
+      activeAiOperation = true;
+      setControlBusy(buildIndexButton, true);
+      setControlBusy(askButton, true);
+      try {
+        const indexed = await buildLocalIndex();
+        if (indexed) await prepareEmbeddings();
+      } finally {
+        activeAiOperation = false;
+        setControlBusy(buildIndexButton, false);
+        setControlBusy(askButton, false);
       }
     }
 
@@ -1102,7 +1184,9 @@
         setAiStatus(t('noAiQuery'));
         return;
       }
+      if (activeAiOperation) return;
 
+      activeAiOperation = true;
       setAiStatus(t('asking'));
       aiResultsNode.innerHTML = '';
       activeProviderController = new AbortController();
@@ -1117,7 +1201,9 @@
           signal: activeProviderController.signal,
         });
         const result = data.result || {};
-        if (result.status === 'needs_provider_key' && result.setup) {
+        if (result.status === 'corpus_not_ready') {
+          setAiStatus(t('corpusNotReady'));
+        } else if (result.status === 'needs_provider_key' && result.setup) {
           setAiStatus(t('providerNeeded', result.setup));
         } else {
           setAiStatus(t('askDone'));
@@ -1130,6 +1216,7 @@
         aiResultsNode.innerHTML = renderAiProcessingError(message);
         aiResultsNode.focus();
       } finally {
+        activeAiOperation = false;
         activeProviderController = null;
         cancelProviderButton.hidden = true;
         setControlBusy(askButton, false);
@@ -1155,8 +1242,7 @@
     settingsFields.activeEmbeddingsProvider.addEventListener('change', updateProviderFieldVisibility);
     loadButton.addEventListener('click', loadBooks);
     reloadButton.addEventListener('click', loadBooks);
-    buildIndexButton.addEventListener('click', buildLocalIndex);
-    embedIndexButton.addEventListener('click', prepareEmbeddings);
+    buildIndexButton.addEventListener('click', prepareSearch);
     cancelProviderButton.addEventListener('click', () => activeProviderController?.abort());
     askButton.addEventListener('click', askLibrary);
     searchInput.addEventListener('input', renderBooks);
