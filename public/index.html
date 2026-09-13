@@ -20,6 +20,7 @@
     .error { color: #8a1f11; }
     .field-error { color: #8a1f11; margin: -8px 0 12px; }
     .consent { border-left: 4px solid #8a6d1f; padding-left: 12px; margin: 12px 0; }
+    progress { width: 100%; max-width: 620px; height: 1.25rem; }
     .ai-processing-status { border: 1px solid #ccc; border-radius: 6px; padding: 8px; margin: 8px 0 16px; }
     .ai-processing-status.ok { border-color: #276738; }
     .ai-processing-status.warn { border-color: #8a6d1f; }
@@ -150,6 +151,8 @@
     </div>
 
     <p id="embeddingReadiness" role="status" aria-live="polite">Готовность embeddings: ещё не проверена.</p>
+    <progress id="embeddingProgress" max="1" value="0" hidden></progress>
+    <p id="embeddingActivity" class="meta" hidden></p>
     <div id="embeddingConsentPanel" class="consent">
       <p id="embeddingConsentDetails">Передача в облако отключена до отдельного согласия.</p>
       <ul>
@@ -221,6 +224,9 @@
     const buildIndexButton = document.getElementById('buildIndexButton');
     const cancelProviderButton = document.getElementById('cancelProviderButton');
     const embeddingReadiness = document.getElementById('embeddingReadiness');
+    const embeddingProgress = document.getElementById('embeddingProgress');
+    const embeddingActivity = document.getElementById('embeddingActivity');
+    const embeddingConsentPanel = document.getElementById('embeddingConsentPanel');
     const embeddingConsent = document.getElementById('embeddingConsent');
     const embeddingProvider = document.getElementById('embeddingProvider');
     const embeddingDestination = document.getElementById('embeddingDestination');
@@ -253,6 +259,11 @@
     let activeAiOperation = false;
     let savedEmbeddingProvider = 'openrouter';
     let currentEmbeddingStatus = null;
+    let embeddingProgressTimer = null;
+    let embeddingProgressGeneration = 0;
+    let embeddingProgressPollGeneration = null;
+    let lastAnnouncedProgressPercent = -1;
+    let lastEmbeddingProgress = null;
 
     const messages = {
       ru: {
@@ -313,6 +324,9 @@
         embeddingReadinessIndexErrors: (result) => `Локальный индекс содержит ошибок: ${result.indexErrors}. Исправь файлы и повтори подготовку.`,
         embeddingReadiness: (result) => `Готовность embeddings: ${result.ready} из ${result.total} (${result.percent}%), осталось ${result.remaining}.`,
         embeddingReadinessError: 'Не удалось проверить готовность embeddings.',
+        embeddingProgressName: 'Прогресс подготовки embeddings',
+        embeddingProgressStarting: 'Подготовка embeddings запущена. Ожидаю первый пакет.',
+        embeddingProgressRunning: (result) => `Обработка идёт: готово ${result.completed} из ${result.total} (${result.percent}%). ${result.phase === 'requesting_provider' ? 'Жду ответ provider по текущему пакету.' : result.phase === 'pacing' ? 'Короткая пауза, чтобы приложение и компьютер оставались отзывчивыми.' : 'Текущий пакет сохранён.'} Прошло: ${result.elapsedSeconds} сек.`,
         cancelProviderButton: 'Отменить операцию',
         providerCancelled: 'Операция отменена.',
         embeddingConsentDetails: 'После локального индекса эта же кнопка подготавливает все оставшиеся embeddings за один запуск, последовательно отправляя ограниченные технические пакеты. Операцию можно отменить и позже продолжить с оставшегося места. Локальный provider работает на этом устройстве; OpenRouter получает фрагменты через интернет.',
@@ -320,10 +334,10 @@
         embeddingDestinationLabel: 'Назначение:',
         embeddingChunkCountLabel: 'Объём:',
         embeddingChunkCount: (remaining) => Number.isFinite(remaining) ? `Все оставшиеся текстовые фрагменты: ${remaining}` : 'Все оставшиеся текстовые фрагменты',
-        embeddingConsentLabel: 'Я понимаю, какие данные и куда будут отправлены, и согласен обработать все оставшиеся фрагменты.',
+        embeddingConsentLabel: 'Я понимаю, какие данные и куда будут отправлены, и согласен обработать не более указанного количества фрагментов.',
         embeddingDestination: (provider, destination) => provider === 'local' ? `Локальное устройство (${destination})` : `Облако OpenRouter (${destination})`,
         embeddingConsentRequired: 'Подтверди provider, назначение и объём данных для этого запуска.',
-        embeddingConsentVolumeChanged: (remaining) => `После обновления локального индекса объём изменился: осталось ${remaining} фрагментов. Проверь новый объём, снова установи флажок согласия и нажми кнопку.`,
+        embeddingConsentVolumeChanged: (remaining) => `После обновления локального индекса объём вырос: осталось ${remaining} фрагментов. Проверь новый объём, снова установи флажок согласия и нажми кнопку.`,
         ftsQuestionLabel: 'Вопрос по циклам',
         ftsQuestionPlaceholder: 'Например: найди цикл, где герои любят друг друга, действуют вместе и оба живы в финале',
         askButton: 'Найти ответ',
@@ -443,6 +457,9 @@
         embeddingReadinessIndexErrors: (result) => `The local index has ${result.indexErrors} error(s). Fix the files and run preparation again.`,
         embeddingReadiness: (result) => `Embeddings ready: ${result.ready} of ${result.total} (${result.percent}%), ${result.remaining} remaining.`,
         embeddingReadinessError: 'Could not check embeddings readiness.',
+        embeddingProgressName: 'Embedding preparation progress',
+        embeddingProgressStarting: 'Embedding preparation has started. Waiting for the first batch.',
+        embeddingProgressRunning: (result) => `Processing: ${result.completed} of ${result.total} (${result.percent}%) complete. ${result.phase === 'requesting_provider' ? 'Waiting for the provider to return the current batch.' : result.phase === 'pacing' ? 'Brief pause to keep the app and computer responsive.' : 'The current batch has been saved.'} Elapsed: ${result.elapsedSeconds} sec.`,
         cancelProviderButton: 'Cancel operation',
         providerCancelled: 'Operation cancelled.',
         embeddingConsentDetails: 'After the local index, the same button prepares all remaining embeddings in one run using sequential bounded technical batches. You can cancel and later resume from the remaining snippets. A local provider runs on this device; OpenRouter receives snippets over the internet.',
@@ -450,10 +467,10 @@
         embeddingDestinationLabel: 'Destination:',
         embeddingChunkCountLabel: 'Amount:',
         embeddingChunkCount: (remaining) => Number.isFinite(remaining) ? `All remaining text snippets: ${remaining}` : 'All remaining text snippets',
-        embeddingConsentLabel: 'I understand what data will be sent and where, and consent to processing all remaining snippets.',
+        embeddingConsentLabel: 'I understand what data will be sent and where, and consent to processing no more than the displayed number of snippets.',
         embeddingDestination: (provider, destination) => provider === 'local' ? `This device (${destination})` : `OpenRouter cloud (${destination})`,
         embeddingConsentRequired: 'Confirm the provider, destination, and amount of data for this run.',
-        embeddingConsentVolumeChanged: (remaining) => `The volume changed after updating the local index: ${remaining} snippets remain. Review the new amount, confirm consent again, and press the button.`,
+        embeddingConsentVolumeChanged: (remaining) => `The volume increased after updating the local index: ${remaining} snippets remain. Review the new amount, confirm consent again, and press the button.`,
         ftsQuestionLabel: 'Question about series',
         ftsQuestionPlaceholder: 'For example: find a series where the heroes love each other, act together, and both survive the finale',
         askButton: 'Find answer',
@@ -863,6 +880,95 @@
       }
     }
 
+    function renderEmbeddingProgress(result) {
+      const total = Math.max(0, Number(result?.total) || 0);
+      const completed = Math.min(total, Math.max(0, Number(result?.completed) || 0));
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Number(result?.startedAt || Date.now())) / 1000));
+      const percent = total > 0 ? Math.floor((completed / total) * 100) : 0;
+      const display = { ...result, total, completed, elapsedSeconds, percent };
+      const shouldAnnounceProgress = lastAnnouncedProgressPercent < 0
+        || completed === total
+        || percent >= lastAnnouncedProgressPercent + 5;
+      if (shouldAnnounceProgress) {
+        const corpusTotal = Math.max(total, Number(currentEmbeddingStatus?.total) || total);
+        const readyBeforeRun = Math.max(0, corpusTotal - total);
+        const ready = Math.min(corpusTotal, readyBeforeRun + completed);
+        embeddingReadiness.textContent = t('embeddingReadiness', {
+          ready,
+          total: corpusTotal,
+          remaining: Math.max(0, corpusTotal - ready),
+          percent: corpusTotal > 0 ? Math.floor((ready / corpusTotal) * 100) : 0,
+        });
+        lastAnnouncedProgressPercent = percent;
+      }
+      const message = result?.phase === 'starting'
+        ? t('embeddingProgressStarting')
+        : t('embeddingProgressRunning', display);
+      embeddingProgress.max = Math.max(1, total);
+      embeddingProgress.value = completed;
+      embeddingProgress.hidden = false;
+      embeddingProgress.setAttribute('aria-label', t('embeddingProgressName'));
+      embeddingActivity.textContent = message;
+      embeddingActivity.hidden = false;
+    }
+
+    function showEmbeddingNotice(message) {
+      embeddingActivity.textContent = message;
+      embeddingActivity.hidden = false;
+    }
+
+    async function pollEmbeddingProgress(generation) {
+      if (
+        generation !== embeddingProgressGeneration
+        || embeddingProgressPollGeneration === generation
+        || !lastEmbeddingProgress
+      ) return;
+      renderEmbeddingProgress(lastEmbeddingProgress);
+      const dbPath = getDbPath();
+      if (!dbPath) return;
+      embeddingProgressPollGeneration = generation;
+      try {
+        const data = await fetchJson(`/api/embedding-progress?db=${encodeURIComponent(dbPath)}`);
+        if (generation !== embeddingProgressGeneration) return;
+        if (data.result?.active) {
+          lastEmbeddingProgress = data.result;
+          renderEmbeddingProgress(lastEmbeddingProgress);
+        }
+      } catch {
+        // Keep elapsed time visible; the main request reports actionable errors.
+      } finally {
+        if (embeddingProgressPollGeneration === generation) embeddingProgressPollGeneration = null;
+      }
+    }
+
+    function startEmbeddingProgressPolling(total) {
+      stopEmbeddingProgressPolling();
+      const generation = embeddingProgressGeneration;
+      lastEmbeddingProgress = {
+        active: true,
+        phase: 'starting',
+        completed: 0,
+        total,
+        startedAt: Date.now(),
+      };
+      lastAnnouncedProgressPercent = -1;
+      embeddingConsentPanel.setAttribute('aria-busy', 'true');
+      renderEmbeddingProgress(lastEmbeddingProgress);
+      void pollEmbeddingProgress(generation);
+      embeddingProgressTimer = setInterval(() => void pollEmbeddingProgress(generation), 1000);
+    }
+
+    function stopEmbeddingProgressPolling() {
+      embeddingProgressGeneration += 1;
+      if (embeddingProgressTimer !== null) clearInterval(embeddingProgressTimer);
+      embeddingProgressTimer = null;
+      lastEmbeddingProgress = null;
+      lastAnnouncedProgressPercent = -1;
+      embeddingProgress.hidden = true;
+      embeddingActivity.hidden = true;
+      embeddingConsentPanel.removeAttribute('aria-busy');
+    }
+
     async function pickBooksRoot({ loadAfterPick = false } = {}) {
       try {
         const desktopApi = window.booksSelectionDesktop;
@@ -1120,13 +1226,16 @@
       }
       const requiresConsent = savedEmbeddingProvider === 'openrouter';
       if (requiresConsent && !embeddingConsent.checked) {
-        setAiStatus(t('embeddingConsentRequired'));
+        const message = t('embeddingConsentRequired');
+        setAiStatus(message);
+        showEmbeddingNotice(message);
         embeddingConsent.focus();
         return;
       }
 
       activeProviderController = new AbortController();
       cancelProviderButton.hidden = false;
+      startEmbeddingProgressPolling(expectedRemaining);
       try {
         const semanticData = await fetchJson('/api/embed-index', {
           method: 'POST',
@@ -1147,6 +1256,7 @@
       } catch (error) {
         setAiStatus(error.name === 'AbortError' ? t('providerCancelled') : error.message);
       } finally {
+        stopEmbeddingProgressPolling();
         await loadEmbeddingStatus();
         activeProviderController = null;
         cancelProviderButton.hidden = true;
@@ -1158,10 +1268,13 @@
       if (activeAiOperation) return;
       const requiresConsent = savedEmbeddingProvider === 'openrouter';
       if (requiresConsent && !embeddingConsent.checked) {
-        setAiStatus(t('embeddingConsentRequired'));
+        const message = t('embeddingConsentRequired');
+        setAiStatus(message);
+        showEmbeddingNotice(message);
         embeddingConsent.focus();
         return;
       }
+      embeddingActivity.hidden = true;
       const consentedRemaining = currentEmbeddingStatus?.remaining;
       activeAiOperation = true;
       setControlBusy(buildIndexButton, true);
@@ -1171,9 +1284,15 @@
         if (indexed) {
           if (
             requiresConsent
-            && (!Number.isSafeInteger(consentedRemaining) || currentEmbeddingStatus?.remaining !== consentedRemaining)
+            && (
+              !Number.isSafeInteger(consentedRemaining)
+              || !Number.isSafeInteger(currentEmbeddingStatus?.remaining)
+              || currentEmbeddingStatus.remaining > consentedRemaining
+            )
           ) {
-            setAiStatus(t('embeddingConsentVolumeChanged', currentEmbeddingStatus?.remaining ?? 0));
+            const message = t('embeddingConsentVolumeChanged', currentEmbeddingStatus?.remaining ?? 0);
+            setAiStatus(message);
+            showEmbeddingNotice(message);
             embeddingConsent.checked = false;
             embeddingConsent.focus();
           } else {

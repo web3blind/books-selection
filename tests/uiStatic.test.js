@@ -115,6 +115,8 @@ test('one preparation button builds local FTS and one consented complete embeddi
   for (const marker of [
     'id="buildIndexButton"',
     'id="embeddingReadiness"',
+    'id="embeddingProgress"',
+    'id="embeddingActivity"',
     'id="embeddingConsent"',
     'id="embeddingConsentDetails"',
     'buildLocalIndex',
@@ -122,6 +124,7 @@ test('one preparation button builds local FTS and one consented complete embeddi
     'embeddingDestination',
     'embeddingChunkCount',
     'embeddingConsentRequired',
+    'embeddingProgressRunning',
   ]) assert.ok(html.includes(marker), `missing embedding consent marker: ${marker}`);
   assert.ok(html.includes('All remaining text snippets'));
   assert.ok(html.includes('Все оставшиеся текстовые фрагменты'));
@@ -130,6 +133,20 @@ test('one preparation button builds local FTS and one consented complete embeddi
   assert.ok(html.includes('allRemaining: true'));
   assert.ok(html.includes('expectedRemaining'));
   assert.ok(html.includes('embeddingConsentVolumeChanged'));
+  assert.ok(html.includes('currentEmbeddingStatus.remaining > consentedRemaining'));
+  assert.ok(html.includes('fetchJson(`/api/embedding-progress?db='));
+  assert.ok(html.includes('startEmbeddingProgressPolling'));
+  assert.ok(html.includes('stopEmbeddingProgressPolling'));
+  assert.ok(html.includes('embeddingProgressGeneration'));
+  assert.ok(html.includes('generation !== embeddingProgressGeneration'));
+  assert.ok(html.includes('lastAnnouncedProgressPercent + 5'));
+  assert.ok(html.includes('<p id="embeddingActivity" class="meta" hidden></p>'));
+  assert.ok(!html.includes('id="embeddingActivity" class="meta" role="status"'));
+  assert.ok(html.includes('setInterval'));
+  assert.ok(html.includes('не более указанного количества'));
+  assert.ok(html.includes('no more than the displayed number'));
+  assert.ok(html.includes('Короткая пауза, чтобы приложение и компьютер оставались отзывчивыми.'));
+  assert.ok(html.includes('Brief pause to keep the app and computer responsive.'));
   assert.ok(!html.includes('limit: 999'));
   assert.ok(!html.includes('storageKey'));
   assert.ok(!html.includes('id="embedIndexButton"'));

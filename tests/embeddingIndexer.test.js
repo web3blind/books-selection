@@ -2,7 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { initializeSearchDatabase } = require('../src/searchDb');
-const { getEmbeddingIndexStatus, indexMissingChunkEmbeddings, iterateCurrentEmbeddingBatches } = require('../src/embeddingIndexer');
+const {
+  getEmbeddingIndexStatus,
+  getEmbeddingPacingDelay,
+  indexMissingChunkEmbeddings,
+  iterateCurrentEmbeddingBatches,
+} = require('../src/embeddingIndexer');
 const { storeChunkEmbedding } = require('../src/embeddings');
 
 function insertBookWithChunks(db, chunks) {
@@ -24,6 +29,42 @@ function createMockEmbeddingClient() {
     },
   };
 }
+
+test('large embedding runs use gentle automatic pacing while small runs stay immediate', () => {
+  assert.equal(getEmbeddingPacingDelay(999), 0);
+  assert.equal(getEmbeddingPacingDelay(1000), 150);
+  assert.equal(getEmbeddingPacingDelay(23526), 150);
+});
+
+test('cancelling during the default pacing delay aborts without waiting for the timer', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const controller = new AbortController();
+  try {
+    insertBookWithChunks(db, [
+      { text: 'first', contentHash: 'abort-pacing-a' },
+      { text: 'second', contentHash: 'abort-pacing-b' },
+    ]);
+    const startedAt = Date.now();
+    await assert.rejects(indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'test-key' },
+      providerClient: createMockEmbeddingClient(),
+      limit: null,
+      batchSize: 1,
+      maxTransmittedChunks: 2,
+      pacingDelayMs: 500,
+      signal: controller.signal,
+      onProgress(update) {
+        if (update.phase === 'pacing') {
+          setTimeout(() => controller.abort(), 10);
+        }
+      },
+    }), (error) => error?.name === 'AbortError');
+    assert.ok(Date.now() - startedAt < 250, 'abort should interrupt pacing before the full delay');
+  } finally {
+    db.close();
+  }
+});
 
 test('getEmbeddingIndexStatus reports overall readiness', () => {
   const db = initializeSearchDatabase(':memory:');
@@ -121,6 +162,50 @@ test('indexMissingChunkEmbeddings embeds missing chunks with mocked provider and
     assert.deepEqual(rows.map((row) => row.model), ['openai/text-embedding-3-small', 'openai/text-embedding-3-small']);
     assert.deepEqual(rows.map((row) => row.content_hash), ['hash-a', 'hash-b']);
     assert.deepEqual(rows.map((row) => JSON.parse(row.embedding_json)), [[20, 1], [21, 2]]);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings reports provider-wait and completed-batch progress', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const progress = [];
+  const delays = [];
+  try {
+    insertBookWithChunks(db, [
+      { text: 'first', contentHash: 'hash-a' },
+      { text: 'second', contentHash: 'hash-b' },
+      { text: 'third', contentHash: 'hash-c' },
+    ]);
+    const result = await indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'fixture-key' },
+      providerClient: {
+        async createEmbeddings({ inputs }) {
+          return inputs.map((input) => [input.length, 1]);
+        },
+      },
+      limit: null,
+      batchSize: 2,
+      maxTransmittedChunks: 3,
+      onProgress(update) {
+        progress.push(update);
+      },
+      pacingDelayMs: 5,
+      async delayImpl(milliseconds) {
+        delays.push(milliseconds);
+      },
+    });
+
+    assert.equal(result.embedded, 3);
+    assert.deepEqual(delays, [5]);
+    assert.deepEqual(progress, [
+      { phase: 'requesting_provider', completed: 0, total: 3, batchSize: 2 },
+      { phase: 'batch_saved', completed: 2, total: 3, batchSize: 2 },
+      { phase: 'pacing', completed: 2, total: 3, batchSize: 0 },
+      { phase: 'requesting_provider', completed: 2, total: 3, batchSize: 1 },
+      { phase: 'batch_saved', completed: 3, total: 3, batchSize: 1 },
+    ]);
   } finally {
     db.close();
   }

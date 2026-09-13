@@ -166,6 +166,24 @@ function createRequestHandler(options = {}) {
   const providerFetchImpl = options.providerFetchImpl;
   const diagnosticWriter = options.diagnosticWriter || writeProviderNetworkDiagnostic;
   const apiToken = options.apiToken || randomBytes(32).toString('base64url');
+  const embeddingOperations = new Map();
+  const requestedRetentionMs = Number(options.embeddingOperationRetentionMs ?? 60_000);
+  const embeddingOperationRetentionMs = Number.isFinite(requestedRetentionMs) && requestedRetentionMs >= 0
+    ? Math.min(requestedRetentionMs, 300_000)
+    : 60_000;
+
+  function embeddingOperationKey(databasePath) {
+    return path.resolve(databasePath);
+  }
+
+  function expireEmbeddingOperation(operationKey, operation) {
+    const timer = setTimeout(() => {
+      if (embeddingOperations.get(operationKey) === operation && !operation.active) {
+        embeddingOperations.delete(operationKey);
+      }
+    }, embeddingOperationRetentionMs);
+    timer.unref?.();
+  }
 
   return async function handleRequest(request, response) {
   let route = '';
@@ -259,6 +277,21 @@ function createRequestHandler(options = {}) {
       return sendJson(response, 200, { db: databasePath, result });
     }
 
+    if (url.pathname === '/api/embedding-progress') {
+      if (request.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed.' });
+      const databasePath = getDbPath(url, appConfig);
+      if (!databasePath) return sendJson(response, 400, { error: 'Нужен путь к SQLite базе.' });
+      const result = embeddingOperations.get(embeddingOperationKey(databasePath)) || {
+        active: false,
+        phase: 'idle',
+        completed: 0,
+        total: 0,
+        startedAt: null,
+        updatedAt: null,
+      };
+      return sendJson(response, 200, { result });
+    }
+
     if (url.pathname === '/api/search') {
       const query = url.searchParams.get('q') || '';
       const databasePath = getDbPath(url, appConfig);
@@ -341,17 +374,44 @@ function createRequestHandler(options = {}) {
         throw new HttpError(400, 'Для полной подготовки нужен подтверждённый объём оставшихся фрагментов.');
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => {
+      const operationKey = embeddingOperationKey(databasePath);
+      const existingOperation = embeddingOperations.get(operationKey);
+      if (existingOperation?.active) {
+        throw new HttpError(409, 'Подготовка embeddings для этой базы уже выполняется.');
+      }
+      const result = await withSearchDatabase(databasePath, async (db) => {
         if (payload.allRemaining === true) {
           const status = getEmbeddingIndexStatus({ db, providerOverrides });
           if (status.remaining !== expectedRemaining) {
             throw new HttpError(409, `Объём изменился: сейчас осталось ${status.remaining} фрагментов. Подтверди новый объём.`);
           }
         }
-        return indexMissingChunkEmbeddings({
-          db, limit, batchSize, maxTransmittedChunks: expectedRemaining,
-          providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
-        });
+        const startedAt = Date.now();
+        const operation = {
+          active: true,
+          phase: 'starting',
+          completed: 0,
+          total: payload.allRemaining === true ? expectedRemaining : Math.max(0, limit),
+          startedAt,
+          updatedAt: startedAt,
+        };
+        embeddingOperations.set(operationKey, operation);
+        try {
+          const embeddingResult = await indexMissingChunkEmbeddings({
+            db, limit, batchSize, maxTransmittedChunks: expectedRemaining,
+            providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
+            onProgress(progress) {
+              Object.assign(operation, progress, { updatedAt: Date.now() });
+            },
+          });
+          Object.assign(operation, { active: false, phase: 'complete', updatedAt: Date.now() });
+          expireEmbeddingOperation(operationKey, operation);
+          return embeddingResult;
+        } catch (error) {
+          Object.assign(operation, { active: false, phase: 'failed', updatedAt: Date.now() });
+          expireEmbeddingOperation(operationKey, operation);
+          throw error;
+        }
       });
       return sendJson(response, 200, { db: databasePath, result });
     }
@@ -428,6 +488,7 @@ function startServer(options = {}) {
     updateCheckOptions: options.updateCheckOptions,
     providerFetchImpl: options.providerFetchImpl,
     diagnosticWriter: options.diagnosticWriter,
+    embeddingOperationRetentionMs: options.embeddingOperationRetentionMs,
   }));
 
   return new Promise((resolve, reject) => {

@@ -7,6 +7,41 @@ const ACTIVE_CORPUS_FILTER = `(
   OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
 )`;
 const EMBEDDING_ROW_BATCH_SIZE = 256;
+const LARGE_EMBEDDING_RUN_THRESHOLD = 1000;
+const LARGE_EMBEDDING_RUN_DELAY_MS = 150;
+const WRITE_YIELD_INTERVAL = 8;
+
+function getEmbeddingPacingDelay(totalMissing) {
+  return Number(totalMissing) >= LARGE_EMBEDDING_RUN_THRESHOLD ? LARGE_EMBEDDING_RUN_DELAY_MS : 0;
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  const error = new Error('Operation cancelled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function defaultDelay(milliseconds, signal) {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    let timer;
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      const error = new Error('Operation cancelled.');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
 
 function normalizePositiveInteger(value, fallback, maximum) {
   const parsed = Number(value);
@@ -202,6 +237,9 @@ async function indexMissingChunkEmbeddings({
   limit = 100,
   batchSize = 16,
   maxTransmittedChunks = null,
+  onProgress,
+  pacingDelayMs = null,
+  delayImpl = defaultDelay,
 } = {}) {
   if (!db) {
     throw new Error('Embedding indexing requires a database.');
@@ -230,6 +268,9 @@ async function indexMissingChunkEmbeddings({
   const runLimit = limit === null ? approvedTransmissionLimit : normalizePositiveInteger(limit, 100, 1000);
   const runBatchSize = normalizePositiveInteger(batchSize, 16, 128);
   const totalMissing = Math.max(0, totalChunks - skipped);
+  const runPacingDelayMs = pacingDelayMs === null
+    ? getEmbeddingPacingDelay(totalMissing)
+    : Math.max(0, Math.min(1000, Number(pacingDelayMs) || 0));
 
   if (!apiKey) {
     return {
@@ -270,6 +311,12 @@ async function indexMissingChunkEmbeddings({
       limit: Math.min(runBatchSize, runLimit - processedThisRun),
     });
     if (batch.length === 0) break;
+    onProgress?.({
+      phase: 'requesting_provider',
+      completed: processedThisRun,
+      total: runLimit,
+      batchSize: batch.length,
+    });
     const embeddings = await requestEmbeddingsForChunks(batch);
     const batchDimension = validateEmbeddingBatch(embeddings, batch.length);
     if (expectedDimension && batchDimension !== expectedDimension) {
@@ -294,8 +341,29 @@ async function indexMissingChunkEmbeddings({
         embedding,
       });
       embedded += 1;
+      if ((index + 1) % WRITE_YIELD_INTERVAL === 0 && index + 1 < batch.length) {
+        await new Promise((resolve) => setImmediate(resolve));
+        throwIfAborted(signal);
+      }
     }
     processedThisRun += batch.length;
+    onProgress?.({
+      phase: 'batch_saved',
+      completed: processedThisRun,
+      total: runLimit,
+      batchSize: batch.length,
+    });
+    if (processedThisRun < runLimit && runPacingDelayMs > 0) {
+      onProgress?.({
+        phase: 'pacing',
+        completed: processedThisRun,
+        total: runLimit,
+        batchSize: 0,
+      });
+      throwIfAborted(signal);
+      await delayImpl(runPacingDelayMs, signal);
+      throwIfAborted(signal);
+    }
   }
 
   const remaining = Math.max(0, countChunks(db) - countChunksWithCurrentEmbedding(db, {
@@ -317,6 +385,7 @@ async function indexMissingChunkEmbeddings({
 
 module.exports = {
   getEmbeddingIndexStatus,
+  getEmbeddingPacingDelay,
   indexMissingChunkEmbeddings,
   iterateCurrentEmbeddingBatches,
   selectChunksMissingEmbeddings,

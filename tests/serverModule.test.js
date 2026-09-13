@@ -144,6 +144,104 @@ test('all-remaining API does not probe or rebuild a fully cached corpus beyond a
   }
 });
 
+test('embedding progress API exposes a live provider wait without rescanning the database', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-server-progress-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({
+    booksRoot: dir,
+    dbPath,
+    activeProvider: 'local',
+    activeEmbeddingsProvider: 'local',
+    providers: {
+      local: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        apiKey: 'fixture-key',
+        embeddingModel: 'fixture-embedding-model',
+      },
+    },
+  }, process.env);
+  const db = initializeSearchDatabase(dbPath);
+  const bookId = Number(db.prepare(`
+    INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status)
+    VALUES ('Cycle', ?, ?, 1, 1, 'book-hash', 'Book', 'Annotation', 'indexed')
+  `).run(dir, path.join(dir, 'book.fb2')).lastInsertRowid);
+  db.prepare(`
+    INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset)
+    VALUES (?, 0, 'progress evidence', 'chunk-hash', 0, 17)
+  `).run(bookId);
+  db.close();
+
+  let markProviderStarted;
+  let releaseProvider;
+  const providerStarted = new Promise((resolve) => { markProviderStarted = resolve; });
+  const providerRelease = new Promise((resolve) => { releaseProvider = resolve; });
+  const started = await startServer({
+    port: 0,
+    openBrowser: false,
+    log: false,
+    embeddingOperationRetentionMs: 1000,
+    providerFetchImpl: async () => {
+      markProviderStarted();
+      await providerRelease;
+      return new Response(JSON.stringify({ data: [{ embedding: [1, 2] }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  try {
+    const home = await request(started, 'GET', '/');
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    const embeddingRequest = request(started, 'POST', '/api/embed-index', cookie, {
+      db: dbPath,
+      allRemaining: true,
+      expectedRemaining: 1,
+      batchSize: 1,
+      expectedProvider: 'local',
+      cloudConsent: false,
+    });
+    await providerStarted;
+
+    const during = await request(
+      started, 'GET', `/api/embedding-progress?db=${encodeURIComponent(dbPath)}`, cookie,
+    );
+    assert.equal(during.statusCode, 200);
+    assert.equal(during.body.result.active, true);
+    assert.equal(during.body.result.phase, 'requesting_provider');
+    assert.equal(during.body.result.completed, 0);
+    assert.equal(during.body.result.total, 1);
+    assert.ok(Number.isFinite(during.body.result.startedAt));
+
+    releaseProvider();
+    const completed = await embeddingRequest;
+    assert.equal(completed.statusCode, 200);
+
+    const after = await request(
+      started, 'GET', `/api/embedding-progress?db=${encodeURIComponent(dbPath)}`, cookie,
+    );
+    assert.equal(after.body.result.active, false);
+    assert.equal(after.body.result.completed, 1);
+    assert.equal(after.body.result.total, 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 1050));
+    const expired = await request(
+      started, 'GET', `/api/embedding-progress?db=${encodeURIComponent(dbPath)}`, cookie,
+    );
+    assert.equal(expired.body.result.active, false);
+    assert.equal(expired.body.result.phase, 'idle');
+    assert.equal(expired.body.result.total, 0);
+  } finally {
+    releaseProvider();
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('desktop provider fetch is injected through the server and network failures create a safe log', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-server-fetch-'));
   const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
