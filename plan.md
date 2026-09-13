@@ -8,6 +8,14 @@
 
 ## Active audit remediation
 
+## Release v0.3.6
+
+- `outcome`: publish current verified `main` as GitHub Release `v0.3.6` with stable Linux, Windows portable EXE/ZIP, and macOS ZIP assets.
+- `verification`: full tests, Electron smoke, `npm run build:desktop`, archive listing, SHA-256 checksums, GitHub asset read-back, and HTTP range checks for published downloads.
+- `constraints`: no real provider calls, no user data/config/database changes, no signing/notarization claims, and no modification of release contents after verification except replacing a failed upload before publication.
+- `boundaries`: package version/lockfile, `plan.md`, generated ignored `dist-desktop/`, Git tag, and GitHub Release only.
+- `stop_when`: build cannot produce a required platform asset, tests fail, GitHub authentication fails, or publishing would overwrite an existing `v0.3.6` tag/release.
+
 ### Scope and non-goals
 
 - Защитить loopback API от cross-origin/DNS-rebinding запросов, не возвращать сохранённые ключи и валидировать provider configuration.
