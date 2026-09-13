@@ -131,7 +131,7 @@
 
   <input id="root" name="root" type="hidden">
 
-  <label id="searchLabel" for="search">Поиск по папке, названию и аннотации</label>
+  <label id="searchLabel" for="search">Поиск по циклу и аннотации</label>
   <input id="search" name="search" type="text" placeholder="Например: попаданец, гоблины, клан">
 
   <div>
@@ -298,9 +298,9 @@
         fallbackText: 'Папка книг берётся из настроек. Если нужно изменить путь, открой раздел «Настройки».',
         rootLabel: 'Путь к папке книг',
         rootPlaceholder: 'Например: /home/denis/Книги',
-        searchLabel: 'Поиск по папке, названию и аннотации',
+        searchLabel: 'Поиск по циклу и аннотации',
         searchPlaceholder: 'Например: попаданец, гоблины, клан',
-        showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
+        showReadyOnly: 'Показывать только циклы с аннотацией и без ошибок',
         aiSearchTitle: 'Вопрос по циклам',
         aiSearchIntro: 'Одна кнопка сначала обновляет локальный FTS-индекс, затем готовит один пакет embeddings. Перед каждым облачным пакетом нужно подтвердить provider, адрес назначения и объём данных.',
         dbPathLabel: 'SQLite база берётся из настроек.',
@@ -427,9 +427,9 @@
         fallbackText: 'The books folder is loaded from Settings. To change it, open Settings.',
         rootLabel: 'Books folder path',
         rootPlaceholder: 'For example: /home/denis/Books',
-        searchLabel: 'Search by folder, title, and annotation',
+        searchLabel: 'Search by cycle and annotation',
         searchPlaceholder: 'For example: goblins, clan, portal fantasy',
-        showReadyOnly: 'Show only books with annotations and without errors',
+        showReadyOnly: 'Show only cycles with annotations and without errors',
         aiSearchTitle: 'Question about series',
         aiSearchIntro: 'One button first updates the local FTS index, then prepares one embedding batch. Before each cloud batch you must confirm the provider, destination, and amount of data.',
         dbPathLabel: 'SQLite database is loaded from Settings.',
@@ -1032,7 +1032,7 @@
         }
 
         if (!query) return true;
-        const haystack = [book.folderName, book.fileName || '', book.title, book.annotation].join('\n').toLowerCase();
+        const haystack = [book.folderName, book.annotation].join('\n').toLowerCase();
         return haystack.includes(query);
       });
 
@@ -1044,8 +1044,6 @@
         return `
         <article class="book" aria-label="${escapeHtml(book.folderName)}">
           <h2>${escapeHtml(book.folderName)}</h2>
-          <p><strong>${escapeHtml(t('titleLabel'))}</strong> ${escapeHtml(book.title)}</p>
-          <p class="muted"><strong>${escapeHtml(t('fileLabel'))}</strong> ${escapeHtml(book.fileName || t('fileMissing'))}</p>
           <p class="${book.status === BOOK_STATUSES.ERROR ? 'error' : ''}">${escapeHtml(book.annotation)}</p>
         </article>
       `;

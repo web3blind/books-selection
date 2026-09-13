@@ -30,7 +30,7 @@ test('scanBooks marks folder without fb2 files as missing', async () => {
   assert.equal(result[0].reason, BOOK_REASONS.BOOK_FILE_NOT_FOUND);
 });
 
-test('scanBooks returns every supported file in a cycle by natural sort', async () => {
+test('scanBooks keeps one representative annotation per cycle while full scan returns every book', async () => {
   const root = await createTempRoot();
   const folder = path.join(root, 'Cycle');
   const xml = `<?xml version="1.0" encoding="utf-8"?>
@@ -46,17 +46,17 @@ test('scanBooks returns every supported file in a cycle by natural sort', async 
   await writeFile(path.join(folder, '10.fb2'), xml.replace('Alpha', 'Ten'));
   await writeFile(path.join(folder, '2.fb2'), xml);
 
-  const result = await scanBooks(root);
+  const cycleResults = await scanBooks(root);
+  const allBookResults = await scanBooks(root, { allFiles: true });
 
   await fs.rm(root, { recursive: true, force: true });
 
-  assert.equal(result.length, 2);
-  assert.equal(result[0].fileName, '2.fb2');
-  assert.equal(result[0].title, 'Alpha');
-  assert.equal(result[0].status, BOOK_STATUSES.OK);
-  assert.equal(result[1].fileName, '10.fb2');
-  assert.equal(result[1].title, 'Ten');
-  assert.equal(result[1].status, BOOK_STATUSES.OK);
+  assert.equal(cycleResults.length, 1);
+  assert.equal(cycleResults[0].fileName, '2.fb2');
+  assert.equal(cycleResults[0].title, 'Alpha');
+  assert.equal(cycleResults[0].status, BOOK_STATUSES.OK);
+  assert.deepEqual(allBookResults.map((book) => book.fileName), ['2.fb2', '10.fb2']);
+  assert.deepEqual(allBookResults.map((book) => book.title), ['Alpha', 'Ten']);
 });
 
 test('scanBooks marks broken fb2.zip as error', async () => {

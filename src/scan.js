@@ -35,7 +35,7 @@ async function findBookFiles(folderPath) {
   return files.filter((name) => /\.fb2(\.zip)?$/i.test(name));
 }
 
-async function scanBooks(rootPath, { readInfo = true } = {}) {
+async function scanBooks(rootPath, { readInfo = true, allFiles = false } = {}) {
   const folderNames = await listDirectories(rootPath);
   const results = [];
 
@@ -56,7 +56,8 @@ async function scanBooks(rootPath, { readInfo = true } = {}) {
       continue;
     }
 
-    for (const fileName of fileNames) {
+    const selectedFileNames = allFiles ? fileNames : fileNames.slice(0, 1);
+    for (const fileName of selectedFileNames) {
       const filePath = path.join(folderPath, fileName);
 
       if (!readInfo) {

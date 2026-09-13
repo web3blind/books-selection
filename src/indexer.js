@@ -178,7 +178,7 @@ function updateCorpusState(db, { indexedRoot, scanResult, errors }) {
 
 async function indexLibrary(db, rootPath, options = {}) {
   const indexedRoot = path.resolve(rootPath);
-  const scanResult = await scanBooks(indexedRoot, { readInfo: false });
+  const scanResult = await scanBooks(indexedRoot, { readInfo: false, allFiles: true });
   const summary = { indexed: 0, skipped: 0, errors: 0, total: scanResult.filter((item) => item.fileName).length };
   const presentFilePaths = new Set();
   const preparedBooks = [];

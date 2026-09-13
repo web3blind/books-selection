@@ -150,6 +150,20 @@ test('primary controls and results are inside the main landmark', () => {
   assert.ok(html.includes('<section id="results"'));
 });
 
+test('annotation browser renders cycles only and does not expose individual book metadata', () => {
+  const renderStart = html.indexOf('function renderBooks()');
+  const renderEnd = html.indexOf('async function loadBooks()', renderStart);
+  const renderSource = html.slice(renderStart, renderEnd);
+
+  assert.ok(renderSource.includes("[book.folderName, book.annotation]"));
+  assert.ok(!renderSource.includes("t('titleLabel')"));
+  assert.ok(!renderSource.includes("t('fileLabel')"));
+  assert.ok(html.includes("searchLabel: 'Поиск по циклу и аннотации'"));
+  assert.ok(html.includes("searchLabel: 'Search by cycle and annotation'"));
+  assert.ok(html.includes("showReadyOnly: 'Показывать только циклы с аннотацией и без ошибок'"));
+  assert.ok(html.includes("showReadyOnly: 'Show only cycles with annotations and without errors'"));
+});
+
 test('operational copy, placeholders, consent, and update authenticity guidance are localized', () => {
   for (const key of [
     'languageLabel', 'settingsBooksRootPlaceholder', 'settingsDbPathPlaceholder',
