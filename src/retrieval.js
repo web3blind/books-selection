@@ -6,6 +6,8 @@ function stripMarkup(value) {
   return String(value || '').replace(/<[^>]+>/g, '');
 }
 
+const MAX_SEMANTIC_ROWS_PER_BOOK = 3;
+
 const QUERY_STOPWORDS = new Set([
   'а', 'без', 'бы', 'в', 'во', 'вот', 'где', 'да', 'для', 'до', 'его', 'ее', 'её', 'если', 'есть', 'же',
   'за', 'и', 'из', 'или', 'как', 'кто', 'ли', 'на', 'над', 'надо', 'не', 'но', 'ну', 'о', 'об', 'от',
@@ -47,6 +49,7 @@ function trimExcerpt(value, maxLength = 700) {
 
 function normalizeChunkRow(row, source) {
   return {
+    chunk_id: row.chunk_id,
     book_id: row.book_id,
     cycle_name: row.cycle_name,
     title: row.title,
@@ -54,6 +57,7 @@ function normalizeChunkRow(row, source) {
     snippet: trimExcerpt(row.snippet || row.text || ''),
     text: row.snippet ? stripMarkup(row.snippet) : trimExcerpt(row.text || ''),
     source,
+    sources: [source],
     score: row.score,
   };
 }
@@ -110,13 +114,23 @@ function factToEvidenceRow(fact) {
 }
 
 function addDeduped(rows, row, limit) {
-  if (rows.length >= limit) {
+  const key = Number.isSafeInteger(row.chunk_id)
+    ? `chunk\u0000${row.chunk_id}`
+    : `${row.source}\u0000${row.book_id}\u0000${row.chunk_index}`;
+  const existing = rows.find((item) => {
+    const itemKey = Number.isSafeInteger(item.chunk_id)
+      ? `chunk\u0000${item.chunk_id}`
+      : `${item.source}\u0000${item.book_id}\u0000${item.chunk_index}`;
+    return itemKey === key;
+  });
+  if (existing) {
+    existing.sources = [...new Set([
+      ...(existing.sources || [existing.source]),
+      ...(row.sources || [row.source]),
+    ].filter(Boolean))];
     return;
   }
-  const key = `${row.source}\u0000${row.book_id}\u0000${row.chunk_index}`;
-  if (rows.some((existing) => `${existing.source}\u0000${existing.book_id}\u0000${existing.chunk_index}` === key)) {
-    return;
-  }
+  if (rows.length >= limit) return;
   rows.push(row);
 }
 
@@ -126,6 +140,21 @@ function uniqueCandidateBooks(rows) {
 
 function countNonEmpty(groups) {
   return groups.filter((group) => group.length > 0).length;
+}
+
+function diversifyRowsByBook(rows, { limit, maxPerBook = MAX_SEMANTIC_ROWS_PER_BOOK }) {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  const selected = [];
+  const counts = new Map();
+  for (const row of rows) {
+    const key = `${row.cycle_name || ''}\u0000${row.title || ''}\u0000${row.book_id ?? ''}`;
+    const count = counts.get(key) || 0;
+    if (count >= maxPerBook) continue;
+    selected.push(row);
+    counts.set(key, count + 1);
+    if (selected.length >= limit) break;
+  }
+  return selected;
 }
 
 function addSourceGroup(evidence, rows, laterGroups, limit) {
@@ -186,20 +215,24 @@ async function collectSemanticRows({
   env,
   fetchImpl,
   providerClient,
+  signal,
   embedFn = embedQueryIfConfigured,
   semanticSearchFn = semanticSearchChunks,
   semanticLimit,
 }) {
-  const embeddingResult = await embedFn({ query: question, providerOverrides, env, fetchImpl, providerClient });
+  const embeddingResult = await embedFn({ query: question, providerOverrides, env, fetchImpl, providerClient, signal });
   if (embeddingResult.status !== 'embedded') {
     return { status: embeddingResult.status, rows: [], setup: embeddingResult.setup };
   }
 
-  const rows = semanticSearchFn(db, embeddingResult.embedding, {
+  const rows = diversifyRowsByBook(semanticSearchFn(db, embeddingResult.embedding, {
     provider: embeddingResult.provider,
     model: embeddingResult.model,
     limit: semanticLimit,
-  }).map((row) => normalizeChunkRow(row, 'semantic'));
+    maxPerBook: MAX_SEMANTIC_ROWS_PER_BOOK,
+  }).map((row) => normalizeChunkRow(row, 'semantic')), {
+    limit: semanticLimit,
+  });
 
   return {
     status: 'searched',
@@ -216,6 +249,7 @@ async function collectHybridEvidence({
   env = process.env,
   fetchImpl,
   providerClient,
+  signal,
   searchFn = searchChunks,
   embedFn = embedQueryIfConfigured,
   semanticSearchFn = semanticSearchChunks,
@@ -234,7 +268,7 @@ async function collectHybridEvidence({
 
   const ftsQuery = createFtsQueryFromQuestion(trimmedQuestion);
   const ftsRows = scoreEvidenceRows(
-    searchFn(db, ftsQuery, { limit: ftsLimit }).map((row) => normalizeChunkRow(row, 'fts')),
+    searchFn(db, trimmedQuestion, { limit: ftsLimit }).map((row) => normalizeChunkRow(row, 'fts')),
     trimmedQuestion,
   );
   const semantic = await collectSemanticRows({
@@ -244,6 +278,7 @@ async function collectHybridEvidence({
     env,
     fetchImpl,
     providerClient,
+    signal,
     embedFn,
     semanticSearchFn,
     semanticLimit,

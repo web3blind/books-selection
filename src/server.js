@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
 const { readAppConfig, redactAppConfig, isAppConfigured, toProviderOverrides, writeAppConfig } = require('./appConfig');
-const { answerLibraryQuestion, createFtsQueryFromQuestion } = require('./ask');
+const { answerLibraryQuestion } = require('./ask');
 const { indexMissingChunkEmbeddings } = require('./embeddingIndexer');
 const { semanticSearchIfConfigured } = require('./embeddings');
 const { extractFactFromEvidence } = require('./factExtractor');
@@ -169,6 +169,11 @@ function createRequestHandler(options = {}) {
 
   return async function handleRequest(request, response) {
   let route = '';
+  const requestAbort = new AbortController();
+  request.once('aborted', () => requestAbort.abort());
+  response.once('close', () => {
+    if (!response.writableEnded) requestAbort.abort();
+  });
   try {
     if (!hasExpectedHost(request) || !hasAllowedOrigin(request)) {
       return sendJson(response, 403, { error: 'Request origin is not allowed.' });
@@ -192,6 +197,7 @@ function createRequestHandler(options = {}) {
           path: configState.path,
           exists: configState.exists,
           isConfigured: isAppConfigured(appConfig),
+          ...(configState.error ? { configError: configState.error } : {}),
         });
       }
       if (request.method === 'POST') {
@@ -275,7 +281,7 @@ function createRequestHandler(options = {}) {
       }
 
       const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({
-        db, question: query, providerOverrides, fetchImpl: providerFetchImpl,
+        db, question: query, providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
       }));
       return sendJson(response, 200, { query, result });
     }
@@ -296,7 +302,7 @@ function createRequestHandler(options = {}) {
       }
 
       const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({
-        db, query, providerOverrides, fetchImpl: providerFetchImpl,
+        db, query, providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
       }));
       return sendJson(response, 200, { query, result });
     }
@@ -314,7 +320,7 @@ function createRequestHandler(options = {}) {
       }
 
       const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({
-        db, limit, batchSize, providerOverrides, fetchImpl: providerFetchImpl,
+        db, limit, batchSize, providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
       }));
       return sendJson(response, 200, { db: databasePath, result });
     }
@@ -346,10 +352,10 @@ function createRequestHandler(options = {}) {
       }
 
       const result = await withSearchDatabase(databasePath, async (db) => {
-        const retrievalQuery = createFtsQueryFromQuestion(query);
-        const evidenceRows = searchChunks(db, retrievalQuery, { limit: 12, bookId });
+        const evidenceRows = searchChunks(db, query, { limit: 12, bookId });
         return extractFactFromEvidence({
           db, bookId, factKey, factType, question: query, evidenceRows, providerOverrides, fetchImpl: providerFetchImpl,
+          signal: requestAbort.signal,
         });
       });
       return sendJson(response, 200, { query, result });

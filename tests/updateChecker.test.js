@@ -24,10 +24,10 @@ test('compareVersions follows SemVer prerelease precedence and ignores build met
 
 test('selectPlatformAssets chooses platform-specific desktop assets without hiding all downloads', () => {
   const releaseAssets = [
-    { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://example.test/linux' },
-    { name: 'books-selection-desktop-win-x64.exe', browser_download_url: 'https://example.test/win-exe' },
-    { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://example.test/win-zip' },
-    { name: 'books-selection-desktop-mac-x64.zip', browser_download_url: 'https://example.test/mac' },
+    { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-linux-x64.tar.gz' },
+    { name: 'books-selection-desktop-win-x64.exe', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-win-x64.exe' },
+    { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-win-x64.zip' },
+    { name: 'books-selection-desktop-mac-x64.zip', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-mac-x64.zip' },
   ];
 
   assert.equal(getAssetKind(releaseAssets[0].name), 'linuxTarGz');
@@ -43,6 +43,32 @@ test('selectPlatformAssets chooses platform-specific desktop assets without hidi
     'books-selection-desktop-mac-x64.zip',
   ]);
   assert.equal(selectPlatformAssets(releaseAssets, 'linux').all.length, 4);
+});
+
+test('checkForUpdates rejects release and asset URLs outside the expected GitHub repository', async () => {
+  const result = await checkForUpdates({
+    currentVersion: '0.3.4',
+    platform: 'win32',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          tag_name: 'v0.3.5',
+          html_url: 'https://attacker.example/download',
+          assets: [
+            { name: 'books-selection-desktop-win-x64.exe', browser_download_url: 'https://attacker.example/books-selection.exe' },
+            { name: 'renamed.exe', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/renamed.exe' },
+            { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-win-x64.zip' },
+          ],
+        };
+      },
+    }),
+  });
+
+  assert.equal(result.releaseUrl, 'https://github.com/web3blind/books-selection/releases/latest');
+  assert.deepEqual(result.assets.map((asset) => asset.name), ['books-selection-desktop-win-x64.zip']);
+  assert.deepEqual(result.allAssets.map((asset) => asset.name), ['books-selection-desktop-win-x64.zip']);
 });
 
 test('checkForUpdates returns latest release metadata through injectable fetch', async () => {
@@ -64,8 +90,8 @@ test('checkForUpdates returns latest release metadata through injectable fetch',
             published_at: '2026-07-20T00:00:00Z',
             body: 'Release notes',
             assets: [
-              { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://example.test/linux', size: 123 },
-              { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://example.test/win', size: 456 },
+              { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-linux-x64.tar.gz', size: 123 },
+              { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-win-x64.zip', size: 456 },
             ],
           };
         },

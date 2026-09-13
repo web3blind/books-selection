@@ -2,7 +2,7 @@ const { getApiKey, loadProviderConfig } = require('./providerConfig');
 const { createOpenAiCompatibleClient } = require('./providerClient');
 
 function assertEmbedding(value) {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
     throw new Error('Embedding must be an array of finite numbers.');
   }
 }
@@ -59,6 +59,15 @@ function parseEmbeddingJson(value) {
   return parsed;
 }
 
+function tryParseEmbeddingJson(value, expectedDimension) {
+  try {
+    const embedding = parseEmbeddingJson(value);
+    return embedding.length === expectedDimension ? embedding : null;
+  } catch {
+    return null;
+  }
+}
+
 function semanticSearchChunks(db, queryEmbedding, options = {}) {
   assertEmbedding(queryEmbedding);
 
@@ -69,6 +78,9 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
   }
 
   const limit = options.limit || 20;
+  const maxPerBook = Number.isInteger(options.maxPerBook) && options.maxPerBook > 0
+    ? options.maxPerBook
+    : null;
   const rows = db.prepare(`
     SELECT
       chunk_embeddings.chunk_id,
@@ -86,8 +98,10 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
       AND chunk_embeddings.content_hash = chunks.content_hash
   `).all(provider, model);
 
-  return rows
-    .map((row) => ({
+  const ranked = rows
+    .map((row) => ({ row, embedding: tryParseEmbeddingJson(row.embedding_json, queryEmbedding.length) }))
+    .filter((item) => item.embedding)
+    .map(({ row, embedding }) => ({
       chunk_id: row.chunk_id,
       book_id: row.book_id,
       chunk_index: row.chunk_index,
@@ -95,10 +109,21 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
       content_hash: row.content_hash,
       cycle_name: row.cycle_name,
       title: row.title,
-      score: cosineSimilarity(queryEmbedding, parseEmbeddingJson(row.embedding_json)),
+      score: cosineSimilarity(queryEmbedding, embedding),
     }))
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit);
+    .sort((left, right) => right.score - left.score);
+  if (!maxPerBook) return ranked.slice(0, limit);
+
+  const counts = new Map();
+  const diversified = [];
+  for (const row of ranked) {
+    const count = counts.get(row.book_id) || 0;
+    if (count >= maxPerBook) continue;
+    counts.set(row.book_id, count + 1);
+    diversified.push(row);
+    if (diversified.length >= limit) break;
+  }
+  return diversified;
 }
 
 function createEmbeddingSetup({ providerName, provider }) {
@@ -117,6 +142,7 @@ async function embedQueryIfConfigured({
   env = process.env,
   fetchImpl,
   providerClient,
+  signal,
 } = {}) {
   const trimmedQuery = String(query || '').trim();
   if (!trimmedQuery) {
@@ -145,7 +171,7 @@ async function embedQueryIfConfigured({
   }
 
   const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey, fetchImpl });
-  const embedding = await client.createEmbedding({ input: trimmedQuery });
+  const embedding = await client.createEmbedding({ input: trimmedQuery, signal });
 
   return {
     status: 'embedded',
@@ -155,8 +181,8 @@ async function embedQueryIfConfigured({
   };
 }
 
-async function semanticSearchIfConfigured({ db, query, providerOverrides = {}, env = process.env, fetchImpl, limit = 20 } = {}) {
-  const embeddingResult = await embedQueryIfConfigured({ query, providerOverrides, env, fetchImpl });
+async function semanticSearchIfConfigured({ db, query, providerOverrides = {}, env = process.env, fetchImpl, signal, limit = 20 } = {}) {
+  const embeddingResult = await embedQueryIfConfigured({ query, providerOverrides, env, fetchImpl, signal });
   if (embeddingResult.status !== 'embedded') {
     return {
       status: embeddingResult.status,

@@ -15,5 +15,7 @@ books-selection.config.json
 # Generated local SQLite databases and sidecar files anywhere in the repository.
 *.sqlite
 *.sqlite-*
+*.sqlite.backup-*
 *.db
 *.db-*
+*.db.backup-*

@@ -36,7 +36,7 @@ There are two Windows downloads:
 
 Both variants include the application files and do not require Node.js, npm, git, or neighboring project files. The folder zip is usually easier to copy to another computer, USB drive, or synced folder. The single exe is simpler when the user just wants one file to download and launch.
 
-Writable user data is created automatically on first run. Default Windows writable locations are managed by Electron/user settings, for example the app config and SQLite index are created under the user's app data area unless you choose another SQLite path in Settings.
+Writable user data is created automatically on first run. In v0.3.8 packaged Windows builds it lives in the `data` folder beside the portable app; earlier v0.3.7 profile data is copied there safely on first launch. Explicit path overrides and deliberately configured custom database paths remain unchanged.
 
 ### macOS
 
@@ -72,19 +72,24 @@ The renderer page does not get full Node.js access:
 7. Optionally configure OpenRouter or a local OpenAI-compatible provider.
 8. Save settings.
 9. On the main page, press **Load list**.
-10. Press **Prepare index for questions** when you want full-text Q&A.
-11. Enter a question and press **Find answer**.
+10. Press **Prepare local index** when you want full-text Q&A. This step stays on the device.
+11. If semantic search is needed, review the provider, destination, and chunk count, then explicitly consent and press **Prepare embeddings**. OpenRouter receives the book-text chunks used to build that cache; a local provider keeps them on your device.
+12. Enter a question and press **Find answer**.
 
 ## Writable data
 
 Default writable paths:
 
-- config: `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set;
-- sanitized provider network diagnostics: `~/.books-selection/logs/books-selection.log`, or `BOOKS_SELECTION_LOG_PATH` if set;
-- desktop SQLite index: Electron user-data directory, `data/books-selection.sqlite`, or `BOOKS_SELECTION_DB_PATH` if set;
-- source / npm mode SQLite index: project-local `data/books-selection.sqlite`, or `BOOKS_SELECTION_DB_PATH` if set.
+- packaged Windows desktop builds: `data/config.json`, `data/books-selection.sqlite`, and `data/books-selection.log` beside the portable application;
+- Windows folder ZIP: `data` is beside `Books Selection.exe` in the extracted folder;
+- Windows portable EXE: `data` is beside the downloaded portable EXE, not in Electron's temporary extraction directory;
+- packaged macOS/Linux and source/npm config: `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set;
+- packaged macOS/Linux SQLite index: the Electron user-data directory; source/npm SQLite index: project-local `data/books-selection.sqlite`; either can be overridden with `BOOKS_SELECTION_DB_PATH`;
+- diagnostics can be overridden with `BOOKS_SELECTION_LOG_PATH`.
 
-The config can contain a local API key if you enter it in Settings, so do not publish or commit your personal config file.
+On the first packaged Windows v0.3.8 launch, Books Selection copies the earlier user-profile config, SQLite database, and diagnostic log into the portable `data` folder when the destination files do not exist. SQLite is copied through its backup API and read back before use. Legacy files are retained as a fallback and existing portable files are never overwritten. A deliberately configured custom database path remains unchanged.
+
+The portable `data/config.json` can contain an API key entered in Settings. Keep the whole portable folder private and do not publish or commit its `data` directory.
 The diagnostic log records only the failed provider stage, endpoint, safe network error code, and API route. It does not record API keys, authorization headers, questions, prompts, excerpts, or response bodies. Desktop provider requests use Electron's Chromium network stack so they follow the desktop session's proxy and VPN routing.
 
 ## Current features
@@ -98,14 +103,14 @@ The diagnostic log records only the failed provider stage, endpoint, safe networ
 - Can hide folders without usable annotations or with read errors.
 - Has an in-app Settings page; no manual config editing is required.
 - Uses native folder selection in desktop builds.
-- Uses browser/fallback path behavior in normal browser mode.
+- In normal browser mode, asks for the filesystem path manually because browsers do not expose a reliable absolute folder path.
 - Builds a local SQLite FTS index for full-text search.
-- Caches embeddings in SQLite when an embeddings provider is configured.
+- Caches embeddings in SQLite only after a separate user-confirmed embeddings operation. OpenRouter embedding preparation can upload the selected corpus chunks; a local embeddings provider keeps them on the device.
 - Supports hybrid Ask mode over local FTS snippets, cached semantic hits, and cached derived facts.
 - Shows deterministic local candidate groups by series/book from the already retrieved evidence, without extra AI provider calls.
-- Sends only retrieved evidence snippets to the AI provider, not the full library.
+- Ask sends only retrieved evidence snippets to the answer provider. The separate, explicitly confirmed OpenRouter embeddings operation sends corpus chunks needed to build the semantic cache.
 - Supports OpenRouter and local OpenAI-compatible provider settings.
-- Guards OpenRouter calls with a configurable session spend limit; default is `$1`.
+- Guards OpenRouter calls with a configurable `$1` default soft stop threshold and bounded answer output. The threshold is checked before requests but is not a provider-enforced hard maximum.
 - If provider keys are missing, Ask returns local evidence/setup status instead of silently failing or calling the network.
 - Checks GitHub Releases on startup and shows a cross-platform update notification with Linux, Windows, and macOS download links.
 
@@ -187,7 +192,8 @@ Hermes transport is not included yet, so Hermes is not shown as a working provid
 
 - The app is local-first: your library index stays in your local SQLite file.
 - Real API keys must never be committed to git.
-- OpenRouter budget protection is checked before chat and embeddings requests.
+- OpenRouter's soft budget threshold is checked before chat and embeddings requests; configure a provider-side account/key cap when a hard maximum is required.
+- Release download links are restricted to this repository. Published checksums should be verified before running unsigned artifacts.
 - Windows SmartScreen and macOS Gatekeeper may warn because builds are not code-signed yet.
 
 ## License

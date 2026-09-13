@@ -2,6 +2,37 @@ const CURRENT_VERSION = require('../package.json').version;
 
 const RELEASES_API_URL = 'https://api.github.com/repos/web3blind/books-selection/releases/latest';
 const RELEASES_PAGE_URL = 'https://github.com/web3blind/books-selection/releases/latest';
+const EXPECTED_ASSET_NAMES = new Set([
+  'books-selection-desktop-linux-x64.tar.gz',
+  'books-selection-desktop-win-x64.exe',
+  'books-selection-desktop-win-x64.zip',
+  'books-selection-desktop-mac-x64.zip',
+]);
+
+function parseExpectedGitHubUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function isExpectedReleaseUrl(value) {
+  const url = parseExpectedGitHubUrl(value);
+  return Boolean(url && /^\/web3blind\/books-selection\/releases\/(?:latest|tag\/[^/]+)$/.test(url.pathname));
+}
+
+function isExpectedAssetUrl(value, assetName) {
+  const url = parseExpectedGitHubUrl(value);
+  return Boolean(
+    url
+    && EXPECTED_ASSET_NAMES.has(assetName)
+    && url.pathname.startsWith('/web3blind/books-selection/releases/download/')
+    && url.pathname.endsWith(`/${assetName}`)
+  );
+}
 
 function normalizeVersion(version) {
   return String(version || '').trim().replace(/^v/i, '').split('+', 1)[0];
@@ -63,10 +94,13 @@ function getAssetKind(filename) {
 }
 
 function normalizeAsset(asset) {
+  const name = String(asset.name || '');
+  const url = asset.browser_download_url || asset.url || '';
+  if (!isExpectedAssetUrl(url, name)) return null;
   return {
-    name: asset.name,
-    kind: getAssetKind(asset.name),
-    url: asset.browser_download_url || asset.url || '',
+    name,
+    kind: getAssetKind(name),
+    url,
     size: asset.size || 0,
   };
 }
@@ -79,7 +113,7 @@ function preferredKindsForPlatform(platform) {
 }
 
 function selectPlatformAssets(assets, platform) {
-  const normalized = assets.map(normalizeAsset).filter((asset) => asset.url);
+  const normalized = assets.map(normalizeAsset).filter(Boolean);
   const preferredKinds = preferredKindsForPlatform(platform);
   const preferred = normalized.filter((asset) => preferredKinds.includes(asset.kind));
   return {
@@ -124,7 +158,7 @@ async function checkForUpdates({
     latestVersion,
     hasUpdate,
     platform,
-    releaseUrl: latest.html_url || RELEASES_PAGE_URL,
+    releaseUrl: isExpectedReleaseUrl(latest.html_url) ? latest.html_url : RELEASES_PAGE_URL,
     releaseName: latest.name || latest.tag_name || '',
     publishedAt: latest.published_at || '',
     body: latest.body || '',

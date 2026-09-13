@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const { BOOK_STATUSES } = require('./constants');
-const { chunkText, readBookDocument } = require('./fb2');
+const { assertBookSourceSize, chunkText, readBookDocument } = require('./fb2');
 const { scanBooks } = require('./scan');
 
 function hashBuffer(buffer) {
@@ -11,15 +11,16 @@ function hashBuffer(buffer) {
 }
 
 async function getFileFingerprint(filePath) {
-  const [stat, buffer] = await Promise.all([
-    fs.stat(filePath),
-    fs.readFile(filePath),
-  ]);
+  const stat = await fs.stat(filePath);
+  assertBookSourceSize(filePath, stat.size);
+  const buffer = await fs.readFile(filePath);
 
   return {
     fileSize: stat.size,
     mtimeMs: Math.trunc(stat.mtimeMs),
     contentHash: hashBuffer(buffer),
+    buffer,
+    stat,
   };
 }
 
@@ -143,33 +144,48 @@ function insertChunks(db, bookId, chunks) {
 
 async function indexLibrary(db, rootPath, options = {}) {
   const indexedRoot = path.resolve(rootPath);
-  const scanResult = await scanBooks(indexedRoot);
+  const scanResult = await scanBooks(indexedRoot, { readInfo: false });
   const summary = { indexed: 0, skipped: 0, errors: 0, total: scanResult.length };
   const presentFilePaths = new Set();
+  const preparedBooks = [];
+
+  for (const item of scanResult) {
+    if (item.fileName) {
+      presentFilePaths.add(path.resolve(indexedRoot, item.folderName, item.fileName));
+    }
+    if (item.status !== BOOK_STATUSES.OK) {
+      summary.errors += 1;
+      continue;
+    }
+
+    const folderPath = path.join(indexedRoot, item.folderName);
+    const filePath = path.join(folderPath, item.fileName);
+    try {
+      const fingerprint = await getFileFingerprint(filePath);
+      const existing = getExistingBook(db, filePath);
+      if (isUnchanged(existing, fingerprint)) {
+        preparedBooks.push({ unchanged: true, existing });
+        continue;
+      }
+      const document = await readBookDocument(filePath, {
+        buffer: fingerprint.buffer,
+        stat: fingerprint.stat,
+      });
+      preparedBooks.push({ item, folderPath, filePath, fingerprint, document, existing });
+    } catch {
+      summary.errors += 1;
+    }
+  }
 
   db.exec('BEGIN');
   try {
-    for (const item of scanResult) {
-      if (item.fileName) {
-        presentFilePaths.add(path.resolve(indexedRoot, item.folderName, item.fileName));
-      }
-      if (item.status !== BOOK_STATUSES.OK) {
-        summary.errors += 1;
-        continue;
-      }
-
-      const folderPath = path.join(indexedRoot, item.folderName);
-      const filePath = path.join(folderPath, item.fileName);
-      const fingerprint = await getFileFingerprint(filePath);
-      const existing = getExistingBook(db, filePath);
-
-      if (isUnchanged(existing, fingerprint)) {
-        db.prepare('UPDATE books SET indexed_root = ? WHERE id = ?').run(indexedRoot, existing.id);
+    for (const prepared of preparedBooks) {
+      if (prepared.unchanged) {
+        db.prepare('UPDATE books SET indexed_root = ? WHERE id = ?').run(indexedRoot, prepared.existing.id);
         summary.skipped += 1;
         continue;
       }
-
-      const document = await readBookDocument(filePath);
+      const { item, folderPath, filePath, fingerprint, document } = prepared;
       const bookId = upsertBook(db, {
         cycleName: item.folderName,
         folderPath,
@@ -181,7 +197,6 @@ async function indexLibrary(db, rootPath, options = {}) {
         annotation: document.annotation,
         indexedRoot,
       });
-
       invalidateBookDerivedData(db, bookId);
       deleteChunksForBook(db, bookId);
       insertChunks(db, bookId, chunkText(document.bodyText, options.chunkOptions));
@@ -199,11 +214,19 @@ async function indexLibrary(db, rootPath, options = {}) {
   return summary;
 }
 
+function toSafeFtsQuery(query) {
+  return (String(query || '').match(/[\p{L}\p{N}_]+/gu) || [])
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(' OR ');
+}
+
 function searchChunks(db, query, options = {}) {
+  const ftsQuery = toSafeFtsQuery(query);
+  if (!ftsQuery) return [];
   const limit = options.limit || 20;
   const bookId = options.bookId;
   const whereBook = bookId === undefined ? '' : ' AND books.id = ?';
-  const params = bookId === undefined ? [query, limit] : [query, bookId, limit];
+  const params = bookId === undefined ? [ftsQuery, limit] : [ftsQuery, bookId, limit];
   const rows = db.prepare(`
     SELECT
       books.id AS book_id,

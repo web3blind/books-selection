@@ -41,13 +41,19 @@ async function fetchOpenRouterCredits({ provider, apiKey, fetchImpl }) {
     headers: {
       authorization: `Bearer ${apiKey}`,
     },
-  }, 'OpenRouter credits check');
+  }, 'OpenRouter credits check', {
+    timeoutMs: provider.requestTimeoutMs,
+    maxResponseBytes: provider.maxResponseBytes,
+  });
 
   if (!response.ok) {
     throw new Error(`OpenRouter budget check failed with HTTP ${response.status}`);
   }
 
-  return parseCreditsPayload(await readJsonWithProviderContext(response, creditsUrl, 'OpenRouter credits response'));
+  return parseCreditsPayload(await readJsonWithProviderContext(response, creditsUrl, 'OpenRouter credits response', {
+    timeoutMs: provider.requestTimeoutMs,
+    maxResponseBytes: provider.maxResponseBytes,
+  }));
 }
 
 async function checkProviderBudget({
@@ -95,6 +101,8 @@ async function checkProviderBudget({
 
   return {
     status: 'ok',
+    enforcement: 'soft_stop_after_threshold',
+    requestReservationUsd: null,
     provider: 'openrouter',
     totalCredits: credits.totalCredits,
     totalUsage: credits.totalUsage,

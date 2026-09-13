@@ -76,6 +76,68 @@ test('indexLibrary stores a scanned FB2 book, writes chunks, and makes body text
   }
 });
 
+test('indexLibrary reads each changed plain FB2 file only once', async () => {
+  const root = await createTempRoot();
+  const filePath = await writeSampleBook(root);
+  const db = initializeSearchDatabase(':memory:');
+  const originalReadFile = fs.readFile;
+  let reads = 0;
+  fs.readFile = async (...args) => {
+    if (path.resolve(String(args[0])) === path.resolve(filePath)) reads += 1;
+    return originalReadFile(...args);
+  };
+
+  try {
+    await indexLibrary(db, root);
+    assert.equal(reads, 1);
+  } finally {
+    fs.readFile = originalReadFile;
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('indexLibrary rejects oversized FB2 sources before reading their contents', async () => {
+  const root = await createTempRoot();
+  const folder = path.join(root, 'Oversized');
+  const filePath = path.join(folder, 'book.fb2');
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(filePath, 'x');
+  await fs.truncate(filePath, (64 * 1024 * 1024) + 1);
+  const originalReadFile = fs.readFile;
+  let sourceReads = 0;
+  fs.readFile = async (...args) => {
+    if (path.resolve(args[0]) === path.resolve(filePath)) sourceReads += 1;
+    return originalReadFile(...args);
+  };
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const result = await indexLibrary(db, root);
+    assert.equal(result.errors, 1);
+    assert.equal(sourceReads, 0);
+  } finally {
+    fs.readFile = originalReadFile;
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('searchChunks treats natural-language punctuation and FTS operators as plain terms without throwing', async () => {
+  const root = await createTempRoot();
+  await writeSampleBook(root);
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    await indexLibrary(db, root);
+
+    assert.equal(searchChunks(db, 'Где есть маяк?').length, 1);
+    assert.equal(searchChunks(db, '" OR * (').length, 0);
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('indexLibrary skips unchanged files while preserving stable book and chunk ids', async () => {
   const root = await createTempRoot();
   await writeSampleBook(root);

@@ -94,6 +94,53 @@ test('OpenAI-compatible provider client posts embeddings through injectable fetc
   assert.doesNotMatch(JSON.stringify(embedding), /secret-key/);
 });
 
+test('OpenAI-compatible provider client batches embedding inputs and restores provider index order', async () => {
+  let requestBody;
+  const client = createOpenAiCompatibleClient({
+    provider: {
+      baseUrl: 'https://example.test/v1',
+      model: 'chat-model',
+      embeddingModel: 'embedding-model',
+    },
+    apiKey: 'secret-key',
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { data: [
+            { index: 1, embedding: [0, 1] },
+            { index: 0, embedding: [1, 0] },
+          ] };
+        },
+      };
+    },
+  });
+
+  const embeddings = await client.createEmbeddings({ inputs: ['first', 'second'] });
+
+  assert.deepEqual(requestBody, { model: 'embedding-model', input: ['first', 'second'] });
+  assert.deepEqual(embeddings, [[1, 0], [0, 1]]);
+});
+
+test('OpenAI-compatible provider client rejects duplicate or mixed batch response indices', async () => {
+  const createClient = (data) => createOpenAiCompatibleClient({
+    provider: { baseUrl: 'https://example.test/v1', model: 'chat', embeddingModel: 'embed' },
+    apiKey: 'secret-key',
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data }) }),
+  });
+
+  await assert.rejects(
+    createClient([{ index: 0, embedding: [1] }, { index: 0, embedding: [2] }]).createEmbeddings({ inputs: ['a', 'b'] }),
+    /indices/i,
+  );
+  await assert.rejects(
+    createClient([{ index: 0, embedding: [1] }, { embedding: [2] }]).createEmbeddings({ inputs: ['a', 'b'] }),
+    /indices/i,
+  );
+});
+
 test('cosineSimilarity and semanticSearchChunks rank cached DB vectors locally', () => {
   const db = initializeSearchDatabase(':memory:');
 
@@ -118,6 +165,37 @@ test('cosineSimilarity and semanticSearchChunks rank cached DB vectors locally',
     assert.equal(results[0].chunk_index, 0);
     assert.equal(results[0].title, 'Vector Book');
     assert.ok(results[0].score > results[1].score);
+  } finally {
+    db.close();
+  }
+});
+
+test('semanticSearchChunks diversifies over the complete ranking rather than a dominant top window', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    for (let bookIndex = 0; bookIndex < 4; bookIndex += 1) {
+      const bookId = Number(db.prepare("INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status) VALUES (?, ?, ?, 1, 2, ?, ?, '', 'indexed')")
+        .run(`Cycle ${bookIndex}`, `/tmp/Cycle ${bookIndex}`, `/tmp/book-${bookIndex}.fb2`, `book-${bookIndex}`, `Book ${bookIndex}`).lastInsertRowid);
+      const chunkCount = bookIndex === 0 ? 20 : 1;
+      for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+        const hash = `hash-${bookIndex}-${chunkIndex}`;
+        const chunkId = Number(db.prepare('INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset) VALUES (?, ?, ?, ?, 0, 1)')
+          .run(bookId, chunkIndex, `text ${hash}`, hash).lastInsertRowid);
+        storeChunkEmbedding(db, {
+          chunkId,
+          provider: 'openrouter',
+          model: 'embed',
+          contentHash: hash,
+          embedding: bookIndex === 0 ? [1, 0] : [0.9, 0.1],
+        });
+      }
+    }
+
+    const results = semanticSearchChunks(db, [1, 0], {
+      provider: 'openrouter', model: 'embed', limit: 4, maxPerBook: 1,
+    });
+    assert.equal(results.length, 4);
+    assert.equal(new Set(results.map((row) => row.book_id)).size, 4);
   } finally {
     db.close();
   }
@@ -175,4 +253,20 @@ test('embedQueryIfConfigured uses mocked embeddings provider when key is configu
   assert.equal(result.provider, 'openrouter');
   assert.equal(result.model, 'openai/text-embedding-3-small');
   assert.deepEqual(result.embedding, [0.7, 0.2]);
+});
+
+test('semanticSearchChunks skips invalid JSON and vectors with a different query dimension', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = Number(db.prepare("INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status) VALUES ('Cycle', '/tmp', '/tmp/a.fb2', 1, 2, 'book', 'Book', '', 'indexed')").run().lastInsertRowid);
+    const insertChunk = db.prepare('INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset) VALUES (?, ?, ?, ?, 0, 1)');
+    const insertEmbedding = db.prepare("INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json) VALUES (?, 'openrouter', 'embed', ?, ?)");
+    for (const [index, json] of [[0, '[1,0]'], [1, '{bad'], [2, '[1,0,0]']]) {
+      const hash = `hash-${index}`;
+      const chunkId = Number(insertChunk.run(bookId, index, `text-${index}`, hash).lastInsertRowid);
+      insertEmbedding.run(chunkId, hash, json);
+    }
+    const results = semanticSearchChunks(db, [1, 0], { provider: 'openrouter', model: 'embed' });
+    assert.deepEqual(results.map((row) => row.chunk_index), [0]);
+  } finally { db.close(); }
 });

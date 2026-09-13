@@ -8,7 +8,6 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 test('index page exposes simplified accessible AI question flow without committed secrets', () => {
   const requiredMarkers = [
     'id="dbPath"',
-    'books-selection:last-db',
     'id="buildIndexButton"',
     'id="ftsQuestion"',
     '<textarea id="ftsQuestion"',
@@ -26,10 +25,15 @@ test('index page exposes simplified accessible AI question flow without committe
     'books-selection:skipped-update-version',
     'ai-processing-status',
     'renderAiProcessingStatus(result)',
-    'renderAiProcessingError(error.message)',
+    'renderAiProcessingError(message)',
     'renderCandidates(candidates)',
     'uncertaintyLabel',
     'result.uncertainty',
+    'result.citedEvidence',
+    'result.coverage',
+    'citedEvidenceHeading',
+    'coverageSummary',
+    '<details>',
     'setControlBusy(askButton, true)',
     'setControlBusy(askButton, false)',
     'Найденные варианты',
@@ -68,7 +72,7 @@ test('index page exposes simplified accessible AI question flow without committe
   }
 
   assert.ok(!html.includes('id="localSearchButton"'), 'question flow should not expose a separate local FTS search button');
-  assert.ok(!html.includes('id="embedIndexButton"'), 'question flow should not expose a separate semantic setup button');
+  assert.ok(html.includes('id="embedIndexButton"'), 'cloud embedding preparation must be a separate explicit action');
   assert.ok(!html.includes('settingsOpenrouterApiKeyEnv'), 'settings should collect API key directly instead of asking for env variable names');
   assert.ok(!html.includes('settingsLocalApiKeyEnv'), 'local settings should collect API key directly instead of asking for env variable names');
   assert.ok(!html.includes('<option value="hermes">'), 'Hermes must not be presented as working until its adapter exists');
@@ -76,7 +80,7 @@ test('index page exposes simplified accessible AI question flow without committe
     'mainViewButtonText', 'settingsViewButtonText', 'settingsTitleText', 'settingsIntroText',
     'settingsBooksRootLabel', 'settingsDbPathLabel', 'settingsActiveProviderLabel',
     'settingsEmbeddingProviderLabel', 'saveSettingsButtonText', 'settingsSaved',
-    'uncertaintyLabel',
+    'uncertaintyLabel', 'citedEvidenceHeading', 'coverageSummary',
   ]) {
     assert.ok(html.includes(`${key}:`), `missing localized UI key: ${key}`);
   }
@@ -84,4 +88,68 @@ test('index page exposes simplified accessible AI question flow without committe
   assert.ok(!html.includes('Optional: prepare semantic embeddings'), 'EN UI should not expose semantic setup as a separate button');
   assert.ok(!html.includes('sk-'), 'index.html must not contain API-key looking values');
   assert.ok(!html.includes('OPENROUTER_API_KEY='), 'index.html must not contain secret assignment examples');
+});
+
+test('UI keeps filesystem paths in saved config instead of browser URL or storage', () => {
+  assert.ok(!html.includes('webkitdirectory'));
+  assert.ok(!html.includes('id="folderPicker"'));
+  assert.ok(!html.includes('guessRootFromFiles'));
+  assert.ok(!html.includes("books-selection:last-root"));
+  assert.ok(!html.includes("queryParams.get('root')"));
+  assert.ok(!html.includes("searchParams.set('root'"));
+  assert.ok(html.includes('manualPathRequired'));
+});
+
+test('settings exposes an accessible required books-path error and cannot announce false success', () => {
+  assert.ok(html.includes('id="settingsBooksRoot"'));
+  assert.ok(html.includes('required aria-describedby="settingsBooksRootError"'));
+  assert.ok(html.includes('id="settingsBooksRootError"'));
+  assert.ok(html.includes("setAttribute('aria-invalid', 'true')"));
+  assert.ok(html.includes('settingsFields.booksRoot.focus()'));
+  assert.ok(html.includes('if (!data.isConfigured)'));
+  assert.ok(html.includes("throw new Error(t('booksRootRequired'))"));
+});
+
+test('local FTS preparation is separate from informed cloud embedding consent', () => {
+  for (const marker of [
+    'id="buildIndexButton"',
+    'id="embedIndexButton"',
+    'id="embeddingConsent"',
+    'id="embeddingConsentDetails"',
+    'buildLocalIndex',
+    'prepareEmbeddings',
+    'embeddingDestination',
+    'embeddingChunkCount',
+    'embeddingConsentRequired',
+  ]) assert.ok(html.includes(marker), `missing embedding consent marker: ${marker}`);
+  assert.ok(html.includes('Up to 1000 text snippets'));
+  assert.ok(html.includes('До 1000 текстовых фрагментов'));
+  assert.equal(html.split("fetchJson('/api/embed-index'").length - 1, 1);
+  assert.ok(!html.includes('while (semanticResult.remaining > 0)'));
+  assert.ok(!html.includes('storageKey'));
+});
+
+test('primary controls and results are inside the main landmark', () => {
+  const mainStart = html.indexOf('<main id="appMain"');
+  const mainEnd = html.indexOf('</main>');
+  assert.ok(mainStart >= 0 && mainEnd > mainStart);
+  for (const id of ['pickFolderButton', 'loadButton', 'reloadButton', 'search', 'buildIndexButton', 'askButton', 'results']) {
+    const position = html.indexOf(`id="${id}"`);
+    assert.ok(position > mainStart && position < mainEnd, `${id} must be inside main`);
+  }
+  assert.ok(html.includes('<section id="results"'));
+});
+
+test('operational copy, placeholders, consent, and update authenticity guidance are localized', () => {
+  for (const key of [
+    'languageLabel', 'settingsBooksRootPlaceholder', 'settingsDbPathPlaceholder',
+    'openrouterApiKeyPlaceholder', 'manualPathRequired', 'booksRootRequired',
+    'embeddingDestination', 'embeddingChunkCount', 'embeddingConsentRequired',
+    'updateAuthenticityGuidance', 'localIndexing', 'localIndexReady',
+  ]) {
+    const occurrences = html.split(`${key}:`).length - 1;
+    assert.equal(occurrences, 2, `${key} must exist in RU and EN`);
+  }
+  assert.ok(html.includes('checksums'));
+  assert.ok(!html.includes('cryptographically signed'));
 });

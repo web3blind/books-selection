@@ -18,6 +18,8 @@
     .book h2 { font-size: 1.1rem; margin: 0 0 8px; }
     .muted { color: #555; }
     .error { color: #8a1f11; }
+    .field-error { color: #8a1f11; margin: -8px 0 12px; }
+    .consent { border-left: 4px solid #8a6d1f; padding-left: 12px; margin: 12px 0; }
     .ai-processing-status { border: 1px solid #ccc; border-radius: 6px; padding: 8px; margin: 8px 0 16px; }
     .ai-processing-status.ok { border-color: #276738; }
     .ai-processing-status.warn { border-color: #8a6d1f; }
@@ -29,7 +31,7 @@
 </head>
 <body>
   <div class="toolbar">
-    <label for="languageSelect">Language</label>
+    <label id="languageLabel" for="languageSelect">Language</label>
     <select id="languageSelect" aria-label="Language">
       <option value="en">English</option>
       <option value="ru">Русский</option>
@@ -44,6 +46,7 @@
     <button id="settingsViewButton" type="button">Настройки</button>
   </nav>
 
+  <main id="appMain">
   <section id="updateBanner" class="update-banner" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="updateBannerTitle" hidden>
     <h2 id="updateBannerTitle">Доступна новая версия</h2>
     <p id="updateBannerMessage"></p>
@@ -62,7 +65,8 @@
     <div class="actions">
       <button id="settingsPickBooksRootButton" type="button">Выбрать папку книг</button>
     </div>
-    <input id="settingsBooksRoot" type="text" autocomplete="off" placeholder="Например: /home/denis/Книги">
+    <input id="settingsBooksRoot" type="text" autocomplete="off" placeholder="Например: /home/denis/Книги" required aria-describedby="settingsBooksRootError">
+    <p id="settingsBooksRootError" class="field-error" role="alert" hidden></p>
 
     <label id="settingsDbPathLabel" for="settingsDbPath">Путь к SQLite базе</label>
     <input id="settingsDbPath" type="text" autocomplete="off" placeholder="Например: /home/denis/books-selection.sqlite">
@@ -123,10 +127,7 @@
 
   <p id="fallbackText" class="meta">Папка книг берётся из настроек. Если нужно изменить путь, открой раздел «Настройки».</p>
 
-  <label id="rootLabel" for="root" hidden>Путь к папке книг</label>
   <input id="root" name="root" type="hidden">
-
-  <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
 
   <label id="searchLabel" for="search">Поиск по папке, названию и аннотации</label>
   <input id="search" name="search" type="text" placeholder="Например: попаданец, гоблины, клан">
@@ -143,7 +144,21 @@
     <input id="dbPath" name="dbPath" type="hidden">
 
     <div class="actions">
-      <button id="buildIndexButton" type="button">Подготовить индекс для вопросов</button>
+      <button id="buildIndexButton" type="button">Подготовить локальный индекс</button>
+    </div>
+
+    <div id="embeddingConsentPanel" class="consent">
+      <p id="embeddingConsentDetails">Передача в облако отключена до отдельного согласия.</p>
+      <ul>
+        <li><span id="embeddingProviderLabel">Provider:</span> <strong id="embeddingProvider">—</strong></li>
+        <li><span id="embeddingDestinationLabel">Назначение:</span> <strong id="embeddingDestination">—</strong></li>
+        <li><span id="embeddingChunkCountLabel">Объём:</span> <strong id="embeddingChunkCount">До 1000 текстовых фрагментов за запуск</strong></li>
+      </ul>
+      <label><input id="embeddingConsent" type="checkbox" aria-describedby="embeddingConsentDetails"> <span id="embeddingConsentLabel">Я понимаю, какие данные и куда будут отправлены, и согласен на этот запуск.</span></label>
+      <div class="actions">
+        <button id="embedIndexButton" type="button">Подготовить embeddings</button>
+        <button id="cancelProviderButton" type="button" hidden>Отменить операцию</button>
+      </div>
     </div>
 
     <label id="ftsQuestionLabel" for="ftsQuestion">Вопрос по циклам</label>
@@ -158,8 +173,9 @@
   </section>
 
   <div id="status" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
-  <main id="results"></main>
+  <section id="results" aria-label="Результаты"></section>
   </section>
+  </main>
 
   <script>
     const languageSelect = document.getElementById('languageSelect');
@@ -193,7 +209,6 @@
     const pageTitle = document.getElementById('pageTitle');
     const introText = document.getElementById('introText');
     const fallbackText = document.getElementById('fallbackText');
-    const rootLabel = document.getElementById('rootLabel');
     const rootInput = document.getElementById('root');
     const searchLabel = document.getElementById('searchLabel');
     const searchInput = document.getElementById('search');
@@ -202,6 +217,12 @@
     const dbPathLabel = document.getElementById('dbPathLabel');
     const dbPathInput = document.getElementById('dbPath');
     const buildIndexButton = document.getElementById('buildIndexButton');
+    const embedIndexButton = document.getElementById('embedIndexButton');
+    const cancelProviderButton = document.getElementById('cancelProviderButton');
+    const embeddingConsent = document.getElementById('embeddingConsent');
+    const embeddingProvider = document.getElementById('embeddingProvider');
+    const embeddingDestination = document.getElementById('embeddingDestination');
+    const embeddingChunkCount = document.getElementById('embeddingChunkCount');
     const ftsQuestionLabel = document.getElementById('ftsQuestionLabel');
     const ftsQuestionInput = document.getElementById('ftsQuestion');
     const askButton = document.getElementById('askButton');
@@ -210,7 +231,6 @@
     const pickFolderButton = document.getElementById('pickFolderButton');
     const loadButton = document.getElementById('loadButton');
     const reloadButton = document.getElementById('reloadButton');
-    const folderPicker = document.getElementById('folderPicker');
     const showReadyOnlyInput = document.getElementById('showReadyOnly');
     const showReadyOnlyText = document.getElementById('showReadyOnlyText');
     const statusNode = document.getElementById('status');
@@ -222,44 +242,35 @@
     const updateLaterButton = document.getElementById('updateLaterButton');
     const updateSkipButton = document.getElementById('updateSkipButton');
 
-    const storageKey = 'books-selection:last-root';
-    const dbStorageKey = 'books-selection:last-db';
     const languageKey = 'books-selection:language';
     const skippedUpdateKey = 'books-selection:skipped-update-version';
     const queryParams = new URLSearchParams(location.search);
-    const queryRoot = queryParams.get('root') || '';
     const queryLang = queryParams.get('lang') || '';
-    const savedRoot = localStorage.getItem(storageKey) || '';
-    const savedDbPath = localStorage.getItem(dbStorageKey) || '';
     const savedLanguage = localStorage.getItem(languageKey) || 'en';
-
-    if (queryRoot) {
-      rootInput.value = queryRoot;
-    } else if (savedRoot) {
-      rootInput.value = savedRoot;
-    }
-
-    if (savedDbPath) {
-      dbPathInput.value = savedDbPath;
-    }
+    let activeProviderController = null;
 
     const messages = {
       ru: {
+        languageLabel: 'Язык',
         mainNavLabel: 'Основные разделы',
         mainViewButtonText: 'Главная',
         settingsViewButtonText: 'Настройки',
         settingsTitleText: 'Настройки',
         settingsIntroText: 'Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.',
         settingsBooksRootLabel: 'Путь к папке книг',
+        settingsBooksRootPlaceholder: 'Например: /home/denis/Книги',
         settingsDbPathLabel: 'Путь к SQLite базе',
+        settingsDbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
+        booksRootRequired: 'Укажи путь к папке книг.',
         settingsActiveProviderLabel: 'Provider для ответов',
         settingsEmbeddingProviderLabel: 'Provider для semantic embeddings',
         openrouterBaseUrlLabel: 'Base URL OpenRouter',
         openrouterModelLabel: 'Модель для ответов',
         openrouterEmbeddingModelLabel: 'Модель embeddings',
         openrouterApiKeyLabel: 'API key OpenRouter',
+        openrouterApiKeyPlaceholder: 'Вставь отдельный API key OpenRouter',
         clearApiKeyLabel: 'Удалить сохранённый API key',
-        openrouterBudgetLabel: 'Лимит расходов OpenRouter в долларах',
+        openrouterBudgetLabel: 'Мягкий порог остановки OpenRouter в долларах (не гарантирует жёсткий максимум)',
         localProviderLegend: 'Локальный OpenAI-совместимый provider',
         localBaseUrlLabel: 'Локальный Base URL',
         localModelLabel: 'Локальная модель для ответов',
@@ -274,6 +285,7 @@
         pickFolderButton: 'Выбрать папку книг',
         settingsPickBooksRootButton: 'Выбрать папку книг',
         nativePickerUnavailable: 'Нативный выбор папки доступен в desktop-приложении. В браузере укажи путь в настройках вручную.',
+        manualPathRequired: 'Браузер не передаёт приложению надёжный полный путь. Введи путь вручную в настройках.',
         loadButton: 'Загрузить список',
         reloadButton: 'Обновить',
         fallbackText: 'Папка книг берётся из настроек. Если нужно изменить путь, открой раздел «Настройки».',
@@ -283,10 +295,23 @@
         searchPlaceholder: 'Например: попаданец, гоблины, клан',
         showReadyOnly: 'Показывать только книги с аннотацией и без ошибок',
         aiSearchTitle: 'Вопрос по циклам',
-        aiSearchIntro: 'Сначала одной кнопкой подготовь локальный индекс и семантический кэш. Потом задай вопрос по циклам и нажми «Найти ответ».',
+        aiSearchIntro: 'Локальный FTS-индекс создаётся без передачи книг в интернет. Embeddings запускаются отдельно: перед каждым облачным запуском нужно подтвердить provider, адрес назначения и объём данных.',
         dbPathLabel: 'SQLite база берётся из настроек.',
         dbPathPlaceholder: 'Например: /home/denis/books-selection.sqlite',
-        buildIndexButton: 'Подготовить индекс для вопросов',
+        buildIndexButton: 'Подготовить локальный индекс',
+        localIndexing: 'Готовлю локальный FTS-индекс. Текст книг остаётся на этом устройстве.',
+        localIndexReady: 'Локальный FTS-индекс готов. Данные не отправлялись provider.',
+        embedIndexButton: 'Подготовить embeddings',
+        cancelProviderButton: 'Отменить операцию',
+        providerCancelled: 'Операция отменена.',
+        embeddingConsentDetails: 'Embeddings — отдельная операция. Локальный provider работает на этом устройстве; OpenRouter получает выбранные текстовые фрагменты через интернет.',
+        embeddingProviderLabel: 'Provider:',
+        embeddingDestinationLabel: 'Назначение:',
+        embeddingChunkCountLabel: 'Объём:',
+        embeddingChunkCount: 'До 1000 текстовых фрагментов за запуск',
+        embeddingConsentLabel: 'Я понимаю, какие данные и куда будут отправлены, и согласен на этот запуск.',
+        embeddingDestination: (provider, destination) => provider === 'local' ? `Локальное устройство (${destination})` : `Облако OpenRouter (${destination})`,
+        embeddingConsentRequired: 'Подтверди provider, назначение и объём данных для этого запуска.',
         ftsQuestionLabel: 'Вопрос по циклам',
         ftsQuestionPlaceholder: 'Например: найди цикл, где герои любят друг друга, действуют вместе и оба живы в финале',
         askButton: 'Найти ответ',
@@ -297,7 +322,10 @@
         indexDone: (result) => `Индекс готов: обработано ${result.total}, обновлено ${result.indexed}, пропущено ${result.skipped}, ошибок ${result.errors}.`,
         semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
           ? `Базовый индекс готов. Настрой provider ${result.setup.provider} для семантического поиска. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
-          : `Индекс и semantic cache готовы: embedded ${result.embedded}, пропущено ${result.skipped}, осталось ${result.remaining}.`,
+          : result.remaining > 0
+            ? `Пакет готов: добавлено ${result.embedded}, осталось ${result.remaining}. Чтобы отправить следующий пакет, снова подтверди согласие.`
+            : `Индекс и semantic cache полностью готовы: добавлено ${result.embedded}, ранее готово ${result.skipped}, осталось 0.`,
+        semanticIndexStalled: (remaining) => `Не удалось завершить semantic cache. Осталось фрагментов: ${remaining}. Повтори подготовку индекса.`,
         askDone: 'Ответ готов.',
         aiProcessingStatusHeading: 'Статус ИИ',
         aiProcessed: 'Удалось обработать через ИИ: да. Ответ ниже получен от настроенного AI provider.',
@@ -305,13 +333,15 @@
         aiProcessingError: (message) => `Удалось обработать через ИИ: нет. Ошибка: ${message}`,
         providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
         resultHeading: 'Результаты',
-        evidenceHeading: 'Доказательные фрагменты',
+        citedEvidenceHeading: 'Фрагменты, использованные в ответе',
+        evidenceHeading: 'Все найденные фрагменты',
         candidatesHeading: 'Найденные варианты',
         candidateEvidenceCount: (count) => `Доказательных фрагментов: ${count}`,
         candidateSources: (sources) => `Источники evidence: ${sources}`,
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Фрагмент ${chunkIndex}`,
         answerHeading: 'Ответ',
-        checkedHeading: 'Проверенные книги',
+        checkedHeading: 'Книги, представленные в найденных фрагментах',
+        coverageSummary: (coverage) => `Охват поиска: ${coverage.representedCycles} из ${coverage.totalCycles ?? '?'} циклов, ${coverage.representedBooks} из ${coverage.totalBooks ?? '?'} книг, найдено фрагментов: ${coverage.retrievedChunks}.`,
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Уверенность:',
         uncertaintyLabel: 'Неопределённость:',
@@ -336,25 +366,31 @@
         updateAvailableMessage: (current, latest) => `Доступна новая версия ${latest}. Сейчас установлена ${current}. Выбери подходящий файл для своей системы.`,
         updateDownloadAsset: (name) => `Скачать ${name}`,
         updateOpenRelease: 'Открыть страницу релиза',
+        updateAuthenticityGuidance: 'Скачивай файлы только из этого GitHub-релиза и сверяй SHA-256 checksums, если они опубликованы. Релиз не имеет цифровой подписи.',
         updateLater: 'Напомнить позже',
         updateSkip: 'Не показывать эту версию'
       },
       en: {
+        languageLabel: 'Language',
         mainNavLabel: 'Main sections',
         mainViewButtonText: 'Main',
         settingsViewButtonText: 'Settings',
         settingsTitleText: 'Settings',
         settingsIntroText: 'Configure the books folder, SQLite database, providers, models, API keys, and the OpenRouter limit here.',
         settingsBooksRootLabel: 'Books folder path',
+        settingsBooksRootPlaceholder: 'For example: /home/denis/Books',
         settingsDbPathLabel: 'SQLite database path',
+        settingsDbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
+        booksRootRequired: 'Enter the books folder path.',
         settingsActiveProviderLabel: 'Answer provider',
         settingsEmbeddingProviderLabel: 'Semantic embeddings provider',
         openrouterBaseUrlLabel: 'OpenRouter base URL',
         openrouterModelLabel: 'Answer model',
         openrouterEmbeddingModelLabel: 'Embedding model',
         openrouterApiKeyLabel: 'OpenRouter API key',
+        openrouterApiKeyPlaceholder: 'Paste a dedicated OpenRouter API key',
         clearApiKeyLabel: 'Delete saved API key',
-        openrouterBudgetLabel: 'OpenRouter spending limit in dollars',
+        openrouterBudgetLabel: 'OpenRouter soft stop threshold in dollars (not a guaranteed hard maximum)',
         localProviderLegend: 'Local OpenAI-compatible provider',
         localBaseUrlLabel: 'Local base URL',
         localModelLabel: 'Local answer model',
@@ -369,6 +405,7 @@
         pickFolderButton: 'Choose books folder',
         settingsPickBooksRootButton: 'Choose books folder',
         nativePickerUnavailable: 'Native folder selection is available in the desktop app. In the browser, enter the path manually in Settings.',
+        manualPathRequired: 'Browsers do not provide a reliable full filesystem path. Enter the path manually in Settings.',
         loadButton: 'Load list',
         reloadButton: 'Reload',
         fallbackText: 'The books folder is loaded from Settings. To change it, open Settings.',
@@ -378,10 +415,23 @@
         searchPlaceholder: 'For example: goblins, clan, portal fantasy',
         showReadyOnly: 'Show only books with annotations and without errors',
         aiSearchTitle: 'Question about series',
-        aiSearchIntro: 'First prepare the local index and semantic cache with one button. Then enter a question about series and press “Find answer”.',
+        aiSearchIntro: 'The local FTS index is built without sending books to the internet. Embeddings are separate: before each cloud run you must confirm the provider, destination, and amount of data.',
         dbPathLabel: 'SQLite database is loaded from Settings.',
         dbPathPlaceholder: 'For example: /home/denis/books-selection.sqlite',
-        buildIndexButton: 'Prepare index for questions',
+        buildIndexButton: 'Prepare local index',
+        localIndexing: 'Preparing the local FTS index. Book text stays on this device.',
+        localIndexReady: 'Local FTS index is ready. No data was sent to a provider.',
+        embedIndexButton: 'Prepare embeddings',
+        cancelProviderButton: 'Cancel operation',
+        providerCancelled: 'Operation cancelled.',
+        embeddingConsentDetails: 'Embeddings are a separate operation. A local provider runs on this device; OpenRouter receives selected text snippets over the internet.',
+        embeddingProviderLabel: 'Provider:',
+        embeddingDestinationLabel: 'Destination:',
+        embeddingChunkCountLabel: 'Amount:',
+        embeddingChunkCount: 'Up to 1000 text snippets per run',
+        embeddingConsentLabel: 'I understand what data will be sent and where, and consent to this run.',
+        embeddingDestination: (provider, destination) => provider === 'local' ? `This device (${destination})` : `OpenRouter cloud (${destination})`,
+        embeddingConsentRequired: 'Confirm the provider, destination, and amount of data for this run.',
         ftsQuestionLabel: 'Question about series',
         ftsQuestionPlaceholder: 'For example: find a series where the heroes love each other, act together, and both survive the finale',
         askButton: 'Find answer',
@@ -392,7 +442,10 @@
         indexDone: (result) => `Index ready: processed ${result.total}, updated ${result.indexed}, skipped ${result.skipped}, errors ${result.errors}.`,
         semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
           ? `The base index is ready. Configure provider ${result.setup.provider} for semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
-          : `Index and semantic cache are ready: embedded ${result.embedded}, skipped ${result.skipped}, remaining ${result.remaining}.`,
+          : result.remaining > 0
+            ? `Batch complete: embedded ${result.embedded}, remaining ${result.remaining}. Confirm consent again before sending the next batch.`
+            : `Index and semantic cache are complete: added ${result.embedded}, already ready ${result.skipped}, remaining 0.`,
+        semanticIndexStalled: (remaining) => `The semantic cache could not be completed. Remaining snippets: ${remaining}. Run index preparation again.`,
         askDone: 'Answer ready.',
         aiProcessingStatusHeading: 'AI status',
         aiProcessed: 'Processed through AI: yes. The answer below came from the configured AI provider.',
@@ -400,13 +453,15 @@
         aiProcessingError: (message) => `Processed through AI: no. Error: ${message}`,
         providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
         resultHeading: 'Results',
-        evidenceHeading: 'Evidence snippets',
+        citedEvidenceHeading: 'Snippets used in the answer',
+        evidenceHeading: 'All retrieved snippets',
         candidatesHeading: 'Found candidates',
         candidateEvidenceCount: (count) => `Evidence snippets: ${count}`,
         candidateSources: (sources) => `Evidence sources: ${sources}`,
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Snippet ${chunkIndex}`,
         answerHeading: 'Answer',
-        checkedHeading: 'Checked books',
+        checkedHeading: 'Books represented in retrieved evidence',
+        coverageSummary: (coverage) => `Search coverage: ${coverage.representedCycles} of ${coverage.totalCycles ?? '?'} series, ${coverage.representedBooks} of ${coverage.totalBooks ?? '?'} books, retrieved snippets: ${coverage.retrievedChunks}.`,
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Confidence:',
         uncertaintyLabel: 'Uncertainty:',
@@ -431,6 +486,7 @@
         updateAvailableMessage: (current, latest) => `Version ${latest} is available. You are using ${current}. Choose the download for your system.`,
         updateDownloadAsset: (name) => `Download ${name}`,
         updateOpenRelease: 'Open release page',
+        updateAuthenticityGuidance: 'Download only from this GitHub release and verify SHA-256 checksums when published. The release is not digitally signed.',
         updateLater: 'Remind me later',
         updateSkip: 'Do not show this version again'
       }
@@ -464,19 +520,25 @@
 
     function applyLanguage() {
       document.documentElement.lang = currentLanguage;
+      document.getElementById('languageLabel').textContent = t('languageLabel');
+      languageSelect.setAttribute('aria-label', t('languageLabel'));
       document.getElementById('mainNav').setAttribute('aria-label', t('mainNavLabel'));
       mainViewButton.textContent = t('mainViewButtonText');
       settingsViewButton.textContent = t('settingsViewButtonText');
       document.getElementById('settingsTitle').textContent = t('settingsTitleText');
       document.getElementById('settingsIntro').textContent = t('settingsIntroText');
       document.getElementById('settingsBooksRootLabel').textContent = t('settingsBooksRootLabel');
+      settingsFields.booksRoot.placeholder = t('settingsBooksRootPlaceholder');
       document.getElementById('settingsDbPathLabel').textContent = t('settingsDbPathLabel');
+      settingsFields.dbPath.placeholder = t('settingsDbPathPlaceholder');
+      document.getElementById('settingsBooksRootError').textContent = t('booksRootRequired');
       document.getElementById('settingsActiveProviderLabel').textContent = t('settingsActiveProviderLabel');
       document.getElementById('settingsEmbeddingProviderLabel').textContent = t('settingsEmbeddingProviderLabel');
       document.getElementById('settingsOpenrouterBaseUrlLabel').textContent = t('openrouterBaseUrlLabel');
       document.getElementById('settingsOpenrouterModelLabel').textContent = t('openrouterModelLabel');
       document.getElementById('settingsOpenrouterEmbeddingModelLabel').textContent = t('openrouterEmbeddingModelLabel');
       document.getElementById('settingsOpenrouterApiKeyLabel').textContent = t('openrouterApiKeyLabel');
+      settingsFields.openrouterApiKey.placeholder = t('openrouterApiKeyPlaceholder');
       document.getElementById('settingsClearOpenrouterApiKeyText').textContent = t('clearApiKeyLabel');
       document.getElementById('settingsOpenrouterBudgetLabel').textContent = t('openrouterBudgetLabel');
       document.getElementById('localProviderLegend').textContent = t('localProviderLegend');
@@ -493,8 +555,6 @@
       loadButton.textContent = t('loadButton');
       reloadButton.textContent = t('reloadButton');
       fallbackText.textContent = t('fallbackText');
-      rootLabel.textContent = t('rootLabel');
-      rootInput.placeholder = t('rootPlaceholder');
       searchLabel.textContent = t('searchLabel');
       searchInput.placeholder = t('searchPlaceholder');
       showReadyOnlyText.textContent = t('showReadyOnly');
@@ -503,6 +563,15 @@
       dbPathLabel.textContent = t('dbPathLabel');
       dbPathInput.placeholder = t('dbPathPlaceholder');
       buildIndexButton.textContent = t('buildIndexButton');
+      embedIndexButton.textContent = t('embedIndexButton');
+      cancelProviderButton.textContent = t('cancelProviderButton');
+      document.getElementById('embeddingConsentDetails').textContent = t('embeddingConsentDetails');
+      document.getElementById('embeddingProviderLabel').textContent = t('embeddingProviderLabel');
+      document.getElementById('embeddingDestinationLabel').textContent = t('embeddingDestinationLabel');
+      document.getElementById('embeddingChunkCountLabel').textContent = t('embeddingChunkCountLabel');
+      document.getElementById('embeddingConsentLabel').textContent = t('embeddingConsentLabel');
+      embeddingChunkCount.textContent = t('embeddingChunkCount');
+      updateEmbeddingDisclosure();
       ftsQuestionLabel.textContent = t('ftsQuestionLabel');
       ftsQuestionInput.placeholder = t('ftsQuestionPlaceholder');
       askButton.textContent = t('askButton');
@@ -533,6 +602,16 @@
       (settingsVisible ? settingsFields.booksRoot : loadButton).focus();
     }
 
+    function updateEmbeddingDisclosure() {
+      const providerName = settingsFields.activeEmbeddingsProvider.value || 'local';
+      const destination = providerName === 'local'
+        ? settingsFields.localBaseUrl.value.trim()
+        : settingsFields.openrouterBaseUrl.value.trim();
+      embeddingProvider.textContent = providerName === 'local' ? 'Local OpenAI-compatible' : 'OpenRouter';
+      embeddingDestination.textContent = t('embeddingDestination', providerName, destination || '—');
+      embeddingConsent.checked = false;
+    }
+
     function updateProviderFieldVisibility() {
       const usesOpenRouter = settingsFields.activeProvider.value === 'openrouter' || settingsFields.activeEmbeddingsProvider.value === 'openrouter';
       const usesLocal = settingsFields.activeProvider.value === 'local' || settingsFields.activeEmbeddingsProvider.value === 'local';
@@ -546,7 +625,7 @@
       settingsFields.booksRoot.value = config.booksRoot || '';
       settingsFields.dbPath.value = config.dbPath || '';
       settingsFields.activeProvider.value = config.activeProvider || 'openrouter';
-      settingsFields.activeEmbeddingsProvider.value = config.activeEmbeddingsProvider || 'openrouter';
+      settingsFields.activeEmbeddingsProvider.value = config.activeEmbeddingsProvider || 'local';
       settingsFields.openrouterBaseUrl.value = openrouter.baseUrl || '';
       settingsFields.openrouterModel.value = openrouter.model || '';
       settingsFields.openrouterEmbeddingModel.value = openrouter.embeddingModel || '';
@@ -562,6 +641,7 @@
       rootInput.value = config.booksRoot || rootInput.value;
       dbPathInput.value = config.dbPath || dbPathInput.value;
       updateProviderFieldVisibility();
+      updateEmbeddingDisclosure();
     }
 
     function collectSettingsForm() {
@@ -605,7 +685,25 @@
       }
     }
 
+    function validateBooksRoot() {
+      const errorNode = document.getElementById('settingsBooksRootError');
+      const valid = Boolean(settingsFields.booksRoot.value.trim());
+      if (valid) {
+        settingsFields.booksRoot.setAttribute('aria-invalid', 'false');
+      } else {
+        settingsFields.booksRoot.setAttribute('aria-invalid', 'true');
+      }
+      errorNode.textContent = t('booksRootRequired');
+      errorNode.hidden = valid;
+      if (!valid) settingsFields.booksRoot.focus();
+      return valid;
+    }
+
     async function saveSettings() {
+      if (!validateBooksRoot()) {
+        setSettingsStatus(t('booksRootRequired'));
+        return;
+      }
       setSettingsStatus(t('settingsSaving'));
       saveSettingsButton.disabled = true;
       try {
@@ -614,11 +712,12 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(collectSettingsForm()),
         });
+        if (!data.isConfigured) {
+          throw new Error(t('booksRootRequired'));
+        }
         fillSettingsForm(data.config || {});
         setSettingsStatus(t('settingsSaved', data.path));
-        if (data.isConfigured) {
-          showView('main');
-        }
+        showView('main');
       } catch (error) {
         setSettingsStatus(error.message);
       } finally {
@@ -660,7 +759,8 @@
         <a href="${escapeHtml(asset.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('updateDownloadAsset', formatAssetName(asset)))}</a>
       `).join('');
       updateBannerLinks.innerHTML = `${assetLinks}
-        <a href="${escapeHtml(update.releaseUrl || 'https://github.com/web3blind/books-selection/releases/latest')}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('updateOpenRelease'))}</a>`;
+        <a href="${escapeHtml(update.releaseUrl || 'https://github.com/web3blind/books-selection/releases/latest')}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('updateOpenRelease'))}</a>
+        <p class="muted">${escapeHtml(t('updateAuthenticityGuidance'))}</p>`;
       updateLaterButton.textContent = t('updateLater');
       updateSkipButton.textContent = t('updateSkip');
       updateSkipButton.onclick = () => {
@@ -700,18 +800,14 @@
     }
 
     function getDbPath() {
-      const dbPath = dbPathInput.value.trim();
-      if (dbPath) {
-        localStorage.setItem(dbStorageKey, dbPath);
-      }
-      return dbPath;
+      return dbPathInput.value.trim();
     }
 
     async function pickBooksRoot({ loadAfterPick = false } = {}) {
       try {
         const desktopApi = window.booksSelectionDesktop;
         if (desktopApi?.pickDirectory) {
-          const result = await desktopApi.pickDirectory();
+          const result = await desktopApi.pickDirectory(currentLanguage);
           if (result?.canceled) {
             setStatus(t('folderNotChosen'));
             setSettingsStatus(t('folderNotChosen'));
@@ -720,7 +816,6 @@
           if (result?.path) {
             settingsFields.booksRoot.value = result.path;
             rootInput.value = result.path;
-            localStorage.setItem(storageKey, result.path);
             setStatus(t('folderChosen', result.path));
             setSettingsStatus(t('folderChosen', result.path));
             if (loadAfterPick) await loadBooks();
@@ -813,9 +908,22 @@
       `;
     }
 
+    function renderEvidenceList(evidence) {
+      return `<ul>${evidence.map((item) => `
+        <li>
+          <strong>${escapeHtml(item.book || item.title || item.folder_name || 'Book')}</strong>
+          <div class="muted">${escapeHtml(item.cycle || item.cycle_name || item.folder_name || '')}</div>
+          <p class="muted">${escapeHtml(item.evidenceId ? `${item.evidenceId} · ${t('candidateExcerptLabel', item.source || 'evidence', item.chunkIndex ?? '')}` : '')}</p>
+          <p>${escapeHtml(item.excerpt || item.snippet || item.text || '')}</p>
+        </li>
+      `).join('') || `<li>${escapeHtml(t('nothingFound'))}</li>`}</ul>`;
+    }
+
     function renderAskResult(result) {
       const setup = result.setup || null;
       const evidence = result.evidence || [];
+      const citedEvidence = result.citedEvidence || [];
+      const coverage = result.coverage || null;
       const candidates = result.candidates || [];
       const checkedBooks = (result.checked && result.checked.books) || [];
       const answer = result.answer || result.message || '';
@@ -825,15 +933,13 @@
         ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
         ${result.confidence ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
         ${result.uncertainty ? `<p><strong>${escapeHtml(t('uncertaintyLabel'))}</strong> ${escapeHtml(result.uncertainty)}</p>` : ''}
+        ${coverage ? `<p>${escapeHtml(t('coverageSummary', coverage))}</p>` : ''}
+        ${citedEvidence.length > 0 ? `<h3>${escapeHtml(t('citedEvidenceHeading'))}</h3>${renderEvidenceList(citedEvidence)}` : ''}
         ${renderCandidates(candidates)}
-        <h3>${escapeHtml(t('evidenceHeading'))}</h3>
-        <ul>${evidence.map((item) => `
-          <li>
-            <strong>${escapeHtml(item.title || item.folder_name || item.book || 'Book')}</strong>
-            <div class="muted">${escapeHtml(item.cycle_name || item.folder_name || item.cycle || '')}</div>
-            <p>${escapeHtml(item.snippet || item.text || item.excerpt || '')}</p>
-          </li>
-        `).join('') || `<li>${escapeHtml(t('nothingFound'))}</li>`}</ul>
+        <details>
+          <summary>${escapeHtml(t('evidenceHeading'))} (${evidence.length})</summary>
+          ${renderEvidenceList(evidence)}
+        </details>
         <h3>${escapeHtml(t('checkedHeading'))}</h3>
         <ul>${checkedBooks.map((book) => `<li>${escapeHtml(book)}</li>`).join('') || `<li>${escapeHtml(t('nothingFound'))}</li>`}</ul>
       `;
@@ -889,29 +995,6 @@
       }).join('') || `<p>${escapeHtml(t('nothingFound'))}</p>`;
     }
 
-    function guessRootFromFiles(files) {
-      if (!files || files.length === 0) {
-        return '';
-      }
-
-      const first = files[0];
-      const relative = first.webkitRelativePath || first.name;
-      const parts = relative.split('/').filter(Boolean);
-
-      if (parts.length < 2) {
-        return '';
-      }
-
-      if (typeof first.path === 'string' && first.path) {
-        const suffix = relative.replaceAll('/', '\\');
-        if (first.path.endsWith(suffix)) {
-          return first.path.slice(0, first.path.length - suffix.length - 1);
-        }
-      }
-
-      return '';
-    }
-
     async function loadBooks() {
       const root = rootInput.value.trim();
       if (!root) {
@@ -932,15 +1015,10 @@
       }
 
       currentBooks = data.books;
-      localStorage.setItem(storageKey, root);
-      const pageUrl = new URL(location.href);
-      pageUrl.searchParams.set('root', root);
-      pageUrl.searchParams.set('lang', currentLanguage);
-      history.replaceState(null, '', pageUrl);
       renderBooks();
     }
 
-    async function buildIndex() {
+    async function buildLocalIndex() {
       const root = rootInput.value.trim();
       const dbPath = getDbPath();
       if (!root) {
@@ -952,38 +1030,64 @@
         return;
       }
 
-      setAiStatus(t('indexing'));
+      setAiStatus(t('localIndexing'));
       aiResultsNode.innerHTML = '';
       setControlBusy(buildIndexButton, true);
-      setControlBusy(askButton, true);
       try {
         const indexData = await fetchJson('/api/index', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ root, db: dbPath }),
         });
-        setAiStatus(t('indexDone', indexData.result));
-        const semanticData = await fetchJson('/api/embed-index', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ db: dbPath, limit: 100, batchSize: 16 }),
-        });
-        setAiStatus(t('semanticStepDone', semanticData.result));
+        setAiStatus(t('localIndexReady'));
         aiResultsNode.innerHTML = `
           <h3>${escapeHtml(t('resultHeading'))}</h3>
           <ul>
             <li>DB: ${escapeHtml(indexData.db)}</li>
             <li>Root: ${escapeHtml(indexData.root)}</li>
             <li>${escapeHtml(t('indexDone', indexData.result))}</li>
-            <li>${escapeHtml(t('semanticStepDone', semanticData.result))}</li>
-          </ul>
-          ${renderSetupStatus(semanticData.result.setup)}
-        `;
+          </ul>`;
       } catch (error) {
         setAiStatus(error.message);
       } finally {
         setControlBusy(buildIndexButton, false);
+      }
+    }
+
+    async function prepareEmbeddings() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setAiStatus(t('noDbPath'));
+        return;
+      }
+      if (!embeddingConsent.checked) {
+        setAiStatus(t('embeddingConsentRequired'));
+        embeddingConsent.focus();
+        return;
+      }
+
+      activeProviderController = new AbortController();
+      cancelProviderButton.hidden = false;
+      setControlBusy(embedIndexButton, true);
+      setControlBusy(askButton, true);
+      try {
+        const semanticData = await fetchJson('/api/embed-index', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, limit: 999, batchSize: 64 }),
+          signal: activeProviderController.signal,
+        });
+        const semanticResult = semanticData.result;
+        setAiStatus(t('semanticStepDone', semanticResult));
+        aiResultsNode.innerHTML = renderSetupStatus(semanticResult.setup);
+      } catch (error) {
+        setAiStatus(error.name === 'AbortError' ? t('providerCancelled') : error.message);
+      } finally {
+        activeProviderController = null;
+        cancelProviderButton.hidden = true;
+        setControlBusy(embedIndexButton, false);
         setControlBusy(askButton, false);
+        embeddingConsent.checked = false;
       }
     }
 
@@ -1001,6 +1105,8 @@
 
       setAiStatus(t('asking'));
       aiResultsNode.innerHTML = '';
+      activeProviderController = new AbortController();
+      cancelProviderButton.hidden = false;
       setControlBusy(askButton, true);
       setControlBusy(buildIndexButton, true);
       try {
@@ -1008,6 +1114,7 @@
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ q: query, db: dbPath }),
+          signal: activeProviderController.signal,
         });
         const result = data.result || {};
         if (result.status === 'needs_provider_key' && result.setup) {
@@ -1018,10 +1125,13 @@
         renderAskResult(result);
         aiResultsNode.focus();
       } catch (error) {
-        setAiStatus(error.message);
-        aiResultsNode.innerHTML = renderAiProcessingError(error.message);
+        const message = error.name === 'AbortError' ? t('providerCancelled') : error.message;
+        setAiStatus(message);
+        aiResultsNode.innerHTML = renderAiProcessingError(message);
         aiResultsNode.focus();
       } finally {
+        activeProviderController = null;
+        cancelProviderButton.hidden = true;
         setControlBusy(askButton, false);
         setControlBusy(buildIndexButton, false);
       }
@@ -1032,33 +1142,11 @@
         await pickBooksRoot({ loadAfterPick: true });
         return;
       }
-      if (window.showDirectoryPicker) {
-        setStatus(t('pickerHintModern'));
-      } else {
-        setStatus(t('pickerHintBasic'));
-      }
-      folderPicker.click();
+      showView('settings');
+      settingsFields.booksRoot.focus();
+      setSettingsStatus(t('manualPathRequired'));
     });
     settingsFields.pickBooksRoot.addEventListener('click', () => pickBooksRoot());
-
-    folderPicker.addEventListener('change', () => {
-      const files = [...folderPicker.files];
-      if (files.length === 0) {
-        setStatus(t('folderNotChosen'));
-        return;
-      }
-
-      const guessedRoot = guessRootFromFiles(files);
-      if (guessedRoot) {
-        rootInput.value = guessedRoot;
-        setStatus(t('folderChosen', guessedRoot));
-        loadBooks();
-        return;
-      }
-
-      const topLevelName = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
-      setStatus(t('folderChosenNoPath', topLevelName));
-    });
 
     mainViewButton.addEventListener('click', () => showView('main'));
     settingsViewButton.addEventListener('click', () => showView('settings'));
@@ -1067,7 +1155,9 @@
     settingsFields.activeEmbeddingsProvider.addEventListener('change', updateProviderFieldVisibility);
     loadButton.addEventListener('click', loadBooks);
     reloadButton.addEventListener('click', loadBooks);
-    buildIndexButton.addEventListener('click', buildIndex);
+    buildIndexButton.addEventListener('click', buildLocalIndex);
+    embedIndexButton.addEventListener('click', prepareEmbeddings);
+    cancelProviderButton.addEventListener('click', () => activeProviderController?.abort());
     askButton.addEventListener('click', askLibrary);
     searchInput.addEventListener('input', renderBooks);
     showReadyOnlyInput.addEventListener('change', renderBooks);
@@ -1076,9 +1166,6 @@
       applyLanguage();
       const pageUrl = new URL(location.href);
       pageUrl.searchParams.set('lang', currentLanguage);
-      if (rootInput.value.trim()) {
-        pageUrl.searchParams.set('root', rootInput.value.trim());
-      }
       history.replaceState(null, '', pageUrl);
       renderBooks();
     });

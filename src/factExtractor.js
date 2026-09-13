@@ -41,9 +41,6 @@ function validateLocalEvidence(db, bookId, rows) {
     item.chunkId = numericChunkId;
     item.chunkIndex = chunk.chunk_index;
   }
-  if (normalized.length === 0) {
-    throw new Error('Fact extraction requires matching local evidence for the requested book.');
-  }
   return normalized;
 }
 
@@ -110,6 +107,7 @@ async function extractFactFromEvidence({
   env = process.env,
   providerClient,
   fetchImpl,
+  signal,
 } = {}) {
   if (bookId === undefined || bookId === null || bookId === '') {
     throw new Error('bookId is required.');
@@ -119,6 +117,15 @@ async function extractFactFromEvidence({
   }
 
   const normalizedEvidence = validateLocalEvidence(db, bookId, evidenceRows);
+  if (normalizedEvidence.length === 0) {
+    return {
+      status: 'no_evidence',
+      factKey,
+      factType,
+      question,
+      evidence: [],
+    };
+  }
   const config = loadProviderConfig(providerOverrides, env);
   const providerName = config.activeProvider;
   const provider = config.providers[providerName];
@@ -138,6 +145,7 @@ async function extractFactFromEvidence({
   const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey, fetchImpl });
   const providerResult = await client.chatCompletion({
     messages: buildFactExtractionMessages({ factKey, factType, question, evidenceRows: normalizedEvidence }),
+    signal,
   });
   const factValue = providerResult.fact_value ?? providerResult.factValue ?? providerResult.value ?? 'unknown';
   const evidence = resolveProviderEvidence(providerResult.evidence, normalizedEvidence);

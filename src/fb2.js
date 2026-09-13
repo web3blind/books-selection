@@ -3,9 +3,22 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
+const MAX_FB2_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_ZIP_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 128 * 1024 * 1024;
 const MAX_ZIP_COMPRESSION_RATIO = 1000;
+const CRC32_TABLE = new Uint32Array(256);
+for (let index = 0; index < CRC32_TABLE.length; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0);
+  CRC32_TABLE[index] = value >>> 0;
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff];
+  return (crc ^ 0xffffffff) >>> 0;
+}
 
 function detectXmlEncoding(buffer) {
   const header = buffer.subarray(0, Math.min(buffer.length, 512)).toString('ascii');
@@ -156,6 +169,7 @@ function readZipEntries(buffer) {
 
     const flags = buffer.readUInt16LE(offset + 8);
     const compressionMethod = buffer.readUInt16LE(offset + 10);
+    const expectedCrc32 = buffer.readUInt32LE(offset + 16);
     const compressedSize = buffer.readUInt32LE(offset + 20);
     const uncompressedSize = buffer.readUInt32LE(offset + 24);
     const fileNameLength = buffer.readUInt16LE(offset + 28);
@@ -173,6 +187,7 @@ function readZipEntries(buffer) {
       fileName,
       flags,
       compressionMethod,
+      expectedCrc32,
       compressedSize,
       uncompressedSize,
       localHeaderOffset,
@@ -214,28 +229,40 @@ function extractZipEntry(buffer, entry) {
   }
   const compressedData = buffer.subarray(dataOffset, dataEnd);
 
+  let extracted;
   if (entry.compressionMethod === 0) {
-    return compressedData;
+    extracted = compressedData;
+  } else if (entry.compressionMethod === 8) {
+    extracted = zlib.inflateRawSync(compressedData, { maxOutputLength: MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES });
+  } else {
+    throw new Error(`Unsupported ZIP compression method: ${entry.compressionMethod}`);
   }
 
-  if (entry.compressionMethod === 8) {
-    return zlib.inflateRawSync(compressedData, { maxOutputLength: MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES });
+  if (crc32(extracted) !== entry.expectedCrc32) {
+    throw new Error('ZIP entry CRC32 verification failed');
   }
-
-  throw new Error(`Unsupported ZIP compression method: ${entry.compressionMethod}`);
+  return extracted;
 }
 
-async function readFb2File(filePath) {
-  const buffer = await fs.readFile(filePath);
+function assertBookSourceSize(filePath, size) {
+  const isZip = filePath.toLowerCase().endsWith('.fb2.zip');
+  const limit = isZip ? MAX_ZIP_FILE_BYTES : MAX_FB2_FILE_BYTES;
+  if (size > limit) {
+    throw new Error(`${isZip ? 'ZIP archive' : 'FB2 source'} exceeds the ${limit}-byte safety limit.`);
+  }
+}
+
+async function readFb2File(filePath, source = {}) {
+  const stat = source.stat || await fs.stat(filePath);
+  assertBookSourceSize(filePath, stat.size);
+  const buffer = source.buffer || await fs.readFile(filePath);
   return decodeXmlBuffer(buffer);
 }
 
-async function readFb2FromZip(filePath) {
-  const stat = await fs.stat(filePath);
-  if (stat.size > MAX_ZIP_FILE_BYTES) {
-    throw new Error(`Не удалось прочитать zip: ${path.basename(filePath)} archive exceeds safety limit`);
-  }
-  const buffer = await fs.readFile(filePath);
+async function readFb2FromZip(filePath, source = {}) {
+  const stat = source.stat || await fs.stat(filePath);
+  assertBookSourceSize(filePath, stat.size);
+  const buffer = source.buffer || await fs.readFile(filePath);
   const entries = readZipEntries(buffer);
   const entry = entries.find((item) => item.fileName.toLowerCase().endsWith('.fb2'));
 
@@ -252,9 +279,11 @@ async function readFb2FromZip(filePath) {
   return decodeXmlBuffer(xmlBuffer);
 }
 
-async function readBookDocument(filePath) {
+async function readBookDocument(filePath, source = {}) {
   const lower = filePath.toLowerCase();
-  const xml = lower.endsWith('.fb2.zip') ? await readFb2FromZip(filePath) : await readFb2File(filePath);
+  const xml = lower.endsWith('.fb2.zip')
+    ? await readFb2FromZip(filePath, source)
+    : await readFb2File(filePath, source);
   return {
     ...extractBookInfoFromXml(xml),
     bodyText: extractBodyTextFromXml(xml),
@@ -267,6 +296,7 @@ async function readBookInfo(filePath) {
 }
 
 module.exports = {
+  assertBookSourceSize,
   chunkText,
   decodeXmlBuffer,
   extractBookInfoFromXml,

@@ -176,3 +176,67 @@ test('collectHybridEvidence adds cached derived facts for explicit filters and r
     db.close();
   }
 });
+
+test('collectHybridEvidence diversifies semantic evidence across books instead of filling the result from one book', async () => {
+  const repeated = Array.from({ length: 12 }, (_, index) => ({
+    book_id: 1,
+    cycle_name: 'Noisy Cycle',
+    title: 'Noisy Book',
+    chunk_index: index,
+    text: `похожий фрагмент ${index}`,
+    score: 1 - index / 100,
+  }));
+  const alternatives = [2, 3, 4].map((bookId) => ({
+    book_id: bookId,
+    cycle_name: `Cycle ${bookId}`,
+    title: `Book ${bookId}`,
+    chunk_index: 0,
+    text: `другой подходящий кандидат ${bookId}`,
+    score: 0.7 - bookId / 100,
+  }));
+
+  const result = await collectHybridEvidence({
+    db: {},
+    question: 'У героя несколько демонов внутри',
+    env: { OPENROUTER_API_KEY: 'test-key' },
+    searchFn: () => [],
+    embedFn: async () => ({ status: 'embedded', provider: 'openrouter', model: 'embed', embedding: [1, 0] }),
+    semanticSearchFn: () => [...repeated, ...alternatives],
+    includeRelatedFacts: false,
+    limit: 6,
+    semanticLimit: 6,
+  });
+
+  assert.ok(result.evidence.filter((row) => row.book_id === 1).length <= 3);
+  assert.ok(result.evidence.some((row) => row.book_id === 2));
+  assert.ok(new Set(result.evidence.map((row) => row.book_id)).size >= 2);
+});
+
+test('collectHybridEvidence merges FTS and semantic sources for the same chunk_id', async () => {
+  const shared = { chunk_id: 77, book_id: 9, cycle_name: 'Cycle', title: 'Book', chunk_index: 3 };
+  const result = await collectHybridEvidence({
+    db: {}, question: 'общий фрагмент', env: { OPENROUTER_API_KEY: 'test-key' },
+    searchFn: () => [{ ...shared, snippet: 'общий фрагмент' }],
+    embedFn: async () => ({ status: 'embedded', provider: 'openrouter', model: 'embed', embedding: [1] }),
+    semanticSearchFn: () => [{ ...shared, text: 'общий фрагмент', score: 1 }],
+    includeRelatedFacts: false, limit: 4,
+  });
+  assert.equal(result.evidence.length, 1);
+  assert.deepEqual(result.evidence[0].sources, ['fts', 'semantic']);
+});
+
+test('collectHybridEvidence passes natural language to safe FTS search instead of recompiling FTS syntax', async () => {
+  let receivedQuery = '';
+  const result = await collectHybridEvidence({
+    db: {},
+    question: 'red lamp',
+    searchFn: (_db, query) => {
+      receivedQuery = query;
+      return [];
+    },
+    embedFn: async () => ({ status: 'needs_embedding_provider_key', setup: {} }),
+    queryFactsFn: () => [],
+  });
+  assert.equal(receivedQuery, 'red lamp');
+  assert.equal(result.ftsQuery, '"red" OR "lamp"');
+});

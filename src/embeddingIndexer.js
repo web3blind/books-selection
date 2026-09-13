@@ -2,12 +2,12 @@ const { storeChunkEmbedding } = require('./embeddings');
 const { getApiKey, loadProviderConfig } = require('./providerConfig');
 const { createOpenAiCompatibleClient } = require('./providerClient');
 
-function normalizePositiveInteger(value, fallback) {
+function normalizePositiveInteger(value, fallback, maximum) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     return fallback;
   }
-  return parsed;
+  return Math.min(parsed, maximum);
 }
 
 function createEmbeddingSetup({ providerName, provider }) {
@@ -63,12 +63,66 @@ function selectChunksMissingEmbeddings(db, { provider, model, limit }) {
   `).all(provider, model, limit);
 }
 
+function pruneInvalidCurrentEmbeddings(db, { provider, model }) {
+  const rows = db.prepare(`
+    SELECT chunk_embeddings.chunk_id, chunk_embeddings.embedding_json
+    FROM chunk_embeddings
+    JOIN chunks ON chunks.id = chunk_embeddings.chunk_id
+    WHERE chunk_embeddings.provider = ?
+      AND chunk_embeddings.model = ?
+      AND chunk_embeddings.content_hash = chunks.content_hash
+    ORDER BY chunk_embeddings.chunk_id
+  `).all(provider, model);
+  const parsedRows = rows.map((row) => {
+    try {
+      const embedding = JSON.parse(row.embedding_json);
+      const valid = Array.isArray(embedding)
+        && embedding.length > 0
+        && embedding.every((value) => typeof value === 'number' && Number.isFinite(value));
+      return { chunkId: row.chunk_id, embedding: valid ? embedding : null };
+    } catch {
+      return { chunkId: row.chunk_id, embedding: null };
+    }
+  });
+  const dimensionCounts = new Map();
+  for (const row of parsedRows) {
+    if (!row.embedding) continue;
+    dimensionCounts.set(row.embedding.length, (dimensionCounts.get(row.embedding.length) || 0) + 1);
+  }
+  const expectedDimension = [...dimensionCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0] || null;
+  const deleteRow = db.prepare('DELETE FROM chunk_embeddings WHERE chunk_id = ? AND provider = ? AND model = ?');
+  for (const row of parsedRows) {
+    if (!row.embedding || row.embedding.length !== expectedDimension) {
+      deleteRow.run(row.chunkId, provider, model);
+    }
+  }
+  return expectedDimension;
+}
+
+function validateEmbeddingBatch(embeddings, expectedCount, expectedDimension) {
+  if (!Array.isArray(embeddings) || embeddings.length !== expectedCount) {
+    throw new Error('Embeddings provider returned a different number of vectors than requested.');
+  }
+  const dimension = expectedDimension || embeddings[0]?.length;
+  const valid = Number.isInteger(dimension) && dimension > 0 && embeddings.every((embedding) => (
+    Array.isArray(embedding)
+    && embedding.length === dimension
+    && embedding.every((value) => typeof value === 'number' && Number.isFinite(value))
+  ));
+  if (!valid) {
+    throw new Error('Embeddings provider returned empty, non-finite, or inconsistent vectors.');
+  }
+  return dimension;
+}
+
 async function indexMissingChunkEmbeddings({
   db,
   providerOverrides = {},
   env = process.env,
   fetchImpl,
   providerClient,
+  signal,
   limit = 100,
   batchSize = 16,
 } = {}) {
@@ -90,10 +144,12 @@ async function indexMissingChunkEmbeddings({
   }
 
   const model = provider.embeddingModel;
-  const skipped = countChunksWithCurrentEmbedding(db, { provider: providerName, model });
-  const runLimit = normalizePositiveInteger(limit, 100);
-  const runBatchSize = normalizePositiveInteger(batchSize, 16);
-  const missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
+  const currentEmbeddingDimension = pruneInvalidCurrentEmbeddings(db, { provider: providerName, model });
+  let skipped = countChunksWithCurrentEmbedding(db, { provider: providerName, model });
+  const runLimit = normalizePositiveInteger(limit, 100, 1000);
+  const runBatchSize = normalizePositiveInteger(batchSize, 16, 128);
+  const totalMissing = Math.max(0, countChunks(db) - skipped);
+  let missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
 
   if (!apiKey) {
     return {
@@ -102,18 +158,65 @@ async function indexMissingChunkEmbeddings({
       model,
       embedded: 0,
       skipped,
-      remaining: missingChunks.length,
+      remaining: totalMissing,
       setup: createEmbeddingSetup({ providerName, provider }),
     };
   }
 
   const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey, fetchImpl });
-  let embedded = 0;
+  async function requestEmbeddingsForChunks(chunks) {
+    if (typeof client.createEmbeddings === 'function') {
+      try {
+        return await client.createEmbeddings({ inputs: chunks.map((chunk) => chunk.text), signal });
+      } catch (error) {
+        const canFallBackToScalar = typeof client.createEmbedding === 'function'
+          && /Provider embeddings request failed with HTTP (400|404|405|413|422)\b/.test(error.message || '');
+        if (!canFallBackToScalar) throw error;
+      }
+    }
+    return Promise.all(chunks.map((chunk) => client.createEmbedding({ input: chunk.text, signal })));
+  }
 
-  for (let offset = 0; offset < missingChunks.length; offset += runBatchSize) {
+  let embedded = 0;
+  let expectedDimension = currentEmbeddingDimension;
+  let dimensionTransitionHandled = false;
+
+  if (totalMissing === 0 && skipped > 0 && expectedDimension) {
+    const probeChunk = db.prepare('SELECT id, text, content_hash FROM chunks ORDER BY id LIMIT 1').get();
+    if (probeChunk) {
+      const probeEmbeddings = await requestEmbeddingsForChunks([probeChunk]);
+      const providerDimension = validateEmbeddingBatch(probeEmbeddings, 1);
+      if (providerDimension !== expectedDimension) {
+        db.prepare('DELETE FROM chunk_embeddings WHERE provider = ? AND model = ?').run(providerName, model);
+        dimensionTransitionHandled = true;
+        expectedDimension = providerDimension;
+        skipped = 0;
+        missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
+      }
+    }
+  }
+
+  for (let offset = 0; offset < missingChunks.length;) {
     const batch = missingChunks.slice(offset, offset + runBatchSize);
-    for (const chunk of batch) {
-      const embedding = await client.createEmbedding({ input: chunk.text });
+    const embeddings = await requestEmbeddingsForChunks(batch);
+    const batchDimension = validateEmbeddingBatch(embeddings, batch.length);
+    if (expectedDimension && batchDimension !== expectedDimension) {
+      if (dimensionTransitionHandled) {
+        throw new Error('Embeddings provider changed vector dimension repeatedly during one indexing run.');
+      }
+      db.prepare('DELETE FROM chunk_embeddings WHERE provider = ? AND model = ?').run(providerName, model);
+      dimensionTransitionHandled = true;
+      expectedDimension = batchDimension;
+      skipped = 0;
+      embedded = 0;
+      missingChunks = selectChunksMissingEmbeddings(db, { provider: providerName, model, limit: runLimit });
+      offset = 0;
+      continue;
+    }
+    expectedDimension = batchDimension;
+    for (let index = 0; index < batch.length; index += 1) {
+      const chunk = batch[index];
+      const embedding = embeddings[index];
       storeChunkEmbedding(db, {
         chunkId: chunk.id,
         provider: providerName,
@@ -123,6 +226,7 @@ async function indexMissingChunkEmbeddings({
       });
       embedded += 1;
     }
+    offset += runBatchSize;
   }
 
   const remaining = Number(db.prepare(`

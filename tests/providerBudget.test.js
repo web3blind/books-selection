@@ -252,3 +252,24 @@ test('concurrent paid calls serialize budget check and provider operation per cr
   assert.deepEqual(results.map((result) => result.status).sort(), ['fulfilled', 'rejected']);
   assert.match(results.find((result) => result.status === 'rejected').reason.message, /budget limit reached/);
 });
+
+test('budget reports soft stop-after semantics and chat completions always have a bounded output', async () => {
+  let chatBody;
+  const provider = { ...openRouterProvider, maxOutputTokens: 600, budget: { ...openRouterProvider.budget, baselineUsageUsd: 0 } };
+  const client = createOpenAiCompatibleClient({
+    provider, apiKey: 'secret-key',
+    fetchImpl: async (url, options) => {
+      if (String(url).endsWith('/credits')) return { ok: true, status: 200, json: async () => ({ data: { total_credits: 20, total_usage: 0.25 } }) };
+      chatBody = JSON.parse(options.body);
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"answer":"ok"}' } }] }) };
+    },
+  });
+  const budget = await checkProviderBudget({
+    provider, apiKey: 'secret-key',
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data: { total_usage: 0.25 } }) }),
+  });
+  await client.chatCompletion({ messages: [{ role: 'user', content: 'test' }], maxTokens: 50_000 });
+  assert.equal(budget.enforcement, 'soft_stop_after_threshold');
+  assert.equal(budget.requestReservationUsd, null);
+  assert.equal(chatBody.max_tokens, 600);
+});

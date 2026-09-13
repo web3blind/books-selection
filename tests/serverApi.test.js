@@ -218,6 +218,35 @@ test('server preserves /api/books and exposes local index/search/ask/fact endpoi
   }
 });
 
+test('server keeps root and config endpoints usable when saved config JSON is malformed', async () => {
+  const root = await createTempRoot();
+  const configPath = path.join(root, 'config.json');
+  await fs.writeFile(configPath, '{not-json');
+  const child = spawnTestServer(root, configPath);
+
+  try {
+    const port = await waitForServer(child);
+    const rootResponse = await requestRaw(port, 'GET', '/');
+    const cookie = rootResponse.headers['set-cookie'][0].split(';', 1)[0];
+    const broken = await requestJson(port, 'GET', '/api/config', undefined, { cookie });
+    const saved = await requestJson(port, 'POST', '/api/config', {
+      booksRoot: root,
+      dbPath: path.join(root, 'search.sqlite'),
+    }, { cookie });
+    const readBack = JSON.parse(await fs.readFile(configPath, 'utf8'));
+
+    assert.equal(rootResponse.statusCode, 200);
+    assert.equal(broken.statusCode, 200);
+    assert.equal(broken.body.configError.code, 'invalid_config_json');
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.body.configError, undefined);
+    assert.equal(readBack.booksRoot, root);
+  } finally {
+    child.kill();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('server API rejects missing launch token, hostile Host, and cross-origin requests', async () => {
   const root = await createTempRoot();
   const child = spawnTestServer(root, path.join(root, 'config.json'));

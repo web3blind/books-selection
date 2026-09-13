@@ -5,6 +5,24 @@ function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
 }
 
+const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
+const MAX_OUTPUT_TOKENS_CAP = 4096;
+
+function boundedOutputTokens(requested, configured) {
+  const configuredValue = Number(configured);
+  const providerMaximum = Number.isInteger(configuredValue) && configuredValue > 0
+    ? Math.min(configuredValue, MAX_OUTPUT_TOKENS_CAP)
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+  const requestedValue = Number(requested);
+  return Number.isInteger(requestedValue) && requestedValue > 0
+    ? Math.min(requestedValue, providerMaximum)
+    : providerMaximum;
+}
+
+function networkLimits(provider) {
+  return { timeoutMs: provider.requestTimeoutMs, maxResponseBytes: provider.maxResponseBytes };
+}
+
 function parseJsonContent(content) {
   if (typeof content !== 'string') {
     return { answer: String(content || ''), confidence: 'unknown' };
@@ -51,8 +69,53 @@ function createOpenAiCompatibleClient({
     });
   }
 
+  async function requestEmbeddings(input, expectedCount, signal) {
+    if (!provider.embeddingModel) {
+      throw new Error('OpenAI-compatible provider requires embeddingModel for embeddings.');
+    }
+
+    return runBudgeted(async () => {
+      const requestUrl = `${trimTrailingSlash(provider.baseUrl)}/embeddings`;
+      const response = await fetchWithProviderContext(fetchImpl, requestUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model: provider.embeddingModel, input }),
+        signal,
+      }, 'Provider embeddings request', networkLimits(provider));
+
+      if (!response.ok) {
+        throw new Error(`Provider embeddings request failed with HTTP ${response.status}`);
+      }
+
+      const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider embeddings response', { ...networkLimits(provider), signal });
+      const rows = Array.isArray(payload?.data) ? [...payload.data] : [];
+      const indexedRows = rows.filter((row) => Number.isInteger(row?.index));
+      let embeddings;
+      if (indexedRows.length > 0) {
+        const indices = indexedRows.map((row) => row.index);
+        const validIndices = indexedRows.length === expectedCount
+          && new Set(indices).size === expectedCount
+          && indices.every((index) => index >= 0 && index < expectedCount);
+        if (!validIndices) {
+          throw new Error('Provider embeddings response included invalid or duplicate indices.');
+        }
+        embeddings = Array(expectedCount);
+        for (const row of indexedRows) embeddings[row.index] = row.embedding;
+      } else {
+        embeddings = rows.map((row) => row?.embedding);
+      }
+      if (embeddings.length !== expectedCount || embeddings.some((embedding) => !Array.isArray(embedding))) {
+        throw new Error('Provider embeddings response did not include all requested embedding vectors.');
+      }
+      return embeddings;
+    });
+  }
+
   return {
-    async chatCompletion({ messages, temperature = 0.2 }) {
+    async chatCompletion({ messages, temperature = 0.2, maxTokens, signal } = {}) {
       return runBudgeted(async () => {
         const requestUrl = `${trimTrailingSlash(provider.baseUrl)}/chat/completions`;
         const response = await fetchWithProviderContext(fetchImpl, requestUrl, {
@@ -65,49 +128,31 @@ function createOpenAiCompatibleClient({
             model: provider.model,
             messages,
             temperature,
+            max_tokens: boundedOutputTokens(maxTokens, provider.maxOutputTokens),
             response_format: { type: 'json_object' },
           }),
-        }, 'Provider chat completion');
+          signal,
+        }, 'Provider chat completion', networkLimits(provider));
 
         if (!response.ok) {
           throw new Error(`Provider chat completion failed with HTTP ${response.status}`);
         }
 
-        const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider chat response');
+        const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider chat response', { ...networkLimits(provider), signal });
         return parseJsonContent(payload?.choices?.[0]?.message?.content || '');
       });
     },
 
-    async createEmbedding({ input }) {
-      if (!provider.embeddingModel) {
-        throw new Error('OpenAI-compatible provider requires embeddingModel for embeddings.');
+    async createEmbedding({ input, signal }) {
+      const embeddings = await requestEmbeddings(input, 1, signal);
+      return embeddings[0];
+    },
+
+    async createEmbeddings({ inputs, signal }) {
+      if (!Array.isArray(inputs) || inputs.length === 0) {
+        throw new Error('OpenAI-compatible provider requires at least one embedding input.');
       }
-
-      return runBudgeted(async () => {
-        const requestUrl = `${trimTrailingSlash(provider.baseUrl)}/embeddings`;
-        const response = await fetchWithProviderContext(fetchImpl, requestUrl, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: provider.embeddingModel,
-            input,
-          }),
-        }, 'Provider embeddings request');
-
-        if (!response.ok) {
-          throw new Error(`Provider embeddings request failed with HTTP ${response.status}`);
-        }
-
-        const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider embeddings response');
-        const embedding = payload?.data?.[0]?.embedding;
-        if (!Array.isArray(embedding)) {
-          throw new Error('Provider embeddings response did not include an embedding vector.');
-        }
-        return embedding;
-      });
+      return requestEmbeddings(inputs, inputs.length, signal);
     },
   };
 }

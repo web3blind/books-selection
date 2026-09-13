@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { answerLibraryQuestion, buildEvidencePrompt, createEvidenceCandidates } = require('../src/ask');
+const { answerLibraryQuestion, buildEvidencePrompt, createCoverage, createEvidenceCandidates } = require('../src/ask');
 const { createOpenAiCompatibleClient } = require('../src/providerClient');
 
 const sampleHits = [
@@ -74,6 +74,75 @@ test('createEvidenceCandidates groups local evidence without adding AI-generated
   assert.equal('reason' in candidates[0], false);
 });
 
+test('createCoverage distinguishes represented evidence from exhaustive corpus checks', () => {
+  const db = {
+    prepare(sql) {
+      return {
+        get() {
+          if (/COUNT\(DISTINCT cycle_name\)/.test(sql)) return { count: 22 };
+          if (/FROM books/.test(sql)) return { count: 22 };
+          if (/FROM chunks/.test(sql)) return { count: 4400 };
+          throw new Error('unexpected query');
+        },
+      };
+    },
+  };
+  const coverage = createCoverage(db, [
+    { cycle: 'A', book: 'Book A', chunkIndex: 1 },
+    { cycle: 'B', book: 'Book B', chunkIndex: 2 },
+  ]);
+
+  assert.deepEqual(coverage, {
+    totalCycles: 22,
+    totalBooks: 22,
+    totalChunks: 4400,
+    representedCycles: 2,
+    representedBooks: 2,
+    retrievedChunks: 2,
+    exhaustive: false,
+  });
+});
+
+test('createCoverage does not count duplicate retrieval sources or derived facts as exhaustive chunks', () => {
+  const db = { prepare: () => ({ get: () => ({ count: 2 }) }) };
+  const coverage = createCoverage(db, [
+    { cycle: 'A', book: 'A', chunkId: 7, source: 'fts' },
+    { cycle: 'A', book: 'A', chunkId: 7, source: 'semantic' },
+    { cycle: 'A', book: 'A', chunkId: null, source: 'fact' },
+  ]);
+  assert.equal(coverage.retrievedChunks, 1);
+  assert.equal(coverage.exhaustive, false);
+});
+
+test('buildEvidencePrompt forbids corpus-wide negative conclusions when retrieval is partial', () => {
+  const prompt = buildEvidencePrompt('Все ли герои выжили?', sampleHits, {
+    totalCycles: 22,
+    representedCycles: 2,
+    totalBooks: 22,
+    representedBooks: 2,
+    retrievedChunks: 3,
+    exhaustive: false,
+  });
+  assert.match(prompt, /2 из 22 циклов/);
+  assert.match(prompt, /не делай отрицательный вывод обо всей библиотеке/i);
+});
+
+test('createEvidenceCandidates preserves retrieval relevance order instead of promoting noisy groups by count', () => {
+  const evidence = [
+    { cycle: 'Exact Cycle', book: 'Exact Book', source: 'fts', chunkIndex: 7, excerpt: 'Я призвал сразу трех демонов и воплотил их внутри себя.' },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      cycle: 'Noisy Cycle',
+      book: 'Noisy Book',
+      source: 'semantic',
+      chunkIndex: index,
+      excerpt: `Семантически похожий, но менее точный фрагмент ${index}.`,
+    })),
+  ];
+
+  const candidates = createEvidenceCandidates(evidence);
+  assert.deepEqual(candidates.map((candidate) => candidate.book), ['Exact Book', 'Noisy Book']);
+});
+
 test('answerLibraryQuestion returns deterministic local candidates without extra provider calls', async () => {
   let providerCalls = 0;
   const result = await answerLibraryQuestion({
@@ -92,6 +161,8 @@ test('answerLibraryQuestion returns deterministic local candidates without extra
   assert.equal(providerCalls, 1);
   assert.equal(result.status, 'answered');
   assert.equal(result.answer, 'Один общий ответ.');
+  assert.match(result.uncertainty, /retrieved evidence|найденн/i);
+  assert.equal(result.coverage.representedCycles, 2);
   assert.equal(result.candidates.length, 2);
   assert.deepEqual(result.candidates.map((candidate) => candidate.book), ['Lantern Book', 'Forest Book']);
   assert.deepEqual(result.candidates.map((candidate) => candidate.evidenceCount), [2, 1]);
@@ -184,7 +255,8 @@ test('answerLibraryQuestion sends hybrid FTS semantic and fact evidence only to 
   assert.equal(result.status, 'answered');
   assert.equal(result.answer, 'Lantern Book подходит по фрагментам и факту.');
   assert.equal(result.confidence, 'medium');
-  assert.equal(result.uncertainty, 'Проверены только найденные hybrid evidence.');
+  assert.match(result.uncertainty, /^Проверены только найденные hybrid evidence\./);
+  assert.match(result.uncertainty, /не исчерпывающая проверка всей библиотеки/);
   assert.equal(result.evidence.length, 3);
   assert.deepEqual(result.checked.books, ['Lantern Book']);
   assert.deepEqual(result.checked.cycles, ['Dragon Cycle']);
@@ -271,4 +343,28 @@ test('OpenAI-compatible provider client posts chat completions through injectabl
   assert.equal(JSON.parse(request.options.body).model, 'fiction-model');
   assert.deepEqual(result, { answer: 'ok', confidence: 'low' });
   assert.doesNotMatch(JSON.stringify(result), /secret-key/);
+});
+
+test('every Ask outcome propagates semantic setup and degraded uncertainty', async () => {
+  const semantic = { status: 'needs_embedding_provider_key', setup: { provider: 'local-embed', apiKeyEnv: 'EMBED_KEY', message: 'Configure embeddings.' } };
+  const noEvidence = await answerLibraryQuestion({ db: {}, question: 'none', env: {}, retrievalFn: async () => ({ evidence: [], semantic }) });
+  const fallback = await answerLibraryQuestion({ db: {}, question: 'fallback', env: {}, retrievalFn: async () => ({ evidence: sampleHits, semantic }) });
+  const answered = await answerLibraryQuestion({
+    db: {}, question: 'answered', env: { OPENROUTER_API_KEY: 'key' },
+    retrievalFn: async () => ({ evidence: sampleHits, semantic }),
+    providerClient: { chatCompletion: async () => ({ answer: 'ok', evidence: ['evidence_1'] }) },
+  });
+  for (const result of [noEvidence, fallback, answered]) {
+    assert.deepEqual(result.semantic, semantic);
+    assert.match(result.uncertainty, /semantic|семантич/i);
+  }
+});
+
+test('coverage counts represented books by bookId even when titles are identical', () => {
+  const db = { prepare: () => ({ get: () => ({ count: 10 }) }) };
+  const coverage = createCoverage(db, [
+    { bookId: 101, book: 'Same title', cycle: 'A', chunkId: 1 },
+    { bookId: 102, book: 'Same title', cycle: 'B', chunkId: 2 },
+  ]);
+  assert.equal(coverage.representedBooks, 2);
 });

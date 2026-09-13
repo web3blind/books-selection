@@ -178,21 +178,29 @@ test('extractFactFromEvidence accepts arbitrary fact keys and fact types without
   }
 });
 
-test('extractFactFromEvidence never calls a provider without DB-backed evidence for the requested book', async () => {
+test('extractFactFromEvidence returns no_evidence and never calls a provider when retrieval has no matches', async () => {
   const db = initializeSearchDatabase(':memory:');
   let providerCalls = 0;
 
   try {
     const { bookId } = insertBookAndChunk(db);
-    await assert.rejects(extractFactFromEvidence({
+    const result = await extractFactFromEvidence({
       db,
       bookId,
-      factKey: 'unsafe',
+      factKey: 'not_found',
+      factType: 'plot_trait',
+      question: 'Есть ли единорог?',
       evidenceRows: [],
       env: { OPENROUTER_API_KEY: 'test-key' },
       providerClient: { chatCompletion: async () => { providerCalls += 1; } },
-    }), /matching local evidence/i);
+    });
+
+    assert.equal(result.status, 'no_evidence');
+    assert.equal(result.factKey, 'not_found');
+    assert.equal(result.factType, 'plot_trait');
+    assert.deepEqual(result.evidence, []);
     assert.equal(providerCalls, 0);
+    assert.deepEqual(queryDerivedFacts(db, { bookId }), []);
   } finally {
     db.close();
   }

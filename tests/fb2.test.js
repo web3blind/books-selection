@@ -13,6 +13,17 @@ const {
   readBookInfo,
 } = require('../src/fb2');
 
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
 function createZipBuffer(fileName, content) {
   const nameBuffer = Buffer.from(fileName, 'utf8');
   const dataBuffer = Buffer.from(content, 'utf8');
@@ -25,7 +36,7 @@ function createZipBuffer(fileName, content) {
   localHeader.writeUInt16LE(8, 8);
   localHeader.writeUInt16LE(0, 10);
   localHeader.writeUInt16LE(0, 12);
-  localHeader.writeUInt32LE(0, 14);
+  localHeader.writeUInt32LE(crc32(dataBuffer), 14);
   localHeader.writeUInt32LE(compressed.length, 18);
   localHeader.writeUInt32LE(dataBuffer.length, 22);
   localHeader.writeUInt16LE(nameBuffer.length, 26);
@@ -39,7 +50,7 @@ function createZipBuffer(fileName, content) {
   centralHeader.writeUInt16LE(8, 10);
   centralHeader.writeUInt16LE(0, 12);
   centralHeader.writeUInt16LE(0, 14);
-  centralHeader.writeUInt32LE(0, 16);
+  centralHeader.writeUInt32LE(crc32(dataBuffer), 16);
   centralHeader.writeUInt32LE(compressed.length, 20);
   centralHeader.writeUInt32LE(dataBuffer.length, 24);
   centralHeader.writeUInt16LE(nameBuffer.length, 28);
@@ -161,6 +172,19 @@ test('chunkText enforces maxChars for long sentences and preserves normalized of
   );
 });
 
+test('rejects a plain FB2 file larger than the safety limit before reading it', async () => {
+  const tempFile = path.join(os.tmpdir(), `books-selection-plain-limit-${Date.now()}.fb2`);
+  const handle = await fs.open(tempFile, 'w');
+  await handle.truncate((64 * 1024 * 1024) + 1);
+  await handle.close();
+
+  try {
+    await assert.rejects(readBookInfo(tempFile), /FB2.*safety limit/i);
+  } finally {
+    await fs.unlink(tempFile);
+  }
+});
+
 test('reads fb2 from zip without python', async () => {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
   <FictionBook>
@@ -181,6 +205,20 @@ test('reads fb2 from zip without python', async () => {
 
   assert.equal(result.title, 'Леший');
   assert.equal(result.annotation, 'Аннотация внутри zip.');
+});
+
+test('rejects a ZIP entry whose extracted FB2 does not match the declared CRC32', async () => {
+  const zipBuffer = createZipBuffer('book.fb2', '<FictionBook/>');
+  const centralOffset = zipBuffer.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  zipBuffer.writeUInt32LE(0x12345678, centralOffset + 16);
+  const tempFile = path.join(os.tmpdir(), `books-selection-crc-${Date.now()}.fb2.zip`);
+
+  await fs.writeFile(tempFile, zipBuffer);
+  try {
+    await assert.rejects(readBookInfo(tempFile), /CRC32/i);
+  } finally {
+    await fs.unlink(tempFile);
+  }
 });
 
 test('rejects a zip entry whose declared uncompressed size exceeds the safety limit before inflation', async () => {

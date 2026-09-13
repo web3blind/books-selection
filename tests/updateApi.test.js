@@ -45,9 +45,9 @@ test('/api/update-check returns update metadata with platform-specific assets', 
             tag_name: 'v0.3.5',
             html_url: 'https://github.com/web3blind/books-selection/releases/tag/v0.3.5',
             assets: [
-              { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://example.test/linux' },
-              { name: 'books-selection-desktop-win-x64.exe', browser_download_url: 'https://example.test/win-exe' },
-              { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://example.test/win-zip' },
+              { name: 'books-selection-desktop-linux-x64.tar.gz', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-linux-x64.tar.gz' },
+              { name: 'books-selection-desktop-win-x64.exe', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-win-x64.exe' },
+              { name: 'books-selection-desktop-win-x64.zip', browser_download_url: 'https://github.com/web3blind/books-selection/releases/download/v0.3.5/books-selection-desktop-win-x64.zip' },
             ],
           };
         },

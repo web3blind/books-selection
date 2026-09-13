@@ -8,7 +8,19 @@ function parseUrl(value) {
 
 function isAllowedExternalUrl(value) {
   const url = parseUrl(value);
-  return Boolean(url && url.protocol === 'https:');
+  if (!url || url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) {
+    return false;
+  }
+  if (/^\/web3blind\/books-selection\/releases\/(?:latest|tag\/[^/]+)$/.test(url.pathname)) {
+    return true;
+  }
+  const assetMatch = url.pathname.match(/^\/web3blind\/books-selection\/releases\/download\/[^/]+\/([^/]+)$/);
+  return Boolean(assetMatch && new Set([
+    'books-selection-desktop-linux-x64.tar.gz',
+    'books-selection-desktop-win-x64.exe',
+    'books-selection-desktop-win-x64.zip',
+    'books-selection-desktop-mac-x64.zip',
+  ]).has(assetMatch[1]));
 }
 
 function isTrustedRendererUrl(value, appUrl) {

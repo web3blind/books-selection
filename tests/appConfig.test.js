@@ -53,6 +53,40 @@ test('app config missing file defaults SQLite database to project data folder', 
   }
 });
 
+test('app config read recovers defaults and exposes an error state for malformed JSON', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-malformed-'));
+  const configPath = path.join(dir, 'config.json');
+  const env = { BOOKS_SELECTION_CONFIG_PATH: configPath };
+
+  try {
+    await fs.writeFile(configPath, '{not-json');
+
+    const state = await readAppConfig(env);
+
+    assert.equal(state.exists, true);
+    assert.equal(state.config.booksRoot, '');
+    assert.equal(state.error.code, 'invalid_config_json');
+    assert.match(state.error.message, /valid JSON/i);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('app config read recovers defaults from values that fail provider validation', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-invalid-'));
+  const configPath = path.join(dir, 'config.json');
+  const env = { BOOKS_SELECTION_CONFIG_PATH: configPath };
+  try {
+    await fs.writeFile(configPath, JSON.stringify({ providers: { openrouter: { baseUrl: 'https://attacker.example/v1' } } }));
+    const state = await readAppConfig(env);
+    assert.equal(state.exists, true);
+    assert.equal(state.config.booksRoot, '');
+    assert.equal(state.error.code, 'invalid_config_values');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('app config read returns defaults for missing file and write persists normalized config', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-'));
   const env = { BOOKS_SELECTION_CONFIG_PATH: path.join(dir, 'config.json') };

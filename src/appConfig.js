@@ -142,14 +142,31 @@ function redactAppConfig(config, env = process.env) {
 
 async function readAppConfig(env = process.env) {
   const filePath = getConfigPath(env);
+  let raw;
   try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    return { config: normalizeAppConfig(JSON.parse(raw)), path: filePath, exists: true };
+    raw = await fs.readFile(filePath, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') {
       return { config: defaultAppConfig(), path: filePath, exists: false };
     }
     throw error;
+  }
+
+  try {
+    return { config: normalizeAppConfig(JSON.parse(raw)), path: filePath, exists: true };
+  } catch (error) {
+    const invalidJson = error.name === 'SyntaxError';
+    return {
+      config: defaultAppConfig(),
+      path: filePath,
+      exists: true,
+      error: {
+        code: invalidJson ? 'invalid_config_json' : 'invalid_config_values',
+        message: invalidJson
+          ? 'Saved configuration is not valid JSON. Review and save Settings to replace it.'
+          : 'Saved configuration contains invalid values. Review and save Settings to replace it.',
+      },
+    };
   }
 }
 

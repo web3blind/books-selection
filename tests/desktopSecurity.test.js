@@ -3,9 +3,13 @@ const assert = require('node:assert/strict');
 
 const { isAllowedExternalUrl, isTrustedRendererUrl } = require('../desktop/security');
 
-test('desktop external links allow only HTTPS URLs', () => {
+test('desktop external links allow only expected GitHub release pages and assets', () => {
   assert.equal(isAllowedExternalUrl('https://github.com/web3blind/books-selection/releases/latest'), true);
-  assert.equal(isAllowedExternalUrl('http://example.com/download'), false);
+  assert.equal(isAllowedExternalUrl('https://github.com/web3blind/books-selection/releases/tag/v0.3.8'), true);
+  assert.equal(isAllowedExternalUrl('https://github.com/web3blind/books-selection/releases/download/v0.3.8/books-selection-desktop-win-x64.exe'), true);
+  assert.equal(isAllowedExternalUrl('https://github.com/other/repo/releases/latest'), false);
+  assert.equal(isAllowedExternalUrl('https://example.com/download'), false);
+  assert.equal(isAllowedExternalUrl('http://github.com/web3blind/books-selection/releases/latest'), false);
   assert.equal(isAllowedExternalUrl('file:///tmp/example'), false);
   assert.equal(isAllowedExternalUrl('custom-handler://run'), false);
   assert.equal(isAllowedExternalUrl('not a URL'), false);

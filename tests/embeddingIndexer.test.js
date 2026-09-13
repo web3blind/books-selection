@@ -85,7 +85,7 @@ test('indexMissingChunkEmbeddings skips already embedded unchanged chunks', asyn
 
   try {
     const [chunkId] = insertBookWithChunks(db, [{ text: 'already cached chunk', contentHash: 'hash-a' }]);
-    storeChunkEmbedding(db, { chunkId, provider: 'openrouter', model: 'openai/text-embedding-3-small', contentHash: 'hash-a', embedding: [1, 2, 3] });
+    storeChunkEmbedding(db, { chunkId, provider: 'openrouter', model: 'openai/text-embedding-3-small', contentHash: 'hash-a', embedding: [1, 2] });
 
     const result = await indexMissingChunkEmbeddings({
       db,
@@ -97,7 +97,7 @@ test('indexMissingChunkEmbeddings skips already embedded unchanged chunks', asyn
     assert.equal(result.embedded, 0);
     assert.equal(result.skipped, 1);
     assert.equal(result.remaining, 0);
-    assert.deepEqual(client.calls, []);
+    assert.deepEqual(client.calls, ['already cached chunk']);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 1);
   } finally {
     db.close();
@@ -127,7 +127,7 @@ test('indexMissingChunkEmbeddings re-embeds changed chunk hashes without duplica
     const rows = db.prepare('SELECT content_hash FROM chunk_embeddings WHERE chunk_id = ? ORDER BY content_hash').all(chunkId);
     assert.equal(first.embedded, 1);
     assert.equal(second.embedded, 0);
-    assert.deepEqual(client.calls, ['changed cached chunk after edit']);
+    assert.deepEqual(client.calls, ['changed cached chunk after edit', 'changed cached chunk after edit']);
     assert.deepEqual(rows.map((row) => row.content_hash), ['new-hash']);
   } finally {
     db.close();
@@ -166,6 +166,177 @@ test('indexMissingChunkEmbeddings respects limit and batchSize for bounded cache
     assert.equal(second.remaining, 0);
     assert.deepEqual(client.calls, ['chunk one', 'chunk two', 'chunk three']);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 3);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings sends true provider batches when the client supports them', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const calls = [];
+  const client = {
+    async createEmbeddings({ inputs }) {
+      calls.push(inputs);
+      return inputs.map((input, index) => [input.length, index]);
+    },
+  };
+
+  try {
+    insertBookWithChunks(db, [
+      { text: 'one', contentHash: 'hash-1' },
+      { text: 'two', contentHash: 'hash-2' },
+      { text: 'three', contentHash: 'hash-3' },
+      { text: 'four', contentHash: 'hash-4' },
+      { text: 'five', contentHash: 'hash-5' },
+    ]);
+    const result = await indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'secret-key' },
+      providerClient: client,
+      limit: 10,
+      batchSize: 2,
+    });
+
+    assert.equal(result.embedded, 5);
+    assert.equal(result.remaining, 0);
+    assert.deepEqual(calls, [['one', 'two'], ['three', 'four'], ['five']]);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 5);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings falls back to scalar requests when a compatible provider rejects arrays', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const scalarCalls = [];
+  const client = {
+    async createEmbeddings() {
+      throw new Error('Provider embeddings request failed with HTTP 422');
+    },
+    async createEmbedding({ input }) {
+      scalarCalls.push(input);
+      return [input.length];
+    },
+  };
+  try {
+    insertBookWithChunks(db, [
+      { text: 'one', contentHash: 'hash-1' },
+      { text: 'two', contentHash: 'hash-2' },
+    ]);
+    const result = await indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'secret-key' },
+      providerClient: client,
+      batchSize: 2,
+    });
+    assert.equal(result.embedded, 2);
+    assert.deepEqual(scalarCalls, ['one', 'two']);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings removes malformed current cache rows and re-embeds them', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const [badChunkId, goodChunkId] = insertBookWithChunks(db, [
+      { text: 'bad', contentHash: 'hash-bad' },
+      { text: 'good', contentHash: 'hash-good' },
+    ]);
+    const insert = db.prepare('INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json) VALUES (?, ?, ?, ?, ?)');
+    insert.run(badChunkId, 'openrouter', 'openai/text-embedding-3-small', 'hash-bad', '[]');
+    insert.run(goodChunkId, 'openrouter', 'openai/text-embedding-3-small', 'hash-good', '[1,2]');
+
+    const result = await indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'secret-key' },
+      providerClient: { createEmbeddings: async () => [[3, 4]] },
+    });
+    assert.equal(result.embedded, 1);
+    assert.equal(result.skipped, 1);
+    assert.deepEqual(
+      JSON.parse(db.prepare('SELECT embedding_json FROM chunk_embeddings WHERE chunk_id = ?').get(badChunkId).embedding_json),
+      [3, 4],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings rejects an invalid batch before storing any vectors', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    insertBookWithChunks(db, [
+      { text: 'one', contentHash: 'hash-1' },
+      { text: 'two', contentHash: 'hash-2' },
+    ]);
+    await assert.rejects(indexMissingChunkEmbeddings({
+      db,
+      env: { OPENROUTER_API_KEY: 'secret-key' },
+      providerClient: { createEmbeddings: async () => [[1, 2], []] },
+      batchSize: 2,
+    }), /empty|inconsistent/i);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings rebuilds a fully populated cache when provider dimension changes', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const chunkIds = insertBookWithChunks(db, [
+      { text: 'fully cached one', contentHash: 'hash-1' },
+      { text: 'fully cached two', contentHash: 'hash-2' },
+    ]);
+    for (const chunkId of chunkIds) {
+      const hash = db.prepare('SELECT content_hash FROM chunks WHERE id = ?').get(chunkId).content_hash;
+      storeChunkEmbedding(db, {
+        chunkId, provider: 'openrouter', model: 'openai/text-embedding-3-small', contentHash: hash, embedding: [1, 2],
+      });
+    }
+    const calls = [];
+    const result = await indexMissingChunkEmbeddings({
+      db, env: { OPENROUTER_API_KEY: 'key' }, batchSize: 2,
+      providerClient: { createEmbeddings: async ({ inputs }) => {
+        calls.push(inputs);
+        return inputs.map(() => [1, 2, 3]);
+      } },
+    });
+    const dimensions = db.prepare('SELECT embedding_json FROM chunk_embeddings ORDER BY chunk_id').all()
+      .map((row) => JSON.parse(row.embedding_json).length);
+    assert.deepEqual(dimensions, [3, 3]);
+    assert.equal(result.remaining, 0);
+    assert.equal(result.embedded, 2);
+    assert.equal(calls[0].length, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('indexMissingChunkEmbeddings invalidates and rebuilds cache when provider dimension changes', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const [cachedId] = insertBookWithChunks(db, [
+      { text: 'cached old dimension', contentHash: 'old' },
+      { text: 'new chunk detects transition', contentHash: 'new' },
+    ]);
+    storeChunkEmbedding(db, {
+      chunkId: cachedId, provider: 'openrouter', model: 'openai/text-embedding-3-small', contentHash: 'old', embedding: [1, 2],
+    });
+    const calls = [];
+    const result = await indexMissingChunkEmbeddings({
+      db, env: { OPENROUTER_API_KEY: 'key' }, batchSize: 2,
+      providerClient: { createEmbeddings: async ({ inputs }) => {
+        calls.push(inputs);
+        return inputs.map(() => [1, 2, 3]);
+      } },
+    });
+    const dimensions = db.prepare('SELECT embedding_json FROM chunk_embeddings ORDER BY chunk_id').all()
+      .map((row) => JSON.parse(row.embedding_json).length);
+    assert.deepEqual(dimensions, [3, 3]);
+    assert.equal(result.remaining, 0);
+    assert.ok(calls.flat().includes('cached old dimension'));
   } finally {
     db.close();
   }
