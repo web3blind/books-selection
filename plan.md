@@ -8,13 +8,21 @@
 
 ## Active audit remediation
 
-## Release v0.3.6
+## Published release v0.3.6
 
 - `outcome`: publish current verified `main` as GitHub Release `v0.3.6` with stable Linux, Windows portable EXE/ZIP, and macOS ZIP assets.
 - `verification`: full tests, Electron smoke, `npm run build:desktop`, archive listing, SHA-256 checksums, GitHub asset read-back, and HTTP range checks for published downloads.
 - `constraints`: no real provider calls, no user data/config/database changes, no signing/notarization claims, and no modification of release contents after verification except replacing a failed upload before publication.
 - `boundaries`: package version/lockfile, `plan.md`, generated ignored `dist-desktop/`, Git tag, and GitHub Release only.
 - `stop_when`: build cannot produce a required platform asset, tests fail, GitHub authentication fails, or publishing would overwrite an existing `v0.3.6` tag/release.
+
+## Windows OpenRouter network fix
+
+- `outcome`: Electron provider calls use Chromium networking; failures identify their stage and write a sanitized local log.
+- `release`: publish the verified fix as `v0.3.7` with the same four stable cross-platform asset names.
+- `verification`: TDD, full tests, Electron smoke, release build, artifact checks, and published-download checks.
+- `constraints`: never log keys, authorization headers, prompts, excerpts, paths to books, or response bodies.
+- `boundaries`: server fetch injection, Electron main process, diagnostics, tests, package version, and release artifacts.
 
 ### Scope and non-goals
 

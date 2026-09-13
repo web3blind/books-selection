@@ -8,7 +8,11 @@ const preload = fs.readFileSync(path.join(__dirname, '..', 'desktop', 'preload.j
 
 test('Electron desktop starts backend in main process and opens BrowserWindow', () => {
   assert.ok(main.includes("require('../src/server')"), 'desktop should import the server module directly');
-  assert.ok(main.includes('startServer({ defaultRoot: \'\', port: 0, openBrowser: false'), 'desktop should start local backend without opening the system browser');
+  assert.ok(main.includes('providerFetchImpl: net.fetch'), 'desktop provider calls should use Electron Chromium networking');
+  assert.ok(main.includes('const { app, BrowserWindow, dialog, ipcMain, net, shell }'), 'desktop should import Electron net');
+  assert.ok(main.includes("defaultRoot: ''"), 'desktop should start the backend without a default books folder');
+  assert.ok(main.includes('port: 0'), 'desktop should allocate an ephemeral loopback port');
+  assert.ok(main.includes('openBrowser: false'), 'desktop should not open the system browser');
   assert.ok(main.includes('new BrowserWindow'), 'desktop should open an app window');
   assert.ok(main.includes('serverHandle.url'), 'desktop window should load the in-process server URL');
   assert.ok(main.includes('async function ensureServer()'), 'desktop should reuse one backend server for reopened windows');

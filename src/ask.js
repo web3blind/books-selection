@@ -209,7 +209,7 @@ async function answerLibraryQuestion({
     return createFallbackResult({ providerName, provider, evidence, question: trimmedQuestion });
   }
 
-  const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey });
+  const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey, fetchImpl });
   const providerAnswer = await client.chatCompletion({ messages: buildMessages(trimmedQuestion, rows) });
   const citedEvidence = resolveProviderEvidence(providerAnswer.evidence, evidence);
 

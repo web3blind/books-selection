@@ -14,6 +14,7 @@ const { indexLibrary, searchChunks } = require('./indexer');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
+const { writeProviderNetworkDiagnostic } = require('./diagnostics');
 
 const publicDir = path.join(__dirname, '..', 'public');
 const API_COOKIE_NAME = 'books_selection_api_token';
@@ -162,14 +163,18 @@ async function withSearchDatabase(databasePath, callback) {
 function createRequestHandler(options = {}) {
   const defaultRoot = options.defaultRoot || '';
   const updateCheckOptions = options.updateCheckOptions || {};
+  const providerFetchImpl = options.providerFetchImpl;
+  const diagnosticWriter = options.diagnosticWriter || writeProviderNetworkDiagnostic;
   const apiToken = options.apiToken || randomBytes(32).toString('base64url');
 
   return async function handleRequest(request, response) {
+  let route = '';
   try {
     if (!hasExpectedHost(request) || !hasAllowedOrigin(request)) {
       return sendJson(response, 403, { error: 'Request origin is not allowed.' });
     }
     const url = new URL(request.url, expectedOrigin(request));
+    route = url.pathname;
     if (url.pathname.startsWith('/api/')) {
       const requestToken = parseCookies(request.headers.cookie)[API_COOKIE_NAME];
       if (!tokensEqual(requestToken, apiToken)) {
@@ -269,7 +274,9 @@ function createRequestHandler(options = {}) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({ db, question: query, providerOverrides }));
+      const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({
+        db, question: query, providerOverrides, fetchImpl: providerFetchImpl,
+      }));
       return sendJson(response, 200, { query, result });
     }
 
@@ -288,7 +295,9 @@ function createRequestHandler(options = {}) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({ db, query, providerOverrides }));
+      const result = await withSearchDatabase(databasePath, (db) => semanticSearchIfConfigured({
+        db, query, providerOverrides, fetchImpl: providerFetchImpl,
+      }));
       return sendJson(response, 200, { query, result });
     }
 
@@ -304,7 +313,9 @@ function createRequestHandler(options = {}) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({ db, limit, batchSize, providerOverrides }));
+      const result = await withSearchDatabase(databasePath, (db) => indexMissingChunkEmbeddings({
+        db, limit, batchSize, providerOverrides, fetchImpl: providerFetchImpl,
+      }));
       return sendJson(response, 200, { db: databasePath, result });
     }
 
@@ -337,7 +348,9 @@ function createRequestHandler(options = {}) {
       const result = await withSearchDatabase(databasePath, async (db) => {
         const retrievalQuery = createFtsQueryFromQuestion(query);
         const evidenceRows = searchChunks(db, retrievalQuery, { limit: 12, bookId });
-        return extractFactFromEvidence({ db, bookId, factKey, factType, question: query, evidenceRows, providerOverrides });
+        return extractFactFromEvidence({
+          db, bookId, factKey, factType, question: query, evidenceRows, providerOverrides, fetchImpl: providerFetchImpl,
+        });
       });
       return sendJson(response, 200, { query, result });
     }
@@ -353,7 +366,16 @@ function createRequestHandler(options = {}) {
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   } catch (error) {
-    sendJson(response, error.statusCode || 500, { error: error.message });
+    let diagnosticLog = '';
+    if (error.code === 'PROVIDER_NETWORK_ERROR') {
+      try {
+        diagnosticLog = await diagnosticWriter(error, { route }, process.env);
+      } catch {
+        // Never hide the original provider error if local diagnostics cannot be written.
+      }
+    }
+    const logHint = diagnosticLog ? ` Diagnostic log: ${diagnosticLog}` : '';
+    sendJson(response, error.statusCode || 500, { error: `${error.message}${logHint}` });
   }
   };
 }
@@ -367,6 +389,8 @@ function startServer(options = {}) {
   const server = http.createServer(createRequestHandler({
     defaultRoot,
     updateCheckOptions: options.updateCheckOptions,
+    providerFetchImpl: options.providerFetchImpl,
+    diagnosticWriter: options.diagnosticWriter,
   }));
 
   return new Promise((resolve, reject) => {

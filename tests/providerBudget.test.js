@@ -144,6 +144,58 @@ test('budget session key distinguishes credentials without containing raw keys',
   assert.doesNotMatch(second, /credential-two/);
 });
 
+test('provider client identifies whether credits or chat networking failed', async () => {
+  const networkFailure = () => {
+    throw new TypeError('fetch failed', { cause: Object.assign(new Error('private detail'), { code: 'ECONNRESET' }) });
+  };
+  await assert.rejects(
+    checkProviderBudget({ provider: openRouterProvider, apiKey: 'test-key', fetchImpl: networkFailure }),
+    (error) => error.code === 'PROVIDER_NETWORK_ERROR' && error.providerOperation === 'OpenRouter credits check',
+  );
+
+  const client = createOpenAiCompatibleClient({
+    provider: { ...openRouterProvider, budget: { enabled: false } },
+    apiKey: 'test-key',
+    fetchImpl: networkFailure,
+  });
+  await assert.rejects(
+    client.chatCompletion({ messages: [{ role: 'user', content: 'test' }] }),
+    (error) => error.code === 'PROVIDER_NETWORK_ERROR' && error.providerOperation === 'Provider chat completion',
+  );
+});
+
+test('provider client identifies response-body transport failures', async () => {
+  const bodyFailureResponse = {
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new TypeError('terminated', {
+        cause: Object.assign(new Error('private body detail'), { code: 'ECONNRESET' }),
+      });
+    },
+  };
+  await assert.rejects(
+    checkProviderBudget({
+      provider: openRouterProvider,
+      apiKey: 'test-key',
+      fetchImpl: async () => bodyFailureResponse,
+    }),
+    (error) => error.code === 'PROVIDER_NETWORK_ERROR'
+      && error.providerOperation === 'OpenRouter credits response',
+  );
+
+  const client = createOpenAiCompatibleClient({
+    provider: { ...openRouterProvider, budget: { enabled: false } },
+    apiKey: 'test-key',
+    fetchImpl: async () => bodyFailureResponse,
+  });
+  await assert.rejects(
+    client.chatCompletion({ messages: [{ role: 'user', content: 'test' }] }),
+    (error) => error.code === 'PROVIDER_NETWORK_ERROR'
+      && error.providerOperation === 'Provider chat response',
+  );
+});
+
 test('budget guard rejects a configured baseline later than current provider usage', async () => {
   await assert.rejects(
     () => checkProviderBudget({

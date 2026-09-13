@@ -109,6 +109,7 @@ async function extractFactFromEvidence({
   providerOverrides = {},
   env = process.env,
   providerClient,
+  fetchImpl,
 } = {}) {
   if (bookId === undefined || bookId === null || bookId === '') {
     throw new Error('bookId is required.');
@@ -134,7 +135,7 @@ async function extractFactFromEvidence({
     });
   }
 
-  const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey });
+  const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey, fetchImpl });
   const providerResult = await client.chatCompletion({
     messages: buildFactExtractionMessages({ factKey, factType, question, evidenceRows: normalizedEvidence }),
   });

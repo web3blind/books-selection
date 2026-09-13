@@ -80,10 +80,12 @@ The renderer page does not get full Node.js access:
 Default writable paths:
 
 - config: `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set;
+- sanitized provider network diagnostics: `~/.books-selection/logs/books-selection.log`, or `BOOKS_SELECTION_LOG_PATH` if set;
 - desktop SQLite index: Electron user-data directory, `data/books-selection.sqlite`, or `BOOKS_SELECTION_DB_PATH` if set;
 - source / npm mode SQLite index: project-local `data/books-selection.sqlite`, or `BOOKS_SELECTION_DB_PATH` if set.
 
 The config can contain a local API key if you enter it in Settings, so do not publish or commit your personal config file.
+The diagnostic log records only the failed provider stage, endpoint, safe network error code, and API route. It does not record API keys, authorization headers, questions, prompts, excerpts, or response bodies. Desktop provider requests use Electron's Chromium network stack so they follow the desktop session's proxy and VPN routing.
 
 ## Current features
 

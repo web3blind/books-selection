@@ -1,5 +1,6 @@
 const path = require('node:path');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const electron = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, shell } = electron;
 const { startServer } = require('../src/server');
 const { isAllowedExternalUrl, isTrustedRendererUrl } = require('./security');
 
@@ -18,7 +19,13 @@ function configureDesktopEnvironment() {
 async function ensureServer() {
   configureDesktopEnvironment();
   if (!serverHandle) {
-    serverHandle = await startServer({ defaultRoot: '', port: 0, openBrowser: false, log: true });
+    serverHandle = await startServer({
+      defaultRoot: '',
+      port: 0,
+      openBrowser: false,
+      log: true,
+      providerFetchImpl: net.fetch,
+    });
   }
   return serverHandle;
 }

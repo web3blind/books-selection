@@ -1,4 +1,5 @@
 const { createHash } = require('node:crypto');
+const { fetchWithProviderContext, readJsonWithProviderContext } = require('./providerNetwork');
 
 const defaultBudgetState = new Map();
 const budgetOperationTails = new Map();
@@ -34,18 +35,19 @@ function parseCreditsPayload(payload) {
 
 async function fetchOpenRouterCredits({ provider, apiKey, fetchImpl }) {
   const creditsPath = provider?.budget?.creditsPath || '/credits';
-  const response = await fetchImpl(`${trimTrailingSlash(provider.baseUrl)}${creditsPath}`, {
+  const creditsUrl = `${trimTrailingSlash(provider.baseUrl)}${creditsPath}`;
+  const response = await fetchWithProviderContext(fetchImpl, creditsUrl, {
     method: 'GET',
     headers: {
       authorization: `Bearer ${apiKey}`,
     },
-  });
+  }, 'OpenRouter credits check');
 
   if (!response.ok) {
     throw new Error(`OpenRouter budget check failed with HTTP ${response.status}`);
   }
 
-  return parseCreditsPayload(await response.json());
+  return parseCreditsPayload(await readJsonWithProviderContext(response, creditsUrl, 'OpenRouter credits response'));
 }
 
 async function checkProviderBudget({
