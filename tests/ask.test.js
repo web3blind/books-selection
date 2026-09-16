@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { answerLibraryQuestion, buildEvidencePrompt, createCoverage, createEvidenceCandidates } = require('../src/ask');
+const { answerLibraryQuestion, buildEvidencePrompt, createCoverage, createEvidenceCandidates, groupCandidatesByCycle } = require('../src/ask');
 const { createOpenAiCompatibleClient } = require('../src/providerClient');
 const { initializeSearchDatabase } = require('../src/searchDb');
 
@@ -73,6 +73,42 @@ test('createEvidenceCandidates groups local evidence without adding AI-generated
     },
   ]);
   assert.equal('reason' in candidates[0], false);
+});
+
+test('groupCandidatesByCycle collapses repeated cycles into one ordered group', () => {
+  const candidates = [
+    {
+      cycle: 'Cycle A', book: 'Book A1', evidenceCount: 2, sources: ['semantic', 'fts'],
+      excerpts: [{ source: 'semantic', chunkIndex: 0, excerpt: 'Первый фрагмент.' }],
+    },
+    {
+      cycle: 'Cycle B', book: 'Book B1', evidenceCount: 1, sources: ['fts'],
+      excerpts: [{ source: 'fts', chunkIndex: 3, excerpt: 'Другой цикл.' }],
+    },
+    {
+      cycle: 'Cycle A', book: 'Book A2', evidenceCount: 1, sources: ['fts'],
+      excerpts: [{ source: 'fts', chunkIndex: 7, excerpt: 'Вторая книга того же цикла.' }],
+    },
+  ];
+
+  const groups = groupCandidatesByCycle(candidates);
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups.map((group) => group.cycle), ['Cycle A', 'Cycle B']);
+  assert.deepEqual(groups[0].books.map((book) => book.book), ['Book A1', 'Book A2']);
+  assert.equal(groups[0].bookCount, 2);
+  assert.equal(groups[0].evidenceCount, 3);
+  assert.deepEqual(groups[0].sources, ['semantic', 'fts']);
+  assert.deepEqual(groups[1].books.map((book) => book.book), ['Book B1']);
+  assert.equal(groups[0].books[1].excerpts[0].excerpt, 'Вторая книга того же цикла.');
+});
+
+test('groupCandidatesByCycle tolerates missing, empty and malformed input', () => {
+  assert.deepEqual(groupCandidatesByCycle(undefined), []);
+  assert.deepEqual(groupCandidatesByCycle([]), []);
+  assert.deepEqual(groupCandidatesByCycle([{ book: 'Without cycle' }]), [
+    { cycle: '', books: [{ book: 'Without cycle' }], bookCount: 1, evidenceCount: 0, sources: [] },
+  ]);
 });
 
 test('createCoverage distinguishes represented evidence from exhaustive corpus checks', () => {
@@ -167,6 +203,9 @@ test('answerLibraryQuestion returns deterministic local candidates without extra
   assert.equal(result.candidates.length, 2);
   assert.deepEqual(result.candidates.map((candidate) => candidate.book), ['Lantern Book', 'Forest Book']);
   assert.deepEqual(result.candidates.map((candidate) => candidate.evidenceCount), [2, 1]);
+  assert.deepEqual(result.cycleGroups.map((group) => group.cycle), ['Dragon Cycle', 'Forest Cycle']);
+  assert.deepEqual(result.cycleGroups.map((group) => group.bookCount), [1, 1]);
+  assert.deepEqual(result.cycleGroups.map((group) => group.evidenceCount), [2, 1]);
 });
 
 test('answerLibraryQuestion refuses an answer until every indexed chunk was scored', async () => {
@@ -185,6 +224,7 @@ test('answerLibraryQuestion refuses an answer until every indexed chunk was scor
     });
     assert.equal(result.status, 'corpus_not_ready');
     assert.equal(result.coverage.searchComplete, false);
+    assert.deepEqual(result.cycleGroups, []);
     assert.equal(answerCalls, 0);
   } finally {
     db.close();

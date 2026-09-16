@@ -362,6 +362,7 @@
         citedEvidenceHeading: 'Фрагменты, использованные в ответе',
         evidenceHeading: 'Все найденные фрагменты',
         candidatesHeading: 'Найденные варианты',
+        cycleGroupSummary: (books, snippets) => `Найдено книг: ${books}, фрагментов: ${snippets}`,
         candidateEvidenceCount: (count) => `Доказательных фрагментов: ${count}`,
         candidateSources: (sources) => `Источники evidence: ${sources}`,
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Фрагмент ${chunkIndex}`,
@@ -495,6 +496,7 @@
         citedEvidenceHeading: 'Snippets used in the answer',
         evidenceHeading: 'All retrieved snippets',
         candidatesHeading: 'Found candidates',
+        cycleGroupSummary: (books, snippets) => `Books found: ${books}, snippets: ${snippets}`,
         candidateEvidenceCount: (count) => `Evidence snippets: ${count}`,
         candidateSources: (sources) => `Evidence sources: ${sources}`,
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Snippet ${chunkIndex}`,
@@ -1044,8 +1046,8 @@
       `;
     }
 
-    function renderCandidates(candidates) {
-      if (!Array.isArray(candidates) || candidates.length === 0) {
+    function renderCycleGroups(groups) {
+      if (!Array.isArray(groups) || groups.length === 0) {
         return `
           <h3>${escapeHtml(t('candidatesHeading'))}</h3>
           <p>${escapeHtml(t('nothingFound'))}</p>
@@ -1054,21 +1056,30 @@
 
       return `
         <h3>${escapeHtml(t('candidatesHeading'))}</h3>
-        <ol>${candidates.map((candidate) => {
-          const excerpts = Array.isArray(candidate.excerpts) ? candidate.excerpts : [];
-          const sources = Array.isArray(candidate.sources) ? candidate.sources.join(', ') : '';
+        <ol>${groups.map((group) => {
+          const books = Array.isArray(group.books) ? group.books : [];
+          const sources = Array.isArray(group.sources) ? group.sources.join(', ') : '';
           return `
           <li>
-            <strong>${escapeHtml(candidate.book || 'Book')}</strong>
-            <div class="muted">${escapeHtml(candidate.cycle || '')}</div>
-            <p>${escapeHtml(t('candidateEvidenceCount', candidate.evidenceCount || excerpts.length))}</p>
+            <h4>${escapeHtml(group.cycle || '')}</h4>
+            <p class="muted">${escapeHtml(t('cycleGroupSummary', group.bookCount || books.length, group.evidenceCount || 0))}</p>
             ${sources ? `<p class="muted">${escapeHtml(t('candidateSources', sources))}</p>` : ''}
-            <ul>${excerpts.map((excerpt) => `
+            <ul>${books.map((book) => {
+              const excerpts = Array.isArray(book.excerpts) ? book.excerpts : [];
+              const count = book.evidenceCount || excerpts.length;
+              return `
               <li>
-                <strong>${escapeHtml(t('candidateExcerptLabel', excerpt.source || 'evidence', excerpt.chunkIndex ?? ''))}</strong>
-                <p>${escapeHtml(excerpt.excerpt || '')}</p>
+                <details>
+                  <summary>${escapeHtml(book.book || 'Book')} · ${escapeHtml(t('candidateEvidenceCount', count))}</summary>
+                  <ul>${excerpts.map((excerpt) => `
+                    <li>
+                      <strong>${escapeHtml(t('candidateExcerptLabel', excerpt.source || 'evidence', excerpt.chunkIndex ?? ''))}</strong>
+                      <p>${escapeHtml(excerpt.excerpt || '')}</p>
+                    </li>
+                  `).join('')}</ul>
+                </details>
               </li>
-            `).join('')}</ul>
+            `; }).join('')}</ul>
           </li>
         `; }).join('')}</ol>
       `;
@@ -1090,7 +1101,7 @@
       const evidence = result.evidence || [];
       const citedEvidence = result.citedEvidence || [];
       const coverage = result.coverage || null;
-      const candidates = result.candidates || [];
+      const cycleGroups = result.cycleGroups || [];
       const checkedBooks = (result.checked && result.checked.books) || [];
       const answer = result.answer || result.message || '';
       aiResultsNode.innerHTML = `
@@ -1101,7 +1112,7 @@
         ${result.uncertainty ? `<p><strong>${escapeHtml(t('uncertaintyLabel'))}</strong> ${escapeHtml(result.uncertainty)}</p>` : ''}
         ${coverage ? `<p>${escapeHtml(t('coverageSummary', coverage))}</p>` : ''}
         ${citedEvidence.length > 0 ? `<h3>${escapeHtml(t('citedEvidenceHeading'))}</h3>${renderEvidenceList(citedEvidence)}` : ''}
-        ${renderCandidates(candidates)}
+        ${renderCycleGroups(cycleGroups)}
         <details>
           <summary>${escapeHtml(t('evidenceHeading'))} (${evidence.length})</summary>
           ${renderEvidenceList(evidence)}

@@ -243,7 +243,32 @@ function createEvidenceCandidates(evidence, { maxExcerptsPerCandidate = 3 } = {}
   return groups;
 }
 
+function groupCandidatesByCycle(candidates) {
+  const groups = [];
+  const byCycle = new Map();
+
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const cycle = String(candidate?.cycle || '');
+    if (!byCycle.has(cycle)) {
+      const group = { cycle, books: [], bookCount: 0, evidenceCount: 0, sources: [] };
+      byCycle.set(cycle, group);
+      groups.push(group);
+    }
+
+    const group = byCycle.get(cycle);
+    group.books.push(candidate);
+    group.bookCount += 1;
+    group.evidenceCount += Number(candidate?.evidenceCount) || 0;
+    for (const source of Array.isArray(candidate?.sources) ? candidate.sources : []) {
+      if (!group.sources.includes(source)) group.sources.push(source);
+    }
+  }
+
+  return groups;
+}
+
 function createFallbackResult({ providerName, provider, evidence, question, coverage, semantic }) {
+  const candidates = createEvidenceCandidates(evidence);
   return {
     status: 'needs_provider_key',
     answer: 'AI provider is not configured; returning local evidence candidates.',
@@ -253,7 +278,8 @@ function createFallbackResult({ providerName, provider, evidence, question, cove
     evidence,
     coverage,
     semantic,
-    candidates: createEvidenceCandidates(evidence),
+    candidates,
+    cycleGroups: groupCandidatesByCycle(candidates),
     checked: createChecked(evidence),
     setup: {
       provider: providerName,
@@ -330,6 +356,7 @@ async function answerLibraryQuestion({
       evidence: [],
       citedEvidence: [],
       candidates: [],
+      cycleGroups: [],
       coverage,
       semantic,
       checked: { books: [], cycles: [], chunks: [] },
@@ -345,6 +372,7 @@ async function answerLibraryQuestion({
       evidence: [],
       citedEvidence: [],
       candidates: [],
+      cycleGroups: [],
       coverage,
       semantic,
       checked,
@@ -364,6 +392,7 @@ async function answerLibraryQuestion({
   const citedEvidence = resolveProviderEvidence(providerAnswer.evidence, evidence);
   const deterministicUncertainty = coverageUncertainty(coverage);
   const uncertainty = [providerAnswer.uncertainty, deterministicUncertainty, semanticUncertainty(semantic)].filter(Boolean).join(' ');
+  const candidates = createEvidenceCandidates(evidence);
 
   return {
     status: 'answered',
@@ -375,7 +404,8 @@ async function answerLibraryQuestion({
     citedEvidence,
     coverage,
     semantic,
-    candidates: createEvidenceCandidates(evidence),
+    candidates,
+    cycleGroups: groupCandidatesByCycle(candidates),
     checked,
   };
 }
@@ -387,6 +417,7 @@ module.exports = {
   createCoverage,
   createEvidenceCandidates,
   createFtsQueryFromQuestion,
+  groupCandidatesByCycle,
   normalizeEvidence,
   resolveProviderEvidence,
 };
