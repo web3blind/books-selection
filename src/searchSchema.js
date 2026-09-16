@@ -109,6 +109,25 @@ CREATE TABLE IF NOT EXISTS corpus_state (
 );
 
 CREATE INDEX IF NOT EXISTS idx_books_hash_mtime ON books(content_hash, mtime_ms);
+CREATE TABLE IF NOT EXISTS cycle_favorites (
+  cycle_key TEXT PRIMARY KEY,
+  cycle_name TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  sort_position INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cycle_query_hits (
+  cycle_key TEXT NOT NULL,
+  query_normalized TEXT NOT NULL,
+  query_display TEXT NOT NULL,
+  best_position INTEGER NOT NULL,
+  times_seen INTEGER NOT NULL DEFAULT 1,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  PRIMARY KEY (cycle_key, query_normalized)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cycle_query_hits_cycle ON cycle_query_hits(cycle_key, best_position);
 CREATE INDEX IF NOT EXISTS idx_chunks_book ON chunks(book_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_provider_model_hash ON chunk_embeddings(provider, model, content_hash);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_chunk ON chunk_embeddings(chunk_id);

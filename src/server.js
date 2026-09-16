@@ -10,6 +10,15 @@ const { answerLibraryQuestion } = require('./ask');
 const { getEmbeddingIndexStatus, indexMissingChunkEmbeddings } = require('./embeddingIndexer');
 const { semanticSearchIfConfigured } = require('./embeddings');
 const { extractFactFromEvidence } = require('./factExtractor');
+const {
+  addCycleFavorite,
+  clearFavoriteHistory,
+  listFavorites,
+  moveFavorite,
+  rebuildFavoriteOrderByRating,
+  recordAskCycleHits,
+  removeCycleFavorite,
+} = require('./favorites');
 const { indexLibrary, searchChunks } = require('./indexer');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
@@ -19,6 +28,7 @@ const { writeProviderNetworkDiagnostic } = require('./diagnostics');
 const publicDir = path.join(__dirname, '..', 'public');
 const API_COOKIE_NAME = 'books_selection_api_token';
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const MAX_CYCLE_NAME_LENGTH = 200;
 
 class HttpError extends Error {
   constructor(statusCode, message) {
@@ -323,10 +333,88 @@ function createRequestHandler(options = {}) {
         return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
       }
 
-      const result = await withSearchDatabase(databasePath, (db) => answerLibraryQuestion({
-        db, question: query, providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
-      }));
+      const result = await withSearchDatabase(databasePath, async (db) => {
+        const answer = await answerLibraryQuestion({
+          db, question: query, providerOverrides, fetchImpl: providerFetchImpl, signal: requestAbort.signal,
+        });
+        try {
+          recordAskCycleHits(db, { cycleGroups: answer.cycleGroups, query });
+        } catch {
+          // Favorite history is a convenience layer: a failed write must never break Ask.
+        }
+        return answer;
+      });
       return sendJson(response, 200, { query, result });
+    }
+
+    if (url.pathname === '/api/favorites') {
+      if (request.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed.' });
+      const databasePath = getDbPath(url, appConfig);
+      if (!databasePath) return sendJson(response, 400, { error: 'Нужен путь к SQLite базе.' });
+      const favorites = await withSearchDatabase(databasePath, (db) => listFavorites(db));
+      return sendJson(response, 200, { db: databasePath, count: favorites.length, favorites });
+    }
+
+    if (url.pathname === '/api/cycle-favorite') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      const cycle = String(payload.cycle || '').trim();
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+      if (!cycle || cycle.length > MAX_CYCLE_NAME_LENGTH) {
+        return sendJson(response, 400, { error: 'Нужно название цикла.' });
+      }
+
+      const favorite = payload.favorite !== false;
+      const result = await withSearchDatabase(databasePath, (db) => (favorite
+        ? addCycleFavorite(db, { cycle })
+        : removeCycleFavorite(db, { cycle })));
+      return sendJson(response, 200, { db: databasePath, cycle, favorite, result });
+    }
+
+    if (url.pathname === '/api/favorites/reorder') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+
+      if (payload.action === 'rating') {
+        const result = await withSearchDatabase(databasePath, (db) => rebuildFavoriteOrderByRating(db));
+        return sendJson(response, 200, { db: databasePath, action: 'rating', result });
+      }
+
+      const cycle = String(payload.cycle || '').trim();
+      const direction = String(payload.direction || '');
+      if (!cycle || cycle.length > MAX_CYCLE_NAME_LENGTH || !['up', 'down'].includes(direction)) {
+        return sendJson(response, 400, { error: 'Нужны cycle и direction up|down, либо action rating.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, (db) => moveFavorite(db, { cycle, direction }));
+      return sendJson(response, 200, { db: databasePath, cycle, direction, result });
+    }
+
+    if (url.pathname === '/api/favorites/clear-history') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+      const cycle = payload.cycle === undefined || payload.cycle === null ? undefined : String(payload.cycle).trim();
+      if (cycle !== undefined && (!cycle || cycle.length > MAX_CYCLE_NAME_LENGTH)) {
+        return sendJson(response, 400, { error: 'Пустое название цикла.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, (db) => clearFavoriteHistory(db, cycle === undefined ? {} : { cycle }));
+      return sendJson(response, 200, { db: databasePath, result });
     }
 
     if (url.pathname === '/api/semantic-search') {

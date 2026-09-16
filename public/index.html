@@ -44,6 +44,7 @@
 
   <nav id="mainNav" class="actions" aria-label="Основные разделы">
     <button id="mainViewButton" type="button">Главная</button>
+    <button id="favoritesViewButton" type="button">Избранное</button>
     <button id="settingsViewButton" type="button">Настройки</button>
   </nav>
 
@@ -120,6 +121,18 @@
     <div id="settingsStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></div>
   </section>
 
+  <section id="favoritesPanel" class="panel" aria-labelledby="favoritesTitle" hidden>
+    <h2 id="favoritesTitle">Избранное</h2>
+    <p id="favoritesIntro" class="meta">Рейтинг растёт, когда цикл попадает в топ-5 ответа «Вопрос по циклам», и только пока цикл находится в избранном. Порядок можно менять кнопками «Вверх на 1» и «Вниз на 1».</p>
+    <p id="favoritesStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div class="actions">
+      <button id="favoritesRefreshButton" type="button">Обновить избранное</button>
+      <button id="favoritesReorderButton" type="button">Сортировать по рейтингу</button>
+      <button id="favoritesClearAllButton" type="button">Очистить всю историю запросов</button>
+    </div>
+    <section id="favoritesList" aria-label="Избранные циклы"></section>
+  </section>
+
   <section id="mainPanel">
 
   <div>
@@ -185,8 +198,15 @@
   <script>
     const languageSelect = document.getElementById('languageSelect');
     const mainViewButton = document.getElementById('mainViewButton');
+    const favoritesViewButton = document.getElementById('favoritesViewButton');
     const settingsViewButton = document.getElementById('settingsViewButton');
     const mainPanel = document.getElementById('mainPanel');
+    const favoritesPanel = document.getElementById('favoritesPanel');
+    const favoritesStatusNode = document.getElementById('favoritesStatus');
+    const favoritesListNode = document.getElementById('favoritesList');
+    const favoritesRefreshButton = document.getElementById('favoritesRefreshButton');
+    const favoritesReorderButton = document.getElementById('favoritesReorderButton');
+    const favoritesClearAllButton = document.getElementById('favoritesClearAllButton');
     const settingsPanel = document.getElementById('settingsPanel');
     const settingsStatusNode = document.getElementById('settingsStatus');
     const saveSettingsButton = document.getElementById('saveSettingsButton');
@@ -270,7 +290,36 @@
         languageLabel: 'Язык',
         mainNavLabel: 'Основные разделы',
         mainViewButtonText: 'Главная',
+        favoritesViewButtonText: 'Избранное',
         settingsViewButtonText: 'Настройки',
+        favoritesTitleText: 'Избранное',
+        favoritesIntroText: 'Рейтинг растёт, когда цикл попадает в топ-5 ответа «Вопрос по циклам», и только пока цикл находится в избранном. Порядок можно менять кнопками «Вверх на 1» и «Вниз на 1».',
+        favoritesListLabel: 'Избранные циклы',
+        favoritesRefreshButtonText: 'Обновить избранное',
+        favoritesReorderButtonText: 'Сортировать по рейтингу',
+        favoritesClearAllButtonText: 'Очистить всю историю запросов',
+        favoritesLoading: 'Загружаю избранное...',
+        favoritesEmpty: 'Пока ничего не добавлено. Отметь цикл кнопкой «В избранное».',
+        favoritesCount: (count) => `Циклов в избранном: ${count}.`,
+        favoritesLoadError: (message) => `Не удалось загрузить избранное: ${message}`,
+        favoriteAdd: 'В избранное',
+        favoriteRemove: 'Убрать из избранного',
+        favoriteAdded: (cycle) => `Цикл добавлен в избранное: ${cycle}.`,
+        favoriteRemoved: (cycle) => `Цикл убран из избранного: ${cycle}.`,
+        favoriteToggleError: (message) => `Не удалось изменить избранное: ${message}`,
+        favoriteMoveUp: 'Вверх на 1',
+        favoriteMoveDown: 'Вниз на 1',
+        favoriteMoved: (cycle) => `Порядок изменён: ${cycle}.`,
+        favoriteMoveEdge: 'Цикл уже на краю списка.',
+        favoritesReorderConfirm: 'Пересобрать порядок по рейтингу? Ручной порядок будет сброшен.',
+        favoritesReordered: (count) => `Порядок пересобран по рейтингу: ${count}.`,
+        favoritesClearCycle: 'Очистить историю этого цикла',
+        favoritesClearAllConfirm: 'Очистить всю историю запросов? Рейтинг всех циклов станет нулевым.',
+        favoritesCleared: (count) => `Удалено записей истории: ${count}.`,
+        favoritesRating: (rating, leaders, queries) => `Рейтинг: ${rating}. Лидер в запросах: ${leaders}. Уникальных запросов: ${queries}.`,
+        favoritesQueriesHeading: 'Запросы, где цикл попал в топ-5',
+        favoritesNoHistory: 'Пока нет запросов.',
+        favoritesHitLine: (position, query, timesSeen) => `Место ${position}: «${query}», раз: ${timesSeen}`,
         settingsTitleText: 'Настройки',
         settingsIntroText: 'Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.',
         settingsBooksRootLabel: 'Путь к папке книг',
@@ -404,7 +453,36 @@
         languageLabel: 'Language',
         mainNavLabel: 'Main sections',
         mainViewButtonText: 'Main',
+        favoritesViewButtonText: 'Favorites',
         settingsViewButtonText: 'Settings',
+        favoritesTitleText: 'Favorites',
+        favoritesIntroText: 'The rating grows when a cycle reaches the top five of an Ask answer, and only while the cycle is a favorite. Use “Move up 1” and “Move down 1” to change the order.',
+        favoritesListLabel: 'Favorite cycles',
+        favoritesRefreshButtonText: 'Reload favorites',
+        favoritesReorderButtonText: 'Sort by rating',
+        favoritesClearAllButtonText: 'Clear all query history',
+        favoritesLoading: 'Loading favorites...',
+        favoritesEmpty: 'Nothing is favorited yet. Mark a cycle with “Add to favorites”.',
+        favoritesCount: (count) => `Favorite cycles: ${count}.`,
+        favoritesLoadError: (message) => `Could not load favorites: ${message}`,
+        favoriteAdd: 'Add to favorites',
+        favoriteRemove: 'Remove from favorites',
+        favoriteAdded: (cycle) => `Cycle added to favorites: ${cycle}.`,
+        favoriteRemoved: (cycle) => `Cycle removed from favorites: ${cycle}.`,
+        favoriteToggleError: (message) => `Could not change favorites: ${message}`,
+        favoriteMoveUp: 'Move up 1',
+        favoriteMoveDown: 'Move down 1',
+        favoriteMoved: (cycle) => `Order changed: ${cycle}.`,
+        favoriteMoveEdge: 'The cycle is already at the edge of the list.',
+        favoritesReorderConfirm: 'Rebuild the order by rating? The manual order will be reset.',
+        favoritesReordered: (count) => `Order rebuilt by rating: ${count}.`,
+        favoritesClearCycle: 'Clear this cycle history',
+        favoritesClearAllConfirm: 'Clear all query history? Every cycle rating will become zero.',
+        favoritesCleared: (count) => `History entries removed: ${count}.`,
+        favoritesRating: (rating, leaders, queries) => `Rating: ${rating}. Leads: ${leaders}. Unique queries: ${queries}.`,
+        favoritesQueriesHeading: 'Queries where the cycle reached the top five',
+        favoritesNoHistory: 'No queries yet.',
+        favoritesHitLine: (position, query, timesSeen) => `Position ${position}: “${query}”, seen ${timesSeen} times`,
         settingsTitleText: 'Settings',
         settingsIntroText: 'Configure the books folder, SQLite database, providers, models, API keys, and the OpenRouter limit here.',
         settingsBooksRootLabel: 'Books folder path',
@@ -556,6 +634,9 @@
     languageSelect.value = currentLanguage;
 
     let currentBooks = [];
+    let favoriteKeys = new Set();
+    let currentFavorites = [];
+    let favoritesLoaded = false;
 
     function t(key, ...args) {
       const value = messages[currentLanguage][key];
@@ -574,7 +655,14 @@
       languageSelect.setAttribute('aria-label', t('languageLabel'));
       document.getElementById('mainNav').setAttribute('aria-label', t('mainNavLabel'));
       mainViewButton.textContent = t('mainViewButtonText');
+      favoritesViewButton.textContent = t('favoritesViewButtonText');
       settingsViewButton.textContent = t('settingsViewButtonText');
+      document.getElementById('favoritesTitle').textContent = t('favoritesTitleText');
+      document.getElementById('favoritesIntro').textContent = t('favoritesIntroText');
+      favoritesListNode.setAttribute('aria-label', t('favoritesListLabel'));
+      favoritesRefreshButton.textContent = t('favoritesRefreshButtonText');
+      favoritesReorderButton.textContent = t('favoritesReorderButtonText');
+      favoritesClearAllButton.textContent = t('favoritesClearAllButtonText');
       document.getElementById('settingsTitle').textContent = t('settingsTitleText');
       document.getElementById('settingsIntro').textContent = t('settingsIntroText');
       document.getElementById('settingsBooksRootLabel').textContent = t('settingsBooksRootLabel');
@@ -649,11 +737,16 @@
 
     function showView(view) {
       const settingsVisible = view === 'settings';
+      const favoritesVisible = view === 'favorites';
       settingsPanel.hidden = !settingsVisible;
-      mainPanel.hidden = settingsVisible;
-      mainViewButton.setAttribute('aria-current', settingsVisible ? 'false' : 'page');
+      favoritesPanel.hidden = !favoritesVisible;
+      mainPanel.hidden = settingsVisible || favoritesVisible;
+      mainViewButton.setAttribute('aria-current', settingsVisible || favoritesVisible ? 'false' : 'page');
+      favoritesViewButton.setAttribute('aria-current', favoritesVisible ? 'page' : 'false');
       settingsViewButton.setAttribute('aria-current', settingsVisible ? 'page' : 'false');
-      (settingsVisible ? settingsFields.booksRoot : loadButton).focus();
+      if (settingsVisible) settingsFields.booksRoot.focus();
+      else if (favoritesVisible) favoritesRefreshButton.focus();
+      else loadButton.focus();
     }
 
     function updateEmbeddingDisclosure() {
@@ -775,6 +868,7 @@
         }
         fillSettingsForm(data.config || {});
         await loadEmbeddingStatus();
+        await loadFavorites();
         setSettingsStatus(t('settingsSaved', data.path));
         showView('main');
       } catch (error) {
@@ -1064,6 +1158,7 @@
             <h4>${escapeHtml(group.cycle || '')}</h4>
             <p class="muted">${escapeHtml(t('cycleGroupSummary', group.bookCount || books.length, group.evidenceCount || 0))}</p>
             ${sources ? `<p class="muted">${escapeHtml(t('candidateSources', sources))}</p>` : ''}
+            <div class="actions">${favoriteButtonMarkup(group.cycle)}</div>
             <ul>${books.map((book) => {
               const excerpts = Array.isArray(book.excerpts) ? book.excerpts : [];
               const count = book.evidenceCount || excerpts.length;
@@ -1165,6 +1260,7 @@
         <article class="book" aria-label="${escapeHtml(book.folderName)}">
           <h2>${escapeHtml(book.folderName)}</h2>
           <p class="${book.status === BOOK_STATUSES.ERROR ? 'error' : ''}">${escapeHtml(book.annotation)}</p>
+          <div class="actions">${favoriteButtonMarkup(book.folderName)}</div>
         </article>
       `;
       }).join('') || `<p>${escapeHtml(t('nothingFound'))}</p>`;
@@ -1191,6 +1287,170 @@
 
       currentBooks = data.books;
       renderBooks();
+    }
+
+    function favoriteButtonMarkup(cycleName) {
+      const cycleKey = String(cycleName || '').trim();
+      if (!cycleKey) return '';
+      const isFavorite = favoriteKeys.has(cycleKey);
+      return `<button type="button" class="favorite-toggle" data-cycle="${escapeHtml(cycleKey)}" aria-pressed="${isFavorite ? 'true' : 'false'}">${escapeHtml(isFavorite ? t('favoriteRemove') : t('favoriteAdd'))}</button>`;
+    }
+
+    function refreshFavoriteButtons() {
+      document.querySelectorAll('.favorite-toggle').forEach((button) => {
+        const cycleKey = button.getAttribute('data-cycle') || '';
+        const isFavorite = favoriteKeys.has(cycleKey);
+        button.textContent = isFavorite ? t('favoriteRemove') : t('favoriteAdd');
+        button.setAttribute('aria-pressed', isFavorite ? 'true' : 'false');
+      });
+    }
+
+    function renderFavorites() {
+      if (!favoritesLoaded) {
+        favoritesListNode.innerHTML = '';
+        if (!favoritesStatusNode.textContent) favoritesStatusNode.textContent = t('favoritesLoading');
+        return;
+      }
+
+      favoritesStatusNode.textContent = t('favoritesCount', currentFavorites.length);
+      if (currentFavorites.length === 0) {
+        favoritesListNode.innerHTML = `<p>${escapeHtml(t('favoritesEmpty'))}</p>`;
+        return;
+      }
+
+      favoritesListNode.innerHTML = currentFavorites.map((favorite) => {
+        const hits = Array.isArray(favorite.hits) ? favorite.hits : [];
+        const cycleKey = escapeHtml(favorite.cycleKey);
+        return `
+        <article class="book" aria-label="${escapeHtml(favorite.cycleName)}">
+          <h3>${escapeHtml(favorite.cycleName)}</h3>
+          <p class="muted">${escapeHtml(t('favoritesRating', favorite.rating, favorite.leaderCount, favorite.queryCount))}</p>
+          <div class="actions">
+            <button type="button" data-favorites-action="up" data-cycle="${cycleKey}">${escapeHtml(t('favoriteMoveUp'))}</button>
+            <button type="button" data-favorites-action="down" data-cycle="${cycleKey}">${escapeHtml(t('favoriteMoveDown'))}</button>
+            <button type="button" data-favorites-action="unfavorite" data-cycle="${cycleKey}">${escapeHtml(t('favoriteRemove'))}</button>
+            <button type="button" data-favorites-action="clear" data-cycle="${cycleKey}">${escapeHtml(t('favoritesClearCycle'))}</button>
+          </div>
+          <details>
+            <summary>${escapeHtml(t('favoritesQueriesHeading'))} (${hits.length})</summary>
+            ${hits.length === 0
+              ? `<p>${escapeHtml(t('favoritesNoHistory'))}</p>`
+              : `<ul>${hits.map((hit) => `<li>${escapeHtml(t('favoritesHitLine', hit.bestPosition, hit.query, hit.timesSeen))}</li>`).join('')}</ul>`}
+          </details>
+        </article>
+        `;
+      }).join('');
+    }
+
+    async function loadFavorites() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        currentFavorites = [];
+        favoriteKeys = new Set();
+        favoritesLoaded = false;
+        favoritesStatusNode.textContent = t('noDbPath');
+        renderFavorites();
+        refreshFavoriteButtons();
+        return [];
+      }
+
+      try {
+        const data = await fetchJson(`/api/favorites?db=${encodeURIComponent(dbPath)}`);
+        currentFavorites = Array.isArray(data.favorites) ? data.favorites : [];
+        favoriteKeys = new Set(currentFavorites.map((favorite) => favorite.cycleKey));
+        favoritesLoaded = true;
+      } catch (error) {
+        currentFavorites = [];
+        favoriteKeys = new Set();
+        favoritesLoaded = false;
+        favoritesStatusNode.textContent = t('favoritesLoadError', error.message);
+      }
+
+      renderFavorites();
+      refreshFavoriteButtons();
+      return currentFavorites;
+    }
+
+    async function toggleFavorite(cycleKey, favorite) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      try {
+        await fetchJson('/api/cycle-favorite', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, cycle: cycleKey, favorite }),
+        });
+        await loadFavorites();
+        favoritesStatusNode.textContent = favorite ? t('favoriteAdded', cycleKey) : t('favoriteRemoved', cycleKey);
+      } catch (error) {
+        favoritesStatusNode.textContent = t('favoriteToggleError', error.message);
+      }
+    }
+
+    async function moveFavorite(cycleKey, direction) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      try {
+        const data = await fetchJson('/api/favorites/reorder', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, cycle: cycleKey, direction }),
+        });
+        if (data.result?.moved !== true) {
+          favoritesStatusNode.textContent = t('favoriteMoveEdge');
+          return;
+        }
+        await loadFavorites();
+        favoritesStatusNode.textContent = t('favoriteMoved', cycleKey);
+      } catch (error) {
+        favoritesStatusNode.textContent = t('favoriteToggleError', error.message);
+      }
+    }
+
+    async function rebuildFavoritesByRating() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      if (!window.confirm(t('favoritesReorderConfirm'))) return;
+      try {
+        const data = await fetchJson('/api/favorites/reorder', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, action: 'rating' }),
+        });
+        await loadFavorites();
+        favoritesStatusNode.textContent = t('favoritesReordered', data.result?.reordered ?? 0);
+      } catch (error) {
+        favoritesStatusNode.textContent = t('favoriteToggleError', error.message);
+      }
+    }
+
+    async function clearFavoritesHistory(cycleKey) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      if (cycleKey === undefined && !window.confirm(t('favoritesClearAllConfirm'))) return;
+      try {
+        const data = await fetchJson('/api/favorites/clear-history', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(cycleKey === undefined ? { db: dbPath } : { db: dbPath, cycle: cycleKey }),
+        });
+        await loadFavorites();
+        favoritesStatusNode.textContent = t('favoritesCleared', data.result?.cleared ?? 0);
+      } catch (error) {
+        favoritesStatusNode.textContent = t('favoriteToggleError', error.message);
+      }
     }
 
     async function buildLocalIndex() {
@@ -1380,7 +1640,34 @@
     settingsFields.pickBooksRoot.addEventListener('click', () => pickBooksRoot());
 
     mainViewButton.addEventListener('click', () => showView('main'));
+    favoritesViewButton.addEventListener('click', () => {
+      showView('favorites');
+      loadFavorites();
+    });
     settingsViewButton.addEventListener('click', () => showView('settings'));
+    favoritesRefreshButton.addEventListener('click', () => loadFavorites());
+    favoritesReorderButton.addEventListener('click', rebuildFavoritesByRating);
+    favoritesClearAllButton.addEventListener('click', () => clearFavoritesHistory(undefined));
+    favoritesListNode.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-favorites-action]');
+      if (!button) return;
+      const cycleKey = button.getAttribute('data-cycle') || '';
+      const action = button.getAttribute('data-favorites-action');
+      if (!cycleKey) return;
+      if (action === 'up') moveFavorite(cycleKey, 'up');
+      else if (action === 'down') moveFavorite(cycleKey, 'down');
+      else if (action === 'unfavorite') toggleFavorite(cycleKey, false);
+      else if (action === 'clear') clearFavoritesHistory(cycleKey);
+    });
+    for (const cycleListNode of [resultsNode, aiResultsNode]) {
+      cycleListNode.addEventListener('click', (event) => {
+        const button = event.target.closest('.favorite-toggle');
+        if (!button) return;
+        const cycleKey = button.getAttribute('data-cycle') || '';
+        if (!cycleKey) return;
+        toggleFavorite(cycleKey, !favoriteKeys.has(cycleKey));
+      });
+    }
     saveSettingsButton.addEventListener('click', saveSettings);
     settingsFields.activeProvider.addEventListener('change', updateProviderFieldVisibility);
     settingsFields.activeEmbeddingsProvider.addEventListener('change', updateProviderFieldVisibility);
@@ -1398,6 +1685,7 @@
       pageUrl.searchParams.set('lang', currentLanguage);
       history.replaceState(null, '', pageUrl);
       renderBooks();
+      if (favoritesLoaded) renderFavorites();
     });
 
     applyLanguage();
@@ -1406,6 +1694,7 @@
       if (!settingsPanel.hidden || !rootInput.value) {
         return;
       }
+      loadFavorites();
       loadBooks();
     });
   </script>

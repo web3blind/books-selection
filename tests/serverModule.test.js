@@ -334,3 +334,160 @@ test('desktop provider fetch is injected through the server and network failures
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+function providerJsonResponse(payload) {
+  return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(payload) };
+}
+
+test('favorites API stores cycle marks, reorders them, and clears query history', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-favorites-api-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({ booksRoot: dir, dbPath }, process.env);
+
+  const started = await startServer({ port: 0, openBrowser: false, log: false });
+  try {
+    const home = await request(started, 'GET', '/');
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    const favoritesUrl = `/api/favorites?db=${encodeURIComponent(dbPath)}`;
+
+    assert.equal((await request(started, 'GET', favoritesUrl)).statusCode, 403);
+
+    const added = await request(started, 'POST', '/api/cycle-favorite', cookie, { db: dbPath, cycle: 'Dragon Cycle' });
+    assert.equal(added.statusCode, 200);
+    assert.equal(added.body.result.created, true);
+    assert.equal(added.body.result.sortPosition, 1);
+
+    const second = await request(started, 'POST', '/api/cycle-favorite', cookie, { db: dbPath, cycle: 'Forest Cycle' });
+    assert.equal(second.body.result.sortPosition, 2);
+
+    const list = await request(started, 'GET', favoritesUrl, cookie);
+    assert.equal(list.body.count, 2);
+    assert.deepEqual(list.body.favorites.map((favorite) => favorite.cycleName), ['Dragon Cycle', 'Forest Cycle']);
+    assert.equal(list.body.favorites[0].rating, 0);
+
+    const moved = await request(started, 'POST', '/api/favorites/reorder', cookie, {
+      db: dbPath, cycle: 'Forest Cycle', direction: 'up',
+    });
+    assert.equal(moved.body.result.moved, true);
+    const reordered = await request(started, 'GET', favoritesUrl, cookie);
+    assert.deepEqual(reordered.body.favorites.map((favorite) => favorite.cycleName), ['Forest Cycle', 'Dragon Cycle']);
+
+    const rebuilt = await request(started, 'POST', '/api/favorites/reorder', cookie, { db: dbPath, action: 'rating' });
+    assert.equal(rebuilt.statusCode, 200);
+    assert.equal(rebuilt.body.result.reordered, 2);
+
+    assert.equal((await request(started, 'POST', '/api/favorites/reorder', cookie, {
+      db: dbPath, cycle: 'Forest Cycle', direction: 'sideways',
+    })).statusCode, 400);
+    assert.equal((await request(started, 'POST', '/api/cycle-favorite', cookie, { db: dbPath, cycle: '   ' })).statusCode, 400);
+    assert.equal((await request(started, 'POST', '/api/cycle-favorite', cookie, { db: dbPath, cycle: 'x'.repeat(201) })).statusCode, 400);
+    const viaConfig = await request(started, 'POST', '/api/cycle-favorite', cookie, { cycle: 'Config Cycle' });
+    assert.equal(viaConfig.statusCode, 200);
+    assert.equal(viaConfig.body.db, dbPath);
+
+    const cleared = await request(started, 'POST', '/api/favorites/clear-history', cookie, { db: dbPath });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.body.result.cleared, 0);
+
+    const removed = await request(started, 'POST', '/api/cycle-favorite', cookie, {
+      db: dbPath, cycle: 'Forest Cycle', favorite: false,
+    });
+    assert.equal(removed.body.result.removed, true);
+    const remaining = await request(started, 'GET', favoritesUrl, cookie);
+    assert.equal(remaining.body.count, 2);
+    assert.deepEqual(remaining.body.favorites.map((favorite) => favorite.cycleName).sort(), ['Config Cycle', 'Dragon Cycle']);
+  } finally {
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Ask records ranked cycle hits for favorited cycles through the local API', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-favorites-ask-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  const oldLocalKey = process.env.LOCAL_OPENAI_API_KEY;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  process.env.LOCAL_OPENAI_API_KEY = 'fixture-local-key';
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({
+    booksRoot: dir,
+    dbPath,
+    activeProvider: 'local',
+    activeEmbeddingsProvider: 'local',
+  }, process.env);
+
+  const db = initializeSearchDatabase(dbPath);
+  const bookId = Number(db.prepare(`
+    INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status, indexed_root)
+    VALUES ('Dragon Cycle', ?, ?, 1, 1, 'book-hash', 'Book', 'Annotation', 'indexed', ?)
+  `).run(dir, path.join(dir, 'book.fb2'), dir).lastInsertRowid);
+  const chunkId = Number(db.prepare(`
+    INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset)
+    VALUES (?, 0, 'indexed evidence about a lantern', 'chunk-hash', 0, 32)
+  `).run(bookId).lastInsertRowid);
+  db.prepare('INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)').run(chunkId, 'indexed evidence about a lantern');
+  db.prepare(`
+    INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json)
+    VALUES (?, 'local', 'local-embedding-model', 'chunk-hash', '[1,0]')
+  `).run(chunkId);
+  db.prepare(`
+    INSERT INTO corpus_state
+      (id, indexed_root, discovered_cycles, discovered_books, indexed_cycles, indexed_books, indexed_chunks, errors, complete)
+    VALUES (1, ?, 1, 1, 1, 1, 1, 0, 1)
+  `).run(dir);
+  db.close();
+
+  const providerRequests = [];
+  const started = await startServer({
+    port: 0,
+    openBrowser: false,
+    log: false,
+    providerFetchImpl: async (requestUrl, options = {}) => {
+      providerRequests.push(String(requestUrl));
+      if (String(requestUrl).endsWith('/embeddings')) {
+        const body = JSON.parse(options.body);
+        const inputs = Array.isArray(body.input) ? body.input : [body.input];
+        return providerJsonResponse({ data: inputs.map((_, index) => ({ index, embedding: [1, 0] })) });
+      }
+      if (String(requestUrl).endsWith('/chat/completions')) {
+        return providerJsonResponse({
+          choices: [{ message: { content: JSON.stringify({ answer: 'Фонарь найден.', confidence: 'high', evidence: ['evidence_1'] }) } }],
+        });
+      }
+      throw new Error(`Unexpected provider request in the favorites API test: ${requestUrl}`);
+    },
+  });
+
+  try {
+    const home = await request(started, 'GET', '/');
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    await request(started, 'POST', '/api/cycle-favorite', cookie, { db: dbPath, cycle: 'Dragon Cycle' });
+
+    const answer = await request(started, 'POST', '/api/ask', cookie, { db: dbPath, q: 'Где фонарь?' });
+    assert.equal(answer.statusCode, 200);
+    assert.equal(answer.body.result.status, 'answered');
+    assert.deepEqual(answer.body.result.cycleGroups.map((group) => group.cycle), ['Dragon Cycle']);
+
+    await request(started, 'POST', '/api/ask', cookie, { db: dbPath, q: 'где   ФОНАРЬ?' });
+
+    const favorites = await request(started, 'GET', `/api/favorites?db=${encodeURIComponent(dbPath)}`, cookie);
+    assert.equal(favorites.body.count, 1);
+    const [favorite] = favorites.body.favorites;
+    assert.equal(favorite.rating, 5, 'a repeated query must not add points twice');
+    assert.equal(favorite.leaderCount, 1);
+    assert.equal(favorite.queryCount, 1);
+    assert.deepEqual(favorite.hits.map((hit) => hit.bestPosition), [1]);
+    assert.ok(providerRequests.some((requestUrl) => requestUrl.endsWith('/chat/completions')));
+  } finally {
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    if (oldLocalKey === undefined) delete process.env.LOCAL_OPENAI_API_KEY;
+    else process.env.LOCAL_OPENAI_API_KEY = oldLocalKey;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
