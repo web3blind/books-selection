@@ -406,6 +406,62 @@ test('favorites API stores cycle marks, reorders them, and clears query history'
   }
 });
 
+test('reading API stores read and unfinished marks for cycles', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-reading-api-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({ booksRoot: dir, dbPath }, process.env);
+
+  const started = await startServer({ port: 0, openBrowser: false, log: false });
+  try {
+    const home = await request(started, 'GET', '/');
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    const readingUrl = `/api/reading?db=${encodeURIComponent(dbPath)}`;
+
+    assert.equal((await request(started, 'GET', readingUrl)).statusCode, 403);
+    assert.equal((await request(started, 'GET', readingUrl, cookie)).body.count, 0);
+
+    const marked = await request(started, 'POST', '/api/cycle-reading', cookie, {
+      db: dbPath, cycle: 'Dragon Cycle', read: true,
+    });
+    assert.equal(marked.statusCode, 200);
+    assert.equal(marked.body.result.read.isRead, true);
+
+    const unfinished = await request(started, 'POST', '/api/cycle-reading', cookie, {
+      db: dbPath, cycle: 'Dragon Cycle', unfinished: true,
+    });
+    assert.equal(unfinished.body.result.unfinished.isUnfinished, true);
+
+    const list = await request(started, 'GET', readingUrl, cookie);
+    assert.equal(list.body.count, 1);
+    assert.equal(list.body.states[0].cycleName, 'Dragon Cycle');
+    assert.equal(list.body.states[0].isRead, true);
+    assert.equal(list.body.states[0].isUnfinished, true);
+    assert.equal(typeof list.body.states[0].updatedAt, 'number');
+
+    const cleared = await request(started, 'POST', '/api/cycle-reading', cookie, {
+      db: dbPath, cycle: 'Dragon Cycle', read: false,
+    });
+    assert.equal(cleared.body.result.read.isRead, false);
+
+    const afterClear = await request(started, 'GET', readingUrl, cookie);
+    assert.equal(afterClear.body.states[0].isRead, false);
+    assert.equal(afterClear.body.states[0].isUnfinished, true);
+
+    assert.equal((await request(started, 'POST', '/api/cycle-reading', cookie, { db: dbPath, cycle: '   ' })).statusCode, 400);
+    assert.equal((await request(started, 'POST', '/api/cycle-reading', cookie, { db: dbPath, cycle: 'Dragon Cycle' })).statusCode, 400);
+    assert.equal((await request(started, 'POST', '/api/cycle-reading', cookie, {
+      db: dbPath, cycle: 'x'.repeat(201), read: true,
+    })).statusCode, 400);
+  } finally {
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('Ask records ranked cycle hits for favorited cycles through the local API', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-favorites-ask-'));
   const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;

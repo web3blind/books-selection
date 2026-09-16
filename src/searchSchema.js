@@ -128,6 +128,14 @@ CREATE TABLE IF NOT EXISTS cycle_query_hits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cycle_query_hits_cycle ON cycle_query_hits(cycle_key, best_position);
+CREATE TABLE IF NOT EXISTS cycle_reading_state (
+  cycle_key TEXT PRIMARY KEY,
+  cycle_name TEXT NOT NULL,
+  is_read INTEGER NOT NULL DEFAULT 0 CHECK (is_read IN (0, 1)),
+  is_unfinished INTEGER NOT NULL DEFAULT 0 CHECK (is_unfinished IN (0, 1)),
+  updated_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_chunks_book ON chunks(book_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_provider_model_hash ON chunk_embeddings(provider, model, content_hash);
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_chunk ON chunk_embeddings(chunk_id);

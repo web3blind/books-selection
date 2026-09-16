@@ -45,6 +45,7 @@
   <nav id="mainNav" class="actions" aria-label="Основные разделы">
     <button id="mainViewButton" type="button">Главная</button>
     <button id="favoritesViewButton" type="button">Избранное</button>
+    <button id="readingViewButton" type="button">Прочитанное</button>
     <button id="settingsViewButton" type="button">Настройки</button>
   </nav>
 
@@ -133,6 +134,20 @@
     <section id="favoritesList" aria-label="Избранные циклы"></section>
   </section>
 
+  <section id="readingPanel" class="panel" aria-labelledby="readingTitle" hidden>
+    <h2 id="readingTitle">Прочитанное</h2>
+    <p id="readingIntro" class="meta">Отмечай циклы одной кнопкой. Даты, оценки и заметки не нужны. Отдельная отметка «Цикл не закончен» помогает не забыть проверить продолжения.</p>
+    <p id="readingStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></p>
+    <label id="readingSearchLabel" for="readingSearch">Поиск по прочитанным циклам</label>
+    <input id="readingSearch" name="readingSearch" type="text" placeholder="Например: дракон">
+    <section id="readingUnfinished" aria-labelledby="readingUnfinishedTitle">
+      <h3 id="readingUnfinishedTitle">Незаконченные циклы</h3>
+      <div id="readingUnfinishedList"></div>
+    </section>
+    <h3 id="readingReadTitle">Прочитанные циклы</h3>
+    <section id="readingList" aria-label="Прочитанные циклы"></section>
+  </section>
+
   <section id="mainPanel">
 
   <div>
@@ -150,6 +165,9 @@
 
   <div>
     <label id="showReadyOnlyLabel"><input id="showReadyOnly" type="checkbox" checked> <span id="showReadyOnlyText">Показывать только книги с аннотацией и без ошибок</span></label>
+  </div>
+  <div>
+    <label id="hideReadLabel"><input id="hideRead" type="checkbox" checked> <span id="hideReadText">Скрывать прочитанные циклы</span></label>
   </div>
 
   <section class="panel" aria-labelledby="aiSearchTitle">
@@ -199,6 +217,13 @@
     const languageSelect = document.getElementById('languageSelect');
     const mainViewButton = document.getElementById('mainViewButton');
     const favoritesViewButton = document.getElementById('favoritesViewButton');
+    const readingViewButton = document.getElementById('readingViewButton');
+    const readingPanel = document.getElementById('readingPanel');
+    const readingListNode = document.getElementById('readingList');
+    const readingUnfinishedNode = document.getElementById('readingUnfinishedList');
+    const readingStatusNode = document.getElementById('readingStatus');
+    const readingSearchInput = document.getElementById('readingSearch');
+    const hideReadInput = document.getElementById('hideRead');
     const settingsViewButton = document.getElementById('settingsViewButton');
     const mainPanel = document.getElementById('mainPanel');
     const favoritesPanel = document.getElementById('favoritesPanel');
@@ -320,6 +345,29 @@
         favoritesQueriesHeading: 'Запросы, где цикл попал в топ-5',
         favoritesNoHistory: 'Пока нет запросов.',
         favoritesHitLine: (position, query, timesSeen) => `Место ${position}: «${query}», раз: ${timesSeen}`,
+        readingViewButtonText: 'Прочитанное',
+        readingTitleText: 'Прочитанное',
+        readingIntroText: 'Отмечай циклы одной кнопкой. Даты, оценки и заметки не нужны. Отдельная отметка «Цикл не закончен» помогает не забыть проверить продолжения.',
+        readingSearchLabelText: 'Поиск по прочитанным циклам',
+        readingSearchPlaceholder: 'Например: дракон',
+        readingUnfinishedTitleText: 'Незаконченные циклы',
+        readingReadTitleText: 'Прочитанные циклы',
+        readingListLabel: 'Прочитанные циклы',
+        hideReadText: 'Скрывать прочитанные циклы',
+        readingStatusSummary: (read, unfinished) => `Прочитано циклов: ${read}. Незаконченных: ${unfinished}.`,
+        readingEmpty: 'Пока нет отмеченных циклов.',
+        readingUnfinishedEmpty: 'Нет циклов с отметкой «не закончен».',
+        readingSearchEmpty: 'Ничего не найдено.',
+        readingLoadError: (message) => `Не удалось загрузить отметки: ${message}`,
+        readingToggleError: (message) => `Не удалось изменить отметку: ${message}`,
+        readingMarkRead: 'Отметить прочитанным',
+        readingUnmarkRead: 'Снять отметку',
+        readingMarkUnfinished: 'Цикл не закончен',
+        readingUnmarkUnfinished: 'Снять «не закончен»',
+        readingMarkedRead: (cycle) => `Цикл отмечен прочитанным: ${cycle}.`,
+        readingUnmarkedRead: (cycle) => `Отметка прочитанного снята: ${cycle}.`,
+        readingMarkedUnfinished: (cycle) => `Цикл отмечен незаконченным: ${cycle}.`,
+        readingUnmarkedUnfinished: (cycle) => `Отметка «не закончен» снята: ${cycle}.`,
         settingsTitleText: 'Настройки',
         settingsIntroText: 'Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.',
         settingsBooksRootLabel: 'Путь к папке книг',
@@ -483,6 +531,29 @@
         favoritesQueriesHeading: 'Queries where the cycle reached the top five',
         favoritesNoHistory: 'No queries yet.',
         favoritesHitLine: (position, query, timesSeen) => `Position ${position}: “${query}”, seen ${timesSeen} times`,
+        readingViewButtonText: 'Read',
+        readingTitleText: 'Read cycles',
+        readingIntroText: 'Mark whole cycles with one button. No dates, ratings, or notes. The separate “unfinished” mark reminds you to re-check for new books later.',
+        readingSearchLabelText: 'Search the read cycles',
+        readingSearchPlaceholder: 'For example: dragon',
+        readingUnfinishedTitleText: 'Unfinished cycles',
+        readingReadTitleText: 'Read cycles',
+        readingListLabel: 'Read cycles',
+        hideReadText: 'Hide read cycles',
+        readingStatusSummary: (read, unfinished) => `Read cycles: ${read}. Unfinished: ${unfinished}.`,
+        readingEmpty: 'No cycles are marked yet.',
+        readingUnfinishedEmpty: 'No cycle is marked as unfinished.',
+        readingSearchEmpty: 'Nothing found.',
+        readingLoadError: (message) => `Could not load the reading marks: ${message}`,
+        readingToggleError: (message) => `Could not change the reading mark: ${message}`,
+        readingMarkRead: 'Mark as read',
+        readingUnmarkRead: 'Clear the mark',
+        readingMarkUnfinished: 'Cycle is unfinished',
+        readingUnmarkUnfinished: 'Clear “unfinished”',
+        readingMarkedRead: (cycle) => `Cycle marked as read: ${cycle}.`,
+        readingUnmarkedRead: (cycle) => `Read mark cleared: ${cycle}.`,
+        readingMarkedUnfinished: (cycle) => `Cycle marked as unfinished: ${cycle}.`,
+        readingUnmarkedUnfinished: (cycle) => `Unfinished mark cleared: ${cycle}.`,
         settingsTitleText: 'Settings',
         settingsIntroText: 'Configure the books folder, SQLite database, providers, models, API keys, and the OpenRouter limit here.',
         settingsBooksRootLabel: 'Books folder path',
@@ -637,6 +708,8 @@
     let favoriteKeys = new Set();
     let currentFavorites = [];
     let favoritesLoaded = false;
+    let readingStates = new Map();
+    let readingLoaded = false;
 
     function t(key, ...args) {
       const value = messages[currentLanguage][key];
@@ -656,6 +729,15 @@
       document.getElementById('mainNav').setAttribute('aria-label', t('mainNavLabel'));
       mainViewButton.textContent = t('mainViewButtonText');
       favoritesViewButton.textContent = t('favoritesViewButtonText');
+      readingViewButton.textContent = t('readingViewButtonText');
+      document.getElementById('readingTitle').textContent = t('readingTitleText');
+      document.getElementById('readingIntro').textContent = t('readingIntroText');
+      document.getElementById('readingSearchLabel').textContent = t('readingSearchLabelText');
+      readingSearchInput.placeholder = t('readingSearchPlaceholder');
+      document.getElementById('readingUnfinishedTitle').textContent = t('readingUnfinishedTitleText');
+      document.getElementById('readingReadTitle').textContent = t('readingReadTitleText');
+      readingListNode.setAttribute('aria-label', t('readingListLabel'));
+      document.getElementById('hideReadText').textContent = t('hideReadText');
       settingsViewButton.textContent = t('settingsViewButtonText');
       document.getElementById('favoritesTitle').textContent = t('favoritesTitleText');
       document.getElementById('favoritesIntro').textContent = t('favoritesIntroText');
@@ -736,17 +818,17 @@
     }
 
     function showView(view) {
-      const settingsVisible = view === 'settings';
-      const favoritesVisible = view === 'favorites';
-      settingsPanel.hidden = !settingsVisible;
-      favoritesPanel.hidden = !favoritesVisible;
-      mainPanel.hidden = settingsVisible || favoritesVisible;
-      mainViewButton.setAttribute('aria-current', settingsVisible || favoritesVisible ? 'false' : 'page');
-      favoritesViewButton.setAttribute('aria-current', favoritesVisible ? 'page' : 'false');
-      settingsViewButton.setAttribute('aria-current', settingsVisible ? 'page' : 'false');
-      if (settingsVisible) settingsFields.booksRoot.focus();
-      else if (favoritesVisible) favoritesRefreshButton.focus();
-      else loadButton.focus();
+      const views = {
+        main: { panel: mainPanel, button: mainViewButton, focus: loadButton },
+        favorites: { panel: favoritesPanel, button: favoritesViewButton, focus: favoritesRefreshButton },
+        reading: { panel: readingPanel, button: readingViewButton, focus: readingSearchInput },
+        settings: { panel: settingsPanel, button: settingsViewButton, focus: settingsFields.booksRoot },
+      };
+      for (const [name, entry] of Object.entries(views)) {
+        entry.panel.hidden = name !== view;
+        entry.button.setAttribute('aria-current', name === view ? 'page' : 'false');
+      }
+      views[view]?.focus.focus();
     }
 
     function updateEmbeddingDisclosure() {
@@ -869,6 +951,7 @@
         fillSettingsForm(data.config || {});
         await loadEmbeddingStatus();
         await loadFavorites();
+        await loadReadingStates();
         setSettingsStatus(t('settingsSaved', data.path));
         showView('main');
       } catch (error) {
@@ -1158,7 +1241,7 @@
             <h4>${escapeHtml(group.cycle || '')}</h4>
             <p class="muted">${escapeHtml(t('cycleGroupSummary', group.bookCount || books.length, group.evidenceCount || 0))}</p>
             ${sources ? `<p class="muted">${escapeHtml(t('candidateSources', sources))}</p>` : ''}
-            <div class="actions">${favoriteButtonMarkup(group.cycle)}</div>
+            <div class="actions">${favoriteButtonMarkup(group.cycle)}${readingButtonsMarkup(group.cycle)}</div>
             <ul>${books.map((book) => {
               const excerpts = Array.isArray(book.excerpts) ? book.excerpts : [];
               const count = book.evidenceCount || excerpts.length;
@@ -1245,6 +1328,9 @@
         if (showReadyOnly && (book.status !== BOOK_STATUSES.OK || !hasRealAnnotation(book))) {
           return false;
         }
+        if (hideReadInput.checked && readingStateFor(book.folderName).isRead) {
+          return false;
+        }
 
         if (!query) return true;
         const haystack = [book.folderName, book.annotation].join('\n').toLowerCase();
@@ -1260,7 +1346,7 @@
         <article class="book" aria-label="${escapeHtml(book.folderName)}">
           <h2>${escapeHtml(book.folderName)}</h2>
           <p class="${book.status === BOOK_STATUSES.ERROR ? 'error' : ''}">${escapeHtml(book.annotation)}</p>
-          <div class="actions">${favoriteButtonMarkup(book.folderName)}</div>
+          <div class="actions">${favoriteButtonMarkup(book.folderName)}${readingButtonsMarkup(book.folderName)}</div>
         </article>
       `;
       }).join('') || `<p>${escapeHtml(t('nothingFound'))}</p>`;
@@ -1451,6 +1537,122 @@
       } catch (error) {
         favoritesStatusNode.textContent = t('favoriteToggleError', error.message);
       }
+    }
+
+    function readingStateFor(cycleKey) {
+      return readingStates.get(String(cycleKey || '').trim()) || { isRead: false, isUnfinished: false };
+    }
+
+    function readingButtonsMarkup(cycleName) {
+      const cycleKey = String(cycleName || '').trim();
+      if (!cycleKey) return '';
+      const state = readingStateFor(cycleKey);
+      const escapedKey = escapeHtml(cycleKey);
+      return [
+        `<button type="button" class="reading-toggle" data-reading-flag="read" data-cycle="${escapedKey}" aria-pressed="${state.isRead ? 'true' : 'false'}">${escapeHtml(state.isRead ? t('readingUnmarkRead') : t('readingMarkRead'))}</button>`,
+        `<button type="button" class="reading-toggle" data-reading-flag="unfinished" data-cycle="${escapedKey}" aria-pressed="${state.isUnfinished ? 'true' : 'false'}">${escapeHtml(state.isUnfinished ? t('readingUnmarkUnfinished') : t('readingMarkUnfinished'))}</button>`,
+      ].join('');
+    }
+
+    function refreshReadingButtons() {
+      document.querySelectorAll('.reading-toggle').forEach((button) => {
+        const flag = button.getAttribute('data-reading-flag');
+        const state = readingStateFor(button.getAttribute('data-cycle'));
+        const active = flag === 'read' ? state.isRead : state.isUnfinished;
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        button.textContent = flag === 'read'
+          ? (active ? t('readingUnmarkRead') : t('readingMarkRead'))
+          : (active ? t('readingUnmarkUnfinished') : t('readingMarkUnfinished'));
+      });
+    }
+
+    function renderReadingList(states, emptyMessage) {
+      if (states.length === 0) return `<p>${escapeHtml(emptyMessage)}</p>`;
+      return `<ul>${states.map((state) => `
+        <li>
+          <h4>${escapeHtml(state.cycleName)}</h4>
+          <div class="actions">${readingButtonsMarkup(state.cycleKey)}</div>
+        </li>`).join('')}</ul>`;
+    }
+
+    function renderReading() {
+      if (!readingLoaded) {
+        readingListNode.innerHTML = '';
+        readingUnfinishedNode.innerHTML = '';
+        return;
+      }
+
+      const all = [...readingStates.values()];
+      const readStates = all.filter((state) => state.isRead);
+      const unfinishedStates = all.filter((state) => state.isUnfinished);
+      readingStatusNode.textContent = t('readingStatusSummary', readStates.length, unfinishedStates.length);
+
+      const needle = readingSearchInput.value.trim().toLowerCase();
+      const matches = needle ? all.filter((state) => state.cycleName.toLowerCase().includes(needle)) : all;
+      const emptyFor = (untouched) => (needle ? t('readingSearchEmpty') : untouched);
+      readingListNode.innerHTML = renderReadingList(
+        matches.filter((state) => state.isRead),
+        emptyFor(t('readingEmpty')),
+      );
+      readingUnfinishedNode.innerHTML = renderReadingList(
+        matches.filter((state) => state.isUnfinished),
+        emptyFor(t('readingUnfinishedEmpty')),
+      );
+    }
+
+    async function loadReadingStates() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        readingStates = new Map();
+        readingLoaded = false;
+        readingStatusNode.textContent = t('noDbPath');
+        renderReading();
+        refreshReadingButtons();
+        return [];
+      }
+
+      try {
+        const data = await fetchJson(`/api/reading?db=${encodeURIComponent(dbPath)}`);
+        const states = Array.isArray(data.states) ? data.states : [];
+        readingStates = new Map(states.map((state) => [state.cycleKey, state]));
+        readingLoaded = true;
+      } catch (error) {
+        readingStates = new Map();
+        readingLoaded = false;
+        readingStatusNode.textContent = t('readingLoadError', error.message);
+      }
+
+      renderReading();
+      refreshReadingButtons();
+      return [...readingStates.values()];
+    }
+
+    async function setReadingFlag(cycleKey, flag, value) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      try {
+        await fetchJson('/api/cycle-reading', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, cycle: cycleKey, [flag]: value }),
+        });
+        await loadReadingStates();
+        if (flag === 'read') {
+          readingStatusNode.textContent = value
+            ? t('readingMarkedRead', cycleKey)
+            : t('readingUnmarkedRead', cycleKey);
+        } else {
+          readingStatusNode.textContent = value
+            ? t('readingMarkedUnfinished', cycleKey)
+            : t('readingUnmarkedUnfinished', cycleKey);
+        }
+      } catch (error) {
+        readingStatusNode.textContent = t('readingToggleError', error.message);
+      }
+      renderBooks();
     }
 
     async function buildLocalIndex() {
@@ -1659,15 +1861,30 @@
       else if (action === 'unfavorite') toggleFavorite(cycleKey, false);
       else if (action === 'clear') clearFavoritesHistory(cycleKey);
     });
-    for (const cycleListNode of [resultsNode, aiResultsNode]) {
+    for (const cycleListNode of [resultsNode, aiResultsNode, readingListNode, readingUnfinishedNode]) {
       cycleListNode.addEventListener('click', (event) => {
-        const button = event.target.closest('.favorite-toggle');
-        if (!button) return;
-        const cycleKey = button.getAttribute('data-cycle') || '';
-        if (!cycleKey) return;
-        toggleFavorite(cycleKey, !favoriteKeys.has(cycleKey));
+        const favoriteButton = event.target.closest('.favorite-toggle');
+        if (favoriteButton) {
+          const cycleKey = favoriteButton.getAttribute('data-cycle') || '';
+          if (cycleKey) toggleFavorite(cycleKey, !favoriteKeys.has(cycleKey));
+          return;
+        }
+        const readingButton = event.target.closest('.reading-toggle');
+        if (!readingButton) return;
+        const cycleKey = readingButton.getAttribute('data-cycle') || '';
+        const flag = readingButton.getAttribute('data-reading-flag');
+        if (!cycleKey || !['read', 'unfinished'].includes(flag)) return;
+        const state = readingStateFor(cycleKey);
+        const current = flag === 'read' ? state.isRead : state.isUnfinished;
+        setReadingFlag(cycleKey, flag, !current);
       });
     }
+    readingViewButton.addEventListener('click', () => {
+      showView('reading');
+      loadReadingStates();
+    });
+    readingSearchInput.addEventListener('input', renderReading);
+    hideReadInput.addEventListener('change', renderBooks);
     saveSettingsButton.addEventListener('click', saveSettings);
     settingsFields.activeProvider.addEventListener('change', updateProviderFieldVisibility);
     settingsFields.activeEmbeddingsProvider.addEventListener('change', updateProviderFieldVisibility);
@@ -1686,16 +1903,18 @@
       history.replaceState(null, '', pageUrl);
       renderBooks();
       if (favoritesLoaded) renderFavorites();
+      if (readingLoaded) renderReading();
     });
 
     applyLanguage();
     checkForAppUpdates();
-    loadAppConfig().then(() => {
+    loadAppConfig().then(async () => {
       if (!settingsPanel.hidden || !rootInput.value) {
         return;
       }
-      loadFavorites();
-      loadBooks();
+      await loadFavorites();
+      await loadReadingStates();
+      await loadBooks();
     });
   </script>
 </body>

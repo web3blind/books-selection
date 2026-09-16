@@ -20,6 +20,7 @@ const {
   removeCycleFavorite,
 } = require('./favorites');
 const { indexLibrary, searchChunks } = require('./indexer');
+const { listReadingStates, setCycleRead, setCycleUnfinished } = require('./readingState');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
@@ -415,6 +416,42 @@ function createRequestHandler(options = {}) {
 
       const result = await withSearchDatabase(databasePath, (db) => clearFavoriteHistory(db, cycle === undefined ? {} : { cycle }));
       return sendJson(response, 200, { db: databasePath, result });
+    }
+
+    if (url.pathname === '/api/reading') {
+      if (request.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed.' });
+      const databasePath = getDbPath(url, appConfig);
+      if (!databasePath) return sendJson(response, 400, { error: 'Нужен путь к SQLite базе.' });
+      const states = await withSearchDatabase(databasePath, (db) => listReadingStates(db));
+      return sendJson(response, 200, { db: databasePath, count: states.length, states });
+    }
+
+    if (url.pathname === '/api/cycle-reading') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      const cycle = String(payload.cycle || '').trim();
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+      if (!cycle || cycle.length > MAX_CYCLE_NAME_LENGTH) {
+        return sendJson(response, 400, { error: 'Нужно название цикла.' });
+      }
+      const hasRead = typeof payload.read === 'boolean';
+      const hasUnfinished = typeof payload.unfinished === 'boolean';
+      if (!hasRead && !hasUnfinished) {
+        return sendJson(response, 400, { error: 'Нужен флаг read или unfinished.' });
+      }
+
+      const result = await withSearchDatabase(databasePath, (db) => {
+        const updated = {};
+        if (hasRead) updated.read = setCycleRead(db, { cycle, read: payload.read });
+        if (hasUnfinished) updated.unfinished = setCycleUnfinished(db, { cycle, unfinished: payload.unfinished });
+        return updated;
+      });
+      return sendJson(response, 200, { db: databasePath, cycle, result });
     }
 
     if (url.pathname === '/api/semantic-search') {
