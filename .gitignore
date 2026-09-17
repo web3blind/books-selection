@@ -16,6 +16,7 @@ books-selection.config.json
 *.sqlite
 *.sqlite-*
 *.sqlite.backup-*
+*.sqlite.cards.json*
 *.db
 *.db-*
 *.db.backup-*

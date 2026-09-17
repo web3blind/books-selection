@@ -104,4 +104,7 @@ async function scanBooks(rootPath, { readInfo = true, allFiles = false } = {}) {
 module.exports = {
   scanBooks,
   yieldToEventLoop,
+  listDirectories,
+  findBookFiles,
+  naturalSort,
 };

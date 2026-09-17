@@ -13,7 +13,8 @@
 - `desktop/main.js`: Electron lifecycle, `BrowserWindow`, desktop SQLite default under Electron `userData`, native folder-dialog IPC, external-link handling, and Linux-verifiable smoke mode.
 - `desktop/preload.js`: narrow context-isolated bridge exposing only `booksSelectionDesktop.isDesktop` and `pickDirectory()`; do not expose filesystem, process, shell, or arbitrary IPC access.
 - `public/index.html`: intentional single-file, framework-free RU/EN UI containing markup, styles, localization, settings, annotation browser, index/Ask flow, accessible live regions, and update banner.
-- `src/scan.js`: scans exactly one level of series folders, natural-sorts files, and selects the first `.fb2` or `.fb2.zip` in each folder. It exports `yieldToEventLoop()` and awaits it between books: one book parse is synchronous CPU work, and without the pause the server cannot answer other requests while scanning.
+- `src/scan.js`: scans exactly one level of series folders, natural-sorts files, and selects the first `.fb2` or `.fb2.zip` in each folder. It exports `yieldToEventLoop()` and awaits it between books: one book parse is synchronous CPU work, and without the pause the server cannot answer other requests while scanning. It also exports `listDirectories()`, `findBookFiles()` and `naturalSort()` for the card cache.
+- `src/bookCards.js`: cycle-card cache for the main list. The key is the composition of cycle folders plus the book file name inside each; while that composition is unchanged a start reads no book at all, and when it changes only the new or renamed folders are parsed. The cache lives in `<db>.cards.json` beside the database as derived data (safe to delete, rebuilds itself); a corrupt or foreign cache is ignored, and a read error is never stored so the book is retried.
 - `src/fb2.js`: FB2/XML encoding detection, title/annotation/body extraction, stable text chunking, and built-in ZIP reading without Python. Cycle cards must be read through `readBookInfo` (head window `decodeXmlHead`, 512 KiB, used only when the complete `<description>` fits) — never decode or normalize the whole body for the main list. Keep CRC32 on the native `zlib.crc32` path with the JS loop as fallback.
 - `src/indexer.js`: transactional local indexing, file fingerprinting, unchanged-file skip, chunk replacement, FTS5 synchronization, and local snippet search. The per-book prepare loop yields to the event loop so indexing does not freeze the UI.
 - `src/searchSchema.js`: schema for books, chunks, FTS5, embeddings, entities, evidence, relations, events, derived facts, and the cycle tables `cycle_favorites`, `cycle_query_hits`, `cycle_reading_state`, `cycle_series`.
@@ -42,7 +43,7 @@
 - Every `/api/*` request is loopback-only and requires the per-session cookie token (`403` otherwise); `POST` bodies must be `application/json` and are limited to 1 MiB. Documented methods below are the methods the handler actually accepts — keep them exact.
 - `GET/POST /api/config`: read/write normalized local settings, including `language`.
 - `POST /api/language`: persist the interface language (`en`/`ru` only).
-- `GET /api/books`: scan annotations without SQLite, provider keys, or AI/network calls.
+- `GET /api/books`: scan annotations without SQLite, provider keys, or AI/network calls. With a `db` parameter the answer comes from the cycle-card cache (`fromCache: true`); `refresh=1` re-reads every book and rewrites the cache.
 - `POST /api/index`: scan, parse, fingerprint, chunk, and index changed books into SQLite/FTS.
 - `GET /api/search`: local FTS search.
 - `GET /api/embedding-status`, `GET /api/embedding-progress`: embedding cache totals and live progress of the current embedding operation.
@@ -72,6 +73,7 @@
 - Lists repeat identical controls per cycle ("Move up 1", "Mark as read", "Add to favorites"): every repeated control must carry the cycle name in its accessible name, otherwise a screen-reader user hears the same label many times without context.
 - A cycle bound to Author.Today must stay reachable in the reading view even when both marks are cleared, so its binding can always be checked or removed.
 - The unfinished-cycles section carries one bulk control (`readingCheckAllButton`) with a visible count of checkable cycles plus a hint when some unfinished cycles have no binding, a progress announcement in the existing status region, and a stop control that stays hidden except during a run. Keep single-cycle controls working alongside it.
+- The main list is served from the card cache, so a book that was replaced under the same file name is picked up only through the "Reload" button, which sends `refresh=1`. Keep that button as the explicit escape hatch from the cache.
 - UI language comes from the server-injected `window.__booksSelectionLanguage` (config-backed, `<html lang>` set at render). Do not move it back to `localStorage`: the desktop app serves the page on a new port at every launch, so browser storage does not survive.
 - Keep native HTML labels, buttons, links, lists, headings, and `role="status"`/`aria-live` regions; avoid custom widgets and tables for Ask evidence/results.
 - Keep RU and EN text maps synchronized when adding visible copy or controls.
@@ -84,6 +86,7 @@
 - Default config: `~/.books-selection/config.json`; override with `BOOKS_SELECTION_CONFIG_PATH`.
 - `config.json` also stores the interface `language` (default `en`); it is the source of truth for the UI language across launches.
 - Source/pkg default DB: runtime-root `data/books-selection.sqlite`; override with `BOOKS_SELECTION_DB_PATH`. Electron sets its default DB under the app's `userData/data/` directory.
+- Derived cache beside the DB: `<db>.cards.json` (cycle cards for the main list). It is disposable — deleting it costs one slow start — and must stay out of Git.
 - User-local config may contain API keys entered in Settings by explicit product decision. `writeAppConfig()` creates the parent directory with mode `0700` and writes the file with mode `0600` where supported.
 - Never commit, print, log, return, fixture, or document real keys. Keep `.books-selection/`, local config variants, generated SQLite files/sidecars, `dist/`, and `dist-desktop/` ignored.
 - Relevant env: `PORT`, `BOOKS_SELECTION_NO_OPEN`, `BOOKS_SELECTION_CONFIG_PATH`, `BOOKS_SELECTION_DB_PATH`, `OPENROUTER_API_KEY`, `LOCAL_OPENAI_API_KEY`, `BOOKS_SELECTION_OPENROUTER_MAX_SESSION_USAGE_USD`, and `BOOKS_SELECTION_OPENROUTER_USAGE_BASELINE_USD`.

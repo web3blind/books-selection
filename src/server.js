@@ -30,6 +30,7 @@ const {
   unbindCycleSeries,
 } = require('./seriesWatch');
 const { scanBooks } = require('./scan');
+const { cardsCachePath, loadCycleCards } = require('./bookCards');
 const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
 const { writeProviderNetworkDiagnostic } = require('./diagnostics');
@@ -297,8 +298,15 @@ function createRequestHandler(options = {}) {
         return sendJson(response, 400, { error: 'Нужен путь к папке с книгами.' });
       }
 
-      const books = await scanBooks(root);
-      return sendJson(response, 200, { root, count: books.length, books });
+      const databasePath = getDbPath(url, appConfig);
+      const refresh = ['1', 'true'].includes(String(url.searchParams.get('refresh') || '').toLowerCase());
+      // Карточки циклов переиспользуются из кеша рядом с базой: пока состав папок не изменился,
+      // книги на старте не читаются. Без базы кеша нет и список собирается как раньше.
+      const { books, fromCache } = await loadCycleCards(root, {
+        cachePath: cardsCachePath(databasePath),
+        refresh,
+      });
+      return sendJson(response, 200, { root, count: books.length, books, fromCache });
     }
 
     if (url.pathname === '/api/index') {

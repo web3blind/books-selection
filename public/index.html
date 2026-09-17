@@ -1484,7 +1484,7 @@
       }).join('') || `<p>${escapeHtml(t('nothingFound'))}</p>`;
     }
 
-    async function loadBooks() {
+    async function loadBooks(options = {}) {
       const root = rootInput.value.trim();
       if (!root) {
         setStatus(t('noRoot'));
@@ -1494,8 +1494,13 @@
       setStatus(t('loading'));
       resultsNode.innerHTML = '';
 
-      const url = `/api/books?root=${encodeURIComponent(root)}`;
-      const response = await fetch(url);
+      const dbPath = getDbPath();
+      const params = new URLSearchParams({ root });
+      if (dbPath) params.set('db', dbPath);
+      // Кнопка «Обновить» перечитывает книги заново, обычная загрузка берёт готовые карточки.
+      if (options.refresh === true) params.set('refresh', '1');
+
+      const response = await fetch(`/api/books?${params.toString()}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -2349,7 +2354,7 @@
     settingsFields.activeProvider.addEventListener('change', updateProviderFieldVisibility);
     settingsFields.activeEmbeddingsProvider.addEventListener('change', updateProviderFieldVisibility);
     loadButton.addEventListener('click', loadBooks);
-    reloadButton.addEventListener('click', loadBooks);
+    reloadButton.addEventListener('click', () => loadBooks({ refresh: true }));
     buildIndexButton.addEventListener('click', prepareSearch);
     cancelProviderButton.addEventListener('click', () => activeProviderController?.abort());
     askButton.addEventListener('click', askLibrary);
