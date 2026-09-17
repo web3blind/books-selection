@@ -89,6 +89,56 @@ test('getEmbeddingIndexStatus reports overall readiness', () => {
   }
 });
 
+test('getEmbeddingIndexStatus counts only embeddings of the expected dimension', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const ids = insertBookWithChunks(db, [
+      { text: 'two dimensions', contentHash: 'hash-a' },
+      { text: 'three dimensions', contentHash: 'hash-b' },
+    ]);
+    storeChunkEmbedding(db, {
+      chunkId: ids[0], provider: 'openrouter',
+      model: 'openai/text-embedding-3-small',
+      contentHash: 'hash-a', embedding: [1, 2],
+    });
+    storeChunkEmbedding(db, {
+      chunkId: ids[1], provider: 'openrouter',
+      model: 'openai/text-embedding-3-small',
+      contentHash: 'hash-b', embedding: [1, 2, 3],
+    });
+
+    assert.equal(getEmbeddingIndexStatus({ db }).ready, 2, 'без ожидаемой размерности готовы оба');
+    assert.equal(getEmbeddingIndexStatus({ db, expectedDimension: 2 }).ready, 1);
+    assert.equal(getEmbeddingIndexStatus({ db, expectedDimension: 4 }).ready, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('getEmbeddingIndexStatus does not count malformed vectors as ready', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const ids = insertBookWithChunks(db, [
+      { text: 'valid vector', contentHash: 'hash-a' },
+      { text: 'broken vector', contentHash: 'hash-b' },
+    ]);
+    for (const [index, chunkId, hash] of [[0, ids[0], 'hash-a'], [1, ids[1], 'hash-b']]) {
+      storeChunkEmbedding(db, {
+        chunkId, provider: 'openrouter',
+        model: 'openai/text-embedding-3-small',
+        contentHash: hash, embedding: [index + 1, index + 2],
+      });
+    }
+    db.prepare('UPDATE chunk_embeddings SET embedding_json = ? WHERE chunk_id = ?').run('не вектор', ids[1]);
+
+    const status = getEmbeddingIndexStatus({ db });
+    assert.equal(status.ready, 1, 'битый вектор не считается готовым');
+    assert.equal(status.status, 'partial');
+  } finally {
+    db.close();
+  }
+});
+
 test('indexMissingChunkEmbeddings reports remaining only for the active corpus root', async () => {
   const db = initializeSearchDatabase(':memory:');
   try {

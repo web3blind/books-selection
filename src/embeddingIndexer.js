@@ -92,6 +92,63 @@ function countChunksWithCurrentEmbedding(db, { provider, model }) {
   `).get(provider, model).count);
 }
 
+// Готовность считается одним SQL-запросом. Раньше здесь разбирался JSON каждого
+// вектора (JSON.parse + проверка каждого числа): на корпусе в 20 000 эмбеддингов
+// это занимало секунды синхронной работы в процессе окна и подвешивало интерфейс.
+function countReadyEmbeddings(db, { provider, model, expectedDimension = null }) {
+  const normalizedDimension = Number.isInteger(expectedDimension) && expectedDimension > 0
+    ? expectedDimension
+    : null;
+  const dimensionFilter = normalizedDimension
+    ? 'AND json_array_length(chunk_embeddings.embedding_json) = ?'
+    : '';
+  const parameters = normalizedDimension
+    ? [provider, model, normalizedDimension]
+    : [provider, model];
+  return Number(db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM chunks
+    JOIN books ON books.id = chunks.book_id
+    WHERE ${ACTIVE_CORPUS_FILTER} AND EXISTS (
+      SELECT 1
+      FROM chunk_embeddings
+      WHERE chunk_embeddings.chunk_id = chunks.id
+        AND chunk_embeddings.provider = ?
+        AND chunk_embeddings.model = ?
+        AND chunk_embeddings.content_hash = chunks.content_hash
+        AND json_valid(chunk_embeddings.embedding_json)
+        AND substr(trim(chunk_embeddings.embedding_json), 1, 1) = '['
+        ${dimensionFilter}
+    )
+  `).get(...parameters).count);
+}
+
+function isUsableStoredVector(embeddingJson) {
+  try {
+    const vector = JSON.parse(embeddingJson);
+    return Array.isArray(vector) && vector.length > 0
+      && vector.every((value) => typeof value === 'number' && Number.isFinite(value));
+  } catch {
+    return false;
+  }
+}
+
+// Быстрый путь: считаем записи без разбора векторов и проверяем ограниченную
+// выборку. Соединения и сортировка здесь дорогие (десятки миллисекунд на большом
+// корпусе), а для проверки формата достаточно любых нескольких записей.
+function countCurrentEmbeddingsForStatus(db, { provider, model, sampleSize = 20 }) {
+  const count = countChunksWithCurrentEmbedding(db, { provider, model });
+  if (count === 0) return 0;
+  const sample = db.prepare(`
+    SELECT embedding_json AS embedding_json
+    FROM chunk_embeddings
+    WHERE provider = ? AND model = ?
+    LIMIT ?
+  `).all(provider, model, sampleSize);
+  if (sample.every((row) => isUsableStoredVector(row.embedding_json))) return count;
+  return countReadyEmbeddings(db, { provider, model });
+}
+
 function* iterateCurrentEmbeddingBatches(db, { provider, model, batchSize = EMBEDDING_ROW_BATCH_SIZE }) {
   const normalizedBatchSize = normalizePositiveInteger(batchSize, EMBEDDING_ROW_BATCH_SIZE, 1000);
   const statement = db.prepare(`
@@ -139,27 +196,18 @@ function getEmbeddingIndexStatus({ db, providerOverrides = {}, env = process.env
   const { providerName, provider } = getEmbeddingProvider(providerOverrides, env);
   const model = provider?.embeddingModel || '';
   const total = countChunks(db);
-  const dimensionCounts = new Map();
-  if (model) {
-    for (const rows of iterateCurrentEmbeddingBatches(db, { provider: providerName, model })) {
-      for (const row of rows) {
-        try {
-          const vector = JSON.parse(row.embedding_json);
-          const valid = Array.isArray(vector) && vector.length > 0
-            && vector.every((value) => typeof value === 'number' && Number.isFinite(value));
-          if (valid) dimensionCounts.set(vector.length, (dimensionCounts.get(vector.length) || 0) + 1);
-        } catch {
-          // Malformed cached vectors are not ready.
-        }
-      }
-    }
-  }
   const normalizedExpectedDimension = Number.isInteger(expectedDimension) && expectedDimension > 0
     ? expectedDimension
     : null;
-  const ready = normalizedExpectedDimension
-    ? (dimensionCounts.get(normalizedExpectedDimension) || 0)
-    : ([...dimensionCounts.values()].sort((left, right) => right - left)[0] || 0);
+  const ready = model
+    ? (normalizedExpectedDimension
+      ? countReadyEmbeddings(db, {
+        provider: providerName,
+        model,
+        expectedDimension: normalizedExpectedDimension,
+      })
+      : countCurrentEmbeddingsForStatus(db, { provider: providerName, model }))
+    : 0;
   const remaining = Math.max(0, total - ready);
   const corpusState = db.prepare('SELECT errors, complete FROM corpus_state WHERE id = 1').get() || null;
   const status = corpusState && Number(corpusState.errors) > 0
