@@ -153,3 +153,57 @@ test('loadSeriesSnapshot reports oversized and failed pages without keeping part
     /503/,
   );
 });
+
+test('loadSeriesSnapshot keeps its timeout while the response body is still streaming', async () => {
+  let abortedDuringBody = false;
+  const stallingFetch = async (target, options = {}) => new Response(new ReadableStream({
+    start(streamController) {
+      options.signal?.addEventListener('abort', () => {
+        abortedDuringBody = true;
+        streamController.error(new Error('aborted while streaming'));
+      }, { once: true });
+    },
+  }), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+
+  const started = Date.now();
+  await assert.rejects(
+    loadSeriesSnapshot('https://author.today/work/series/47167', { fetchImpl: stallingFetch, timeoutMs: 150 }),
+    /врем|timeout/i,
+  );
+  assert.equal(abortedDuringBody, true, 'the timeout must abort the request while the body is being read');
+  assert.ok(Date.now() - started < 3000, 'a stalled body must not hang the request forever');
+});
+
+test('parseSeriesPage reads the completion label from the series header, not from a book row', () => {
+  const html = [
+    '<html><body>',
+    '<div class="book-row"><span class="label label-success"><i class="icon-check book-status-icon"></i> завершен</span></div>',
+    '<h1>Цикл «Проверка»</h1>',
+    '<div class="mb"><span class="label label-primary"><i class="icon-pencil book-status-icon"></i> не завершен</span></div>',
+    '<div class="panel-body collection-work-list">',
+    '<div class="book-title"><span class="label label-default label-row-index">1</span> <a href="/work/7">Книга</a></div>',
+    '</div>',
+    '</body></html>',
+  ].join('');
+
+  const page = parseSeriesPage(html);
+  assert.equal(page.isComplete, false, 'the series label wins over a book row label');
+  assert.deepEqual(page.works.map((work) => work.workId), [7]);
+});
+
+test('parseSeriesPage ignores book cards that are not part of the numbered series list', () => {
+  const html = [
+    '<html><body>',
+    '<h1>Цикл «Проверка»</h1>',
+    '<div class="panel-body collection-work-list">',
+    '<div class="book-title"><span class="label label-default label-row-index">1</span> <a href="/work/1">Своя</a></div>',
+    '<div class="book-title"><span class="label label-default label-row-index">2</span> <a href="/work/2">Тоже своя</a></div>',
+    '</div>',
+    '<div class="recommendations"><div class="book-title"><a href="/work/99">Чужая из рекомендаций</a></div></div>',
+    '</body></html>',
+  ].join('');
+
+  const works = parseSeriesPage(html).works;
+  assert.deepEqual(works.map((work) => work.workId), [1, 2]);
+  assert.deepEqual(works.map((work) => work.index), [1, 2]);
+});

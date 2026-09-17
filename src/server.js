@@ -523,7 +523,10 @@ function createRequestHandler(options = {}) {
 
       let snapshot;
       try {
-        snapshot = await loadSeriesSnapshot(payload.url, { fetchImpl: authorTodayFetchImpl });
+        snapshot = await loadSeriesSnapshot(payload.url, {
+          fetchImpl: authorTodayFetchImpl,
+          signal: requestAbort.signal,
+        });
       } catch (error) {
         return sendJson(response, 400, { error: error.message });
       }
@@ -554,14 +557,22 @@ function createRequestHandler(options = {}) {
       }
 
       try {
-        const snapshot = await loadSeriesSnapshot(existing.seriesUrl, { fetchImpl: authorTodayFetchImpl });
+        const snapshot = await loadSeriesSnapshot(existing.seriesUrl, {
+          fetchImpl: authorTodayFetchImpl,
+          signal: requestAbort.signal,
+        });
         const binding = await withSearchDatabase(databasePath, (db) => applySeriesCheck(db, { cycle, snapshot }));
         return sendJson(response, 200, { db: databasePath, cycle, ok: true, binding });
       } catch (error) {
-        const binding = await withSearchDatabase(databasePath, (db) => (
-          recordSeriesCheckFailure(db, { cycle, message: error.message })
-        ));
-        return sendJson(response, 200, { db: databasePath, cycle, ok: false, error: error.message, binding });
+        try {
+          const binding = await withSearchDatabase(databasePath, (db) => (
+            recordSeriesCheckFailure(db, { cycle, message: error.message })
+          ));
+          return sendJson(response, 200, { db: databasePath, cycle, ok: false, error: error.message, binding });
+        } catch {
+          // Привязку мог снять другой запрос: отвечаем понятной ошибкой, а не 500.
+          return sendJson(response, 404, { error: 'Цикл не привязан к странице Author.Today.' });
+        }
       }
     }
 

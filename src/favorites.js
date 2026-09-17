@@ -9,7 +9,9 @@ function ratingCaseSql() {
 }
 
 function normalizeFavoriteQuery(query) {
-  return String(query ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  // NFC: один и тот же запрос из разных источников приходит в разной нормализации Unicode,
+  // иначе визуально одинаковый текст учитывался бы в рейтинге дважды.
+  return String(query ?? '').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 function favoriteKeyForCycle(cycle) {

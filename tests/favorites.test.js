@@ -123,6 +123,21 @@ test('recordAskCycleHits deduplicates a repeated query and keeps the best positi
   });
 });
 
+test('favorite history treats canonically equivalent queries as the same query', () => {
+  withDb((db) => {
+    addCycleFavorite(db, { cycle: 'Dragon Cycle', now: 1 });
+
+    // «й» в разных нормализациях Unicode: один и тот же запрос для читателя.
+    recordAskCycleHits(db, { cycleGroups: [{ cycle: 'Dragon Cycle' }], query: 'й'.normalize('NFC'), now: 10 });
+    recordAskCycleHits(db, { cycleGroups: [{ cycle: 'Dragon Cycle' }], query: 'й'.normalize('NFD'), now: 20 });
+
+    const favorite = listFavorites(db)[0];
+    assert.equal(favorite.queryCount, 1, 'a decomposed query must not create a second history row');
+    assert.equal(favorite.rating, 5, 'the same query must not be scored twice');
+    assert.equal(favorite.hits[0].timesSeen, 2);
+  });
+});
+
 test('recordAskCycleHits ignores empty queries, empty groups, and missing cycles', () => {
   withDb((db) => {
     addCycleFavorite(db, { cycle: 'Dragon Cycle', now: 1 });

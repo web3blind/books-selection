@@ -45,12 +45,23 @@ function readBindingRow(db, cycleKey) {
   return db.prepare('SELECT * FROM cycle_series WHERE cycle_key = ?').get(cycleKey) || null;
 }
 
+function validWorkIds(works) {
+  const ids = [];
+  if (!Array.isArray(works)) return ids;
+  for (const work of works) {
+    const workId = Number(work?.workId);
+    if (Number.isSafeInteger(workId) && workId > 0 && !ids.includes(workId)) ids.push(workId);
+  }
+  return ids;
+}
+
 function snapshotColumns(snapshot) {
-  const workIds = snapshot.works.map((work) => Number(work.workId));
+  const workIds = validWorkIds(snapshot?.works);
   return {
+    workIds,
     workIdsJson: JSON.stringify(workIds),
     workCount: workIds.length,
-    isComplete: snapshot.isComplete === true ? 1 : snapshot.isComplete === false ? 0 : null,
+    isComplete: snapshot?.isComplete === true ? 1 : snapshot?.isComplete === false ? 0 : null,
   };
 }
 
@@ -63,6 +74,9 @@ function bindCycleSeries(db, { cycle, snapshot, now = Date.now() }) {
   }
 
   const columns = snapshotColumns(snapshot);
+  if (columns.workCount === 0) {
+    throw new Error('Author.Today snapshot must contain at least one book with a valid work id.');
+  }
   const existing = readBindingRow(db, cycleKey);
   db.prepare(`
     INSERT INTO cycle_series (
@@ -117,11 +131,22 @@ function applySeriesCheck(db, { cycle, snapshot, now = Date.now() }) {
   const existing = readBindingRow(db, cycleKey);
   if (!existing) throw new Error('Cycle is not bound to an Author.Today series.');
 
-  const previousIds = parseJsonList(existing.work_ids).map(Number);
+  const previousIds = parseJsonList(existing.work_ids)
+    .map(Number)
+    .filter((workId) => Number.isSafeInteger(workId) && workId > 0);
   const columns = snapshotColumns(snapshot);
-  const newWorks = snapshot.works
-    .filter((work) => !previousIds.includes(Number(work.workId)))
-    .map((work) => ({ workId: Number(work.workId), title: String(work.title || '') }));
+  const currentIds = columns.workIds;
+  const titlesById = new Map((Array.isArray(snapshot.works) ? snapshot.works : []).map((work) => [
+    Number(work?.workId),
+    String(work?.title || ''),
+  ]));
+  // Неполная страница (пагинация, обрезанный ответ) не должна терять известные книги:
+  // иначе следующая полная проверка объявит их «новыми».
+  const missingIds = previousIds.filter((workId) => !currentIds.includes(workId));
+  const mergedIds = [...previousIds, ...currentIds.filter((workId) => !previousIds.includes(workId))];
+  const newWorks = currentIds
+    .filter((workId) => !previousIds.includes(workId))
+    .map((workId) => ({ workId, title: titlesById.get(workId) || '' }));
 
   const knownCompletion = existing.is_complete === null ? null : Number(existing.is_complete) === 1;
   const updateKinds = [];
@@ -129,6 +154,11 @@ function applySeriesCheck(db, { cycle, snapshot, now = Date.now() }) {
   if (snapshot.isComplete === true && knownCompletion === false) updateKinds.push('now_complete');
 
   const nextCompletion = snapshot.isComplete === null ? existing.is_complete : columns.isComplete;
+  const partialPage = missingIds.length > 0;
+  const checkStatus = partialPage ? 'partial' : 'ok';
+  const checkNote = partialPage
+    ? `Страница отдала меньше книг (${currentIds.length} из ${previousIds.length}); сохранён прежний состав цикла.`
+    : null;
 
   db.prepare(`
     UPDATE cycle_series SET
@@ -139,19 +169,21 @@ function applySeriesCheck(db, { cycle, snapshot, now = Date.now() }) {
       has_updates = ?,
       update_kinds = ?,
       new_works = ?,
-      last_check_status = 'ok',
-      last_check_error = NULL,
+      last_check_status = ?,
+      last_check_error = ?,
       last_checked_at = ?,
       updated_at = ?
     WHERE cycle_key = ?
   `).run(
     snapshot.seriesTitle || existing.series_title || null,
-    columns.workIdsJson,
-    columns.workCount,
+    JSON.stringify(mergedIds),
+    mergedIds.length,
     nextCompletion,
     updateKinds.length > 0 ? 1 : 0,
     JSON.stringify(updateKinds),
     JSON.stringify(newWorks),
+    checkStatus,
+    checkNote,
     now,
     now,
     cycleKey,

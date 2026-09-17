@@ -149,6 +149,10 @@
       <h3 id="readingUnfinishedTitle">Незаконченные циклы</h3>
       <div id="readingUnfinishedList"></div>
     </section>
+    <section id="readingBound" aria-labelledby="readingBoundTitle" hidden>
+      <h3 id="readingBoundTitle">Привязанные циклы Author.Today</h3>
+      <div id="readingBoundList"></div>
+    </section>
     <h3 id="readingReadTitle">Прочитанные циклы</h3>
     <section id="readingList" aria-label="Прочитанные циклы"></section>
   </section>
@@ -228,6 +232,8 @@
     const readingUnfinishedNode = document.getElementById('readingUnfinishedList');
     const readingUpdateNode = document.getElementById('readingUpdateList');
     const readingUpdateSection = document.getElementById('readingUpdates');
+    const readingBoundNode = document.getElementById('readingBoundList');
+    const readingBoundSection = document.getElementById('readingBound');
     const readingStatusNode = document.getElementById('readingStatus');
     const readingSearchInput = document.getElementById('readingSearch');
     const hideReadInput = document.getElementById('hideRead');
@@ -378,6 +384,9 @@
         readingUnmarkedUnfinished: (cycle) => `Отметка «не закончен» снята: ${cycle}.`,
         languageSaveError: (message) => `Не удалось сохранить язык: ${message}`,
         readingUpdateTitleText: 'Есть продолжение',
+        readingBoundTitleText: 'Привязанные циклы Author.Today',
+        seriesChecking: 'Проверяю страницу Author.Today…',
+        seriesBinding: 'Загружаю страницу Author.Today…',
         readingUpdatesEmpty: 'Пока нет обновлений. Привяжи страницу цикла на Author.Today и нажми «Проверить обновления».',
         readingUpdatesIntro: 'Циклы, где появились новые книги или цикл завершился.',
         seriesLabel: 'Ссылка на страницу цикла Author.Today',
@@ -589,6 +598,9 @@
         readingUnmarkedUnfinished: (cycle) => `Unfinished mark cleared: ${cycle}.`,
         languageSaveError: (message) => `Could not save the language: ${message}`,
         readingUpdateTitleText: 'Has a continuation',
+        readingBoundTitleText: 'Cycles bound to Author.Today',
+        seriesChecking: 'Checking the Author.Today page…',
+        seriesBinding: 'Loading the Author.Today page…',
         readingUpdatesEmpty: 'No updates yet. Bind the cycle page on Author.Today and press “Check for updates”.',
         readingUpdatesIntro: 'Cycles with new books or a finished cycle.',
         seriesLabel: 'Author.Today series page link',
@@ -799,6 +811,7 @@
       document.getElementById('hideReadText').textContent = t('hideReadText');
       document.getElementById('readingUpdateTitle').textContent = t('readingUpdateTitleText');
       document.getElementById('readingUpdatesIntro').textContent = t('readingUpdatesIntro');
+      document.getElementById('readingBoundTitle').textContent = t('readingBoundTitleText');
       settingsViewButton.textContent = t('settingsViewButtonText');
       document.getElementById('favoritesTitle').textContent = t('favoritesTitleText');
       document.getElementById('favoritesIntro').textContent = t('favoritesIntroText');
@@ -868,6 +881,23 @@
 
     function setStatus(message) {
       statusNode.textContent = message;
+    }
+
+    async function withControlBusy(button, message, action) {
+      const wasDisabled = button ? button.disabled : false;
+      if (button) {
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+      }
+      if (message) readingStatusNode.textContent = message;
+      try {
+        return await action();
+      } finally {
+        if (button) {
+          button.disabled = wasDisabled;
+          button.removeAttribute('aria-busy');
+        }
+      }
     }
 
     async function saveLanguagePreference(language) {
@@ -1454,7 +1484,8 @@
       const cycleKey = String(cycleName || '').trim();
       if (!cycleKey) return '';
       const isFavorite = favoriteKeys.has(cycleKey);
-      return `<button type="button" class="favorite-toggle" data-cycle="${escapeHtml(cycleKey)}" aria-pressed="${isFavorite ? 'true' : 'false'}">${escapeHtml(isFavorite ? t('favoriteRemove') : t('favoriteAdd'))}</button>`;
+      const label = isFavorite ? t('favoriteRemove') : t('favoriteAdd');
+      return `<button type="button" class="favorite-toggle" data-cycle="${escapeHtml(cycleKey)}" aria-label="${escapeHtml(`${label}: ${cycleKey}`)}" aria-pressed="${isFavorite ? 'true' : 'false'}">${escapeHtml(label)}</button>`;
     }
 
     function refreshFavoriteButtons() {
@@ -1487,10 +1518,10 @@
           <h3>${escapeHtml(favorite.cycleName)}</h3>
           <p class="muted">${escapeHtml(t('favoritesRating', favorite.rating, favorite.leaderCount, favorite.queryCount))}</p>
           <div class="actions">
-            <button type="button" data-favorites-action="up" data-cycle="${cycleKey}">${escapeHtml(t('favoriteMoveUp'))}</button>
-            <button type="button" data-favorites-action="down" data-cycle="${cycleKey}">${escapeHtml(t('favoriteMoveDown'))}</button>
-            <button type="button" data-favorites-action="unfavorite" data-cycle="${cycleKey}">${escapeHtml(t('favoriteRemove'))}</button>
-            <button type="button" data-favorites-action="clear" data-cycle="${cycleKey}">${escapeHtml(t('favoritesClearCycle'))}</button>
+            <button type="button" data-favorites-action="up" data-cycle="${cycleKey}" aria-label="${escapeHtml(`${t('favoriteMoveUp')}: ${favorite.cycleName}`)}">${escapeHtml(t('favoriteMoveUp'))}</button>
+            <button type="button" data-favorites-action="down" data-cycle="${cycleKey}" aria-label="${escapeHtml(`${t('favoriteMoveDown')}: ${favorite.cycleName}`)}">${escapeHtml(t('favoriteMoveDown'))}</button>
+            <button type="button" data-favorites-action="unfavorite" data-cycle="${cycleKey}" aria-label="${escapeHtml(`${t('favoriteRemove')}: ${favorite.cycleName}`)}">${escapeHtml(t('favoriteRemove'))}</button>
+            <button type="button" data-favorites-action="clear" data-cycle="${cycleKey}" aria-label="${escapeHtml(`${t('favoritesClearCycle')}: ${favorite.cycleName}`)}">${escapeHtml(t('favoritesClearCycle'))}</button>
           </div>
           <details>
             <summary>${escapeHtml(t('favoritesQueriesHeading'))} (${hits.length})</summary>
@@ -1623,9 +1654,11 @@
       if (!cycleKey) return '';
       const state = readingStateFor(cycleKey);
       const escapedKey = escapeHtml(cycleKey);
+      const readLabel = state.isRead ? t('readingUnmarkRead') : t('readingMarkRead');
+      const unfinishedLabel = state.isUnfinished ? t('readingUnmarkUnfinished') : t('readingMarkUnfinished');
       return [
-        `<button type="button" class="reading-toggle" data-reading-flag="read" data-cycle="${escapedKey}" aria-pressed="${state.isRead ? 'true' : 'false'}">${escapeHtml(state.isRead ? t('readingUnmarkRead') : t('readingMarkRead'))}</button>`,
-        `<button type="button" class="reading-toggle" data-reading-flag="unfinished" data-cycle="${escapedKey}" aria-pressed="${state.isUnfinished ? 'true' : 'false'}">${escapeHtml(state.isUnfinished ? t('readingUnmarkUnfinished') : t('readingMarkUnfinished'))}</button>`,
+        `<button type="button" class="reading-toggle" data-reading-flag="read" data-cycle="${escapedKey}" aria-label="${escapeHtml(`${readLabel}: ${cycleKey}`)}" aria-pressed="${state.isRead ? 'true' : 'false'}">${escapeHtml(readLabel)}</button>`,
+        `<button type="button" class="reading-toggle" data-reading-flag="unfinished" data-cycle="${escapedKey}" aria-label="${escapeHtml(`${unfinishedLabel}: ${cycleKey}`)}" aria-pressed="${state.isUnfinished ? 'true' : 'false'}">${escapeHtml(unfinishedLabel)}</button>`,
       ].join('');
     }
 
@@ -1689,8 +1722,11 @@
         binding.workCount,
         seriesCompletionText(binding),
       );
-      const failure = binding.lastCheckStatus === 'failed' && binding.lastCheckError
-        ? `<p class="error">${escapeHtml(t('seriesCheckFailed', binding.lastCheckError))}</p>`
+      const noteMessage = binding.lastCheckStatus === 'partial'
+        ? binding.lastCheckError
+        : t('seriesCheckFailed', binding.lastCheckError);
+      const failure = ['failed', 'partial'].includes(binding.lastCheckStatus) && binding.lastCheckError
+        ? `<p class="error">${escapeHtml(noteMessage)}</p>`
         : '';
       const works = binding.newWorks.length === 0 ? '' : `
             <ul>${binding.newWorks.map((work) => `
@@ -1753,6 +1789,8 @@
       }
 
       renderReadingUpdates();
+      // Список привязанных циклов живёт рядом с отметками: обновляем обе части раздела.
+      if (readingLoaded) renderReading();
       return [...seriesBindings.values()];
     }
 
@@ -1846,7 +1884,28 @@
         matches.filter((state) => state.isUnfinished),
         emptyFor(t('readingUnfinishedEmpty')),
       );
+      renderReadingBoundList(matches, needle);
       renderReadingUpdates();
+    }
+
+    function renderReadingBoundList(matches, needle) {
+      // Привязка к Author.Today живёт независимо от отметок: цикл без отметок
+      // иначе остался бы без карточки, и его нельзя было бы проверить или отвязать.
+      const listedKeys = new Set([
+        ...matches.filter((state) => state.isRead).map((state) => state.cycleKey),
+        ...matches.filter((state) => state.isUnfinished).map((state) => state.cycleKey),
+      ]);
+      const orphans = [...seriesBindings.values()]
+        .filter((binding) => !listedKeys.has(binding.cycleKey))
+        .filter((binding) => !needle || binding.cycleName.toLowerCase().includes(needle))
+        .sort((left, right) => left.cycleName.localeCompare(right.cycleName));
+      readingBoundSection.hidden = orphans.length === 0;
+      readingBoundNode.innerHTML = orphans.length === 0 ? '' : `<ul>${orphans.map((binding) => `
+        <li>
+          <h4>${escapeHtml(binding.cycleName)}</h4>
+          <div class="actions">${readingButtonsMarkup(binding.cycleKey)}</div>
+          ${seriesBlockMarkup(binding.cycleKey)}
+        </li>`).join('')}</ul>`;
     }
 
     async function loadReadingStates() {
@@ -2110,26 +2169,26 @@
       else if (action === 'unfavorite') toggleFavorite(cycleKey, false);
       else if (action === 'clear') clearFavoritesHistory(cycleKey);
     });
-    for (const cycleListNode of [resultsNode, aiResultsNode, readingListNode, readingUnfinishedNode, readingUpdateNode]) {
+    for (const cycleListNode of [resultsNode, aiResultsNode, readingListNode, readingUnfinishedNode, readingBoundNode, readingUpdateNode]) {
       cycleListNode.addEventListener('click', (event) => {
         const bindButton = event.target.closest('.series-bind');
         if (bindButton) {
           const cycleKey = bindButton.getAttribute('data-cycle') || '';
           const input = bindButton.parentElement ? bindButton.parentElement.querySelector('.series-input') : null;
           const value = input ? input.value.trim() : '';
-          if (cycleKey && value) bindSeries(cycleKey, value);
+          if (cycleKey && value) withControlBusy(bindButton, t('seriesBinding'), () => bindSeries(cycleKey, value));
           return;
         }
         const checkButton = event.target.closest('.series-check');
         if (checkButton) {
           const cycleKey = checkButton.getAttribute('data-cycle') || '';
-          if (cycleKey) checkSeries(cycleKey);
+          if (cycleKey) withControlBusy(checkButton, t('seriesChecking'), () => checkSeries(cycleKey));
           return;
         }
         const unbindButton = event.target.closest('.series-unbind');
         if (unbindButton) {
           const cycleKey = unbindButton.getAttribute('data-cycle') || '';
-          if (cycleKey) unbindSeries(cycleKey);
+          if (cycleKey) withControlBusy(unbindButton, null, () => unbindSeries(cycleKey));
           return;
         }
         const favoriteButton = event.target.closest('.favorite-toggle');

@@ -162,3 +162,47 @@ test('series bindings survive reopening the database file', () => {
   second.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('applySeriesCheck keeps vanished books known when the page arrives incomplete', () => {
+  const db = openDatabase();
+  const full = syntheticPage({
+    title: 'Частичная',
+    books: [
+      { workId: 11, title: 'Первая' },
+      { workId: 22, title: 'Вторая' },
+      { workId: 33, title: 'Третья' },
+    ],
+  });
+  const partial = syntheticPage({ title: 'Частичная', books: [{ workId: 11, title: 'Первая' }] });
+  bindCycleSeries(db, { cycle: 'Частичная', snapshot: snapshotFrom(full), now: 1000 });
+
+  const shrunk = applySeriesCheck(db, { cycle: 'Частичная', snapshot: snapshotFrom(partial), now: 2000 });
+  assert.deepEqual(shrunk.workIds.slice().sort((left, right) => left - right), [11, 22, 33]);
+  assert.equal(shrunk.hasUpdates, false);
+  assert.equal(shrunk.lastCheckStatus, 'partial');
+  assert.match(shrunk.lastCheckError, /неполн|меньше/i);
+
+  const restored = applySeriesCheck(db, { cycle: 'Частичная', snapshot: snapshotFrom(full), now: 3000 });
+  assert.equal(restored.hasUpdates, false, 'a restored full page must not look like new books');
+  assert.deepEqual(restored.updateKinds, []);
+  assert.equal(restored.lastCheckStatus, 'ok');
+  assert.equal(restored.lastCheckError, null);
+});
+
+test('series snapshots reject books without a valid work id', () => {
+  const db = openDatabase();
+  assert.throws(
+    () => bindCycleSeries(db, {
+      cycle: 'Битая',
+      snapshot: {
+        seriesId: 1,
+        canonicalUrl: 'https://author.today/work/series/1',
+        seriesTitle: null,
+        isComplete: null,
+        works: [{ title: 'Без идентификатора' }, { workId: 'мусор', title: 'Тоже' }],
+      },
+    }),
+    /book|книг/i,
+  );
+  assert.deepEqual(listCycleSeries(db), [], 'a snapshot without valid books must not be stored');
+});

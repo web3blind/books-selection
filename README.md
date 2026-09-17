@@ -1,6 +1,6 @@
 # Books Selection
 
-Local desktop app for choosing FB2 book series by annotation and asking questions over a local full-text index.
+Local desktop app for choosing FB2 book series by annotation, asking questions over a local full-text index, keeping a favorites rating of cycles, tracking read cycles, and watching bound Author.Today series pages for new books.
 
 Books Selection can run in two modes:
 
@@ -17,6 +17,15 @@ Latest desktop release downloads:
 - macOS x64: https://github.com/web3blind/books-selection/releases/latest/download/books-selection-desktop-mac-x64.zip
 
 These links point to `releases/latest`, so they keep working for future releases as long as release assets keep the same names.
+
+## What is inside
+
+- **Cycles only.** The main screen lists cycles with their annotations; individual books are not the browsing unit.
+- **Ask over the library.** One question returns one block per cycle with the matching books and fragments under spoilers, so a cycle is never repeated in the result list.
+- **Favorites with a rating.** Cycles added to Favorites collect points from the Ask answers where they land in the top five positions (5/4/3/2/1 for places 1-5). The same question never scores twice, order can be corrected with "move up/down", and "sort by rating" rebuilds the order.
+- **Read cycles.** A cycle can be marked as read and separately as unfinished, read cycles can be hidden from the main list, and the Read section keeps a searchable list plus an "unfinished cycles" subsection.
+- **Continuations from Author.Today.** A cycle can be bound to its public `https://author.today/work/series/<id>` page. Nothing is fetched automatically: pressing "Check for updates" loads that one page and compares it with the stored book list. New books (`work_id`) or a cycle that became complete appear in the "Has a continuation" block. Network errors keep the previous snapshot, an incomplete page never marks vanished books as new, and the request has a timeout with a size cap.
+- **Interface language.** English is the default. The chosen language is stored in `config.json` next to the database, so it survives application restarts, new ports, and browser storage resets.
 
 ## Run the desktop app
 
@@ -183,6 +192,10 @@ The local server exposes JSON endpoints used by the UI:
 - `GET /api/search`
 - `POST /api/semantic-search`
 - `POST /api/ask`
+- `GET /api/favorites`, `POST /api/cycle-favorite`, `POST /api/favorites/reorder`, `POST /api/favorites/clear-history`
+- `GET /api/reading`, `POST /api/cycle-reading`
+- `GET /api/cycle-series`, `POST /api/cycle-series` (bind/unbind), `POST /api/cycle-series/check`
+- `POST /api/language`
 - `POST /api/extract-fact`
 
 Annotation browsing through `/api/books` does not require AI keys. Indexing/search uses local SQLite. AI-backed answer generation and embeddings require provider configuration.
