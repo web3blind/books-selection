@@ -207,6 +207,75 @@ test('reads fb2 from zip without python', async () => {
   assert.equal(result.annotation, 'Аннотация внутри zip.');
 });
 
+test('readBookInfo matches a full parse when the book body is much larger than the head window', async () => {
+  const paragraph = `<p>${'дракон пещера артефакт '.repeat(200)}</p>`;
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  <FictionBook>
+    <description>
+      <title-info>
+        <book-title>Великая книга</book-title>
+        <annotation><p>Короткая аннотация в начале.</p></annotation>
+      </title-info>
+    </description>
+    <body><section>${paragraph.repeat(400)}</section></body>
+  </FictionBook>`;
+
+  assert.ok(xml.length > 1024 * 1024, 'fixture must be larger than the head window');
+  const tempFile = path.join(os.tmpdir(), `books-selection-head-${Date.now()}.fb2`);
+  await fs.writeFile(tempFile, xml, 'utf8');
+
+  try {
+    const info = await readBookInfo(tempFile);
+    assert.deepEqual(info, extractBookInfoFromXml(xml));
+    assert.equal(info.title, 'Великая книга');
+    assert.equal(info.annotation, 'Короткая аннотация в начале.');
+  } finally {
+    await fs.unlink(tempFile);
+  }
+});
+
+test('readBookInfo falls back to a full decode when the description lies beyond the head window', async () => {
+  const filler = `<p>${'шум '.repeat(1000)}</p>`;
+  const xml = `<?xml version="1.0" encoding="utf-8"?><FictionBook>${filler.repeat(200)}<description><title-info><book-title>Позднее описание</book-title><annotation><p>Аннотация после пролога.</p></annotation></title-info></description></FictionBook>`;
+
+  assert.ok(xml.length > 512 * 1024, 'fixture must push the description past the head window');
+  const tempFile = path.join(os.tmpdir(), `books-selection-late-${Date.now()}.fb2`);
+  await fs.writeFile(tempFile, xml, 'utf8');
+
+  try {
+    const info = await readBookInfo(tempFile);
+    assert.equal(info.title, 'Позднее описание');
+    assert.equal(info.annotation, 'Аннотация после пролога.');
+  } finally {
+    await fs.unlink(tempFile);
+  }
+});
+
+test('readBookInfo reads a large zipped book through the head window', async () => {
+  const paragraph = `<p>${'море корабль шторм '.repeat(200)}</p>`;
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  <FictionBook>
+    <description>
+      <title-info>
+        <book-title>Большой архив</book-title>
+        <annotation><p>Аннотация из архива.</p></annotation>
+      </title-info>
+    </description>
+    <body><section>${paragraph.repeat(300)}</section></body>
+  </FictionBook>`;
+
+  const zipBuffer = createZipBuffer('big.fb2', xml);
+  const tempFile = path.join(os.tmpdir(), `books-selection-bigzip-${Date.now()}.fb2.zip`);
+  await fs.writeFile(tempFile, zipBuffer);
+
+  try {
+    const info = await readBookInfo(tempFile);
+    assert.deepEqual(info, extractBookInfoFromXml(xml));
+  } finally {
+    await fs.unlink(tempFile);
+  }
+});
+
 test('rejects a ZIP entry whose extracted FB2 does not match the declared CRC32', async () => {
   const zipBuffer = createZipBuffer('book.fb2', '<FictionBook/>');
   const centralOffset = zipBuffer.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));

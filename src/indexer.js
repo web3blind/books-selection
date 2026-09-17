@@ -4,7 +4,7 @@ const path = require('node:path');
 
 const { BOOK_STATUSES } = require('./constants');
 const { assertBookSourceSize, chunkText, readBookDocument } = require('./fb2');
-const { scanBooks } = require('./scan');
+const { scanBooks, yieldToEventLoop } = require('./scan');
 
 function hashBuffer(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -210,6 +210,10 @@ async function indexLibrary(db, rootPath, options = {}) {
     } catch {
       summary.errors += 1;
     }
+
+    // Разбор книги — синхронная работа; отдаём событийный цикл, чтобы интерфейс и
+    // другие запросы не ждали окончания индексации.
+    await yieldToEventLoop();
   }
 
   db.exec('BEGIN');

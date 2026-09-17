@@ -13,9 +13,9 @@
 - `desktop/main.js`: Electron lifecycle, `BrowserWindow`, desktop SQLite default under Electron `userData`, native folder-dialog IPC, external-link handling, and Linux-verifiable smoke mode.
 - `desktop/preload.js`: narrow context-isolated bridge exposing only `booksSelectionDesktop.isDesktop` and `pickDirectory()`; do not expose filesystem, process, shell, or arbitrary IPC access.
 - `public/index.html`: intentional single-file, framework-free RU/EN UI containing markup, styles, localization, settings, annotation browser, index/Ask flow, accessible live regions, and update banner.
-- `src/scan.js`: scans exactly one level of series folders, natural-sorts files, and selects the first `.fb2` or `.fb2.zip` in each folder.
-- `src/fb2.js`: FB2/XML encoding detection, title/annotation/body extraction, stable text chunking, and built-in ZIP reading without Python.
-- `src/indexer.js`: transactional local indexing, file fingerprinting, unchanged-file skip, chunk replacement, FTS5 synchronization, and local snippet search.
+- `src/scan.js`: scans exactly one level of series folders, natural-sorts files, and selects the first `.fb2` or `.fb2.zip` in each folder. It exports `yieldToEventLoop()` and awaits it between books: one book parse is synchronous CPU work, and without the pause the server cannot answer other requests while scanning.
+- `src/fb2.js`: FB2/XML encoding detection, title/annotation/body extraction, stable text chunking, and built-in ZIP reading without Python. Cycle cards must be read through `readBookInfo` (head window `decodeXmlHead`, 512 KiB, used only when the complete `<description>` fits) — never decode or normalize the whole body for the main list. Keep CRC32 on the native `zlib.crc32` path with the JS loop as fallback.
+- `src/indexer.js`: transactional local indexing, file fingerprinting, unchanged-file skip, chunk replacement, FTS5 synchronization, and local snippet search. The per-book prepare loop yields to the event loop so indexing does not freeze the UI.
 - `src/searchSchema.js`: schema for books, chunks, FTS5, embeddings, entities, evidence, relations, events, derived facts, and the cycle tables `cycle_favorites`, `cycle_query_hits`, `cycle_reading_state`, `cycle_series`.
 - `src/searchDb.js`: optional `node:sqlite` adapter, parent-directory creation, schema initialization, and compatibility migration for older `derived_facts` tables missing `fact_type`. It owns `SCHEMA_VERSION` (currently 5) and `KNOWN_TABLES`: a new table must be added to both, otherwise an existing database is refused with "not a Books Selection database" on the next open. Migration writes a `<db>.backup-<timestamp>` copy before touching anything.
 - `src/appConfig.js` also stores `language`; the value is injected into the served page as `window.__booksSelectionLanguage` and `<html lang>`, so the UI does not flash the wrong language and screen readers get the right one.
@@ -55,7 +55,7 @@
 - `POST /api/favorites/clear-history`: clear the Ask hit history for one cycle or for all of them.
 - `GET /api/reading`, `POST /api/cycle-reading`: list cycle marks / set `isRead` and `isUnfinished` for a cycle.
 - `GET /api/cycle-series`, `POST /api/cycle-series`: list bindings / bind a cycle to an Author.Today series page or unbind it (`{bound: false}`).
-- `POST /api/cycle-series/check`: one manual network request to the bound Author.Today page; never called automatically or on a schedule.
+- `POST /api/cycle-series/check`: one manual network request for one bound cycle. The UI may run these sequentially from the bulk control (one request per cycle, about 1 s apart, stoppable); never called automatically, in the background, or on a schedule.
 - `POST /api/extract-fact`: requires `q`, numeric `bookId`, and `factKey`; `factType` defaults to `generic`.
 - `GET /api/update-check`: checks the public GitHub latest-release endpoint and returns current/latest version plus preferred and fallback assets.
 - Root and DB resolution order is explicit query parameter, saved app config, then applicable runtime default. `q` and endpoint-specific identifiers remain required.
@@ -71,6 +71,7 @@
 - Cycle results are one block per cycle with its books inside `<details>/<summary>` (collapsed by default), so repeated cycles never appear as separate rows.
 - Lists repeat identical controls per cycle ("Move up 1", "Mark as read", "Add to favorites"): every repeated control must carry the cycle name in its accessible name, otherwise a screen-reader user hears the same label many times without context.
 - A cycle bound to Author.Today must stay reachable in the reading view even when both marks are cleared, so its binding can always be checked or removed.
+- The unfinished-cycles section carries one bulk control (`readingCheckAllButton`) with a visible count of checkable cycles plus a hint when some unfinished cycles have no binding, a progress announcement in the existing status region, and a stop control that stays hidden except during a run. Keep single-cycle controls working alongside it.
 - UI language comes from the server-injected `window.__booksSelectionLanguage` (config-backed, `<html lang>` set at render). Do not move it back to `localStorage`: the desktop app serves the page on a new port at every launch, so browser storage does not survive.
 - Keep native HTML labels, buttons, links, lists, headings, and `role="status"`/`aria-live` regions; avoid custom widgets and tables for Ask evidence/results.
 - Keep RU and EN text maps synchronized when adding visible copy or controls.

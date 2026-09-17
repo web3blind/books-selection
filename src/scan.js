@@ -16,6 +16,12 @@ const collator = new Intl.Collator(['ru', 'en'], {
   sensitivity: 'base',
 });
 
+// Между книгами отдаём событийный цикл: разбор одной книги — синхронная работа,
+// без паузы сервер не успевает отвечать на другие запросы и приложение «подвисает».
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function naturalSort(a, b) {
   return collator.compare(a, b);
 }
@@ -87,6 +93,8 @@ async function scanBooks(rootPath, { readInfo = true, allFiles = false } = {}) {
           hasAnnotation: false,
         });
       }
+
+      await yieldToEventLoop();
     }
   }
 
@@ -95,4 +103,5 @@ async function scanBooks(rootPath, { readInfo = true, allFiles = false } = {}) {
 
 module.exports = {
   scanBooks,
+  yieldToEventLoop,
 };

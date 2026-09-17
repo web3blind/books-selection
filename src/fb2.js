@@ -15,8 +15,13 @@ for (let index = 0; index < CRC32_TABLE.length; index += 1) {
 }
 
 function crc32(buffer) {
+  // Нативный CRC32 (Node 22) вместо побайтового цикла: на книгах в несколько мегабайт
+  // цикл блокировал событийный цикл заметно дольше самой распаковки.
+  if (typeof zlib.crc32 === 'function') return zlib.crc32(buffer) >>> 0;
   let crc = 0xffffffff;
-  for (const byte of buffer) crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff];
+  for (let index = 0; index < buffer.length; index += 1) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ buffer[index]) & 0xff];
+  }
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -252,17 +257,14 @@ function assertBookSourceSize(filePath, size) {
   }
 }
 
-async function readFb2File(filePath, source = {}) {
+async function readXmlBufferFromFile(filePath, source = {}) {
   const stat = source.stat || await fs.stat(filePath);
   assertBookSourceSize(filePath, stat.size);
-  const buffer = source.buffer || await fs.readFile(filePath);
-  return decodeXmlBuffer(buffer);
+  return source.buffer || await fs.readFile(filePath);
 }
 
-async function readFb2FromZip(filePath, source = {}) {
-  const stat = source.stat || await fs.stat(filePath);
-  assertBookSourceSize(filePath, stat.size);
-  const buffer = source.buffer || await fs.readFile(filePath);
+async function readXmlBufferFromZip(filePath, source = {}) {
+  const buffer = await readXmlBufferFromFile(filePath, source);
   const entries = readZipEntries(buffer);
   const entry = entries.find((item) => item.fileName.toLowerCase().endsWith('.fb2'));
 
@@ -276,7 +278,22 @@ async function readFb2FromZip(filePath, source = {}) {
     throw new Error(`Не удалось прочитать zip: ${path.basename(filePath)} invalid uncompressed size`);
   }
 
-  return decodeXmlBuffer(xmlBuffer);
+  return xmlBuffer;
+}
+
+async function readXmlBuffer(filePath, source = {}) {
+  const lower = filePath.toLowerCase();
+  return lower.endsWith('.fb2.zip')
+    ? readXmlBufferFromZip(filePath, source)
+    : readXmlBufferFromFile(filePath, source);
+}
+
+async function readFb2File(filePath, source = {}) {
+  return decodeXmlBuffer(await readXmlBufferFromFile(filePath, source));
+}
+
+async function readFb2FromZip(filePath, source = {}) {
+  return decodeXmlBuffer(await readXmlBufferFromZip(filePath, source));
 }
 
 async function readBookDocument(filePath, source = {}) {
@@ -290,9 +307,22 @@ async function readBookDocument(filePath, source = {}) {
   };
 }
 
-async function readBookInfo(filePath) {
-  const { title, annotation } = await readBookDocument(filePath);
-  return { title, annotation };
+// Название и аннотация лежат в <description> в начале файла, а тело книги может занимать
+// десятки мегабайт. Для карточки цикла достаточно начала документа: декодируем только его,
+// если блок description попал в окно целиком. Иначе — полное декодирование, как раньше.
+const INFO_HEAD_WINDOW_BYTES = 512 * 1024;
+
+function decodeXmlHead(buffer, windowBytes = INFO_HEAD_WINDOW_BYTES) {
+  if (buffer.length <= windowBytes) return decodeXmlBuffer(buffer);
+  const head = buffer.subarray(0, windowBytes);
+  if (head.indexOf('</description>') === -1) return null;
+  return decodeXmlBuffer(head);
+}
+
+async function readBookInfo(filePath, source = {}) {
+  const buffer = await readXmlBuffer(filePath, source);
+  const xml = decodeXmlHead(buffer) ?? decodeXmlBuffer(buffer);
+  return extractBookInfoFromXml(xml);
 }
 
 module.exports = {
