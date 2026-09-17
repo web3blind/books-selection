@@ -219,3 +219,28 @@ test('writeAppConfig repairs restrictive permissions on existing config paths', 
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('app config keeps the interface language and defaults to English', () => {
+  assert.equal(normalizeAppConfig({}).language, 'en');
+  assert.equal(normalizeAppConfig({ language: 'ru' }).language, 'ru');
+  assert.equal(normalizeAppConfig({ language: 'de' }).language, 'en');
+  assert.equal(normalizeAppConfig({ language: ' RU ' }).language, 'en');
+});
+
+test('writeAppConfig keeps the saved language when settings are saved without it', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-config-language-'));
+  const env = { BOOKS_SELECTION_CONFIG_PATH: path.join(dir, 'config.json') };
+  try {
+    await writeAppConfig({ booksRoot: '/books', dbPath: '/tmp/books.sqlite', language: 'ru' }, env);
+    const saved = await writeAppConfig({ booksRoot: '/books2', dbPath: '/tmp/books.sqlite' }, env);
+    assert.equal(saved.config.language, 'ru');
+    assert.equal(saved.config.booksRoot, '/books2');
+
+    const switched = await writeAppConfig({ ...saved.config, language: 'en' }, env);
+    assert.equal(switched.config.language, 'en');
+    assert.equal(switched.config.dbPath, '/tmp/books.sqlite');
+    assert.equal((await readAppConfig(env)).config.language, 'en');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

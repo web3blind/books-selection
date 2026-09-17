@@ -24,6 +24,7 @@ function defaultAppConfig() {
   return {
     booksRoot: '',
     dbPath: getDefaultDbPath(),
+    language: 'en',
     activeProvider: DEFAULT_CONFIG.activeProvider,
     activeEmbeddingsProvider: DEFAULT_CONFIG.activeEmbeddingsProvider,
     providers: {
@@ -63,6 +64,10 @@ function normalizeProviderName(value, fallback) {
   return ['openrouter', 'local'].includes(value) ? value : fallback;
 }
 
+function normalizeLanguage(value, fallback) {
+  return ['en', 'ru'].includes(value) ? value : fallback;
+}
+
 function normalizeAppConfig(input = {}) {
   const defaults = defaultAppConfig();
   const openrouter = input.providers?.openrouter || input.openrouter || {};
@@ -71,6 +76,7 @@ function normalizeAppConfig(input = {}) {
   return {
     booksRoot: cleanString(input.booksRoot || input.root),
     dbPath: cleanString(input.dbPath || input.db) || defaults.dbPath,
+    language: normalizeLanguage(cleanString(input.language), defaults.language),
     activeProvider: normalizeProviderName(input.activeProvider, defaults.activeProvider),
     activeEmbeddingsProvider: normalizeProviderName(input.activeEmbeddingsProvider, defaults.activeEmbeddingsProvider),
     providers: {
@@ -183,6 +189,9 @@ async function writeAppConfig(input, env = process.env) {
 
   const mergedInput = structuredClone(input || {});
   mergedInput.providers ||= {};
+  if (!['en', 'ru'].includes(cleanString(mergedInput.language))) {
+    mergedInput.language = existingConfig.language;
+  }
   for (const providerName of ['openrouter', 'local']) {
     mergedInput.providers[providerName] ||= {};
     const submittedKey = cleanString(mergedInput.providers[providerName].apiKey);

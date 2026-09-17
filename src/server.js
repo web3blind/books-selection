@@ -62,6 +62,23 @@ async function sendFile(response, filePath, contentType, headers = {}) {
   response.end(content);
 }
 
+async function sendIndexFile(response, filePath, language, headers = {}) {
+  const requested = ['en', 'ru'].includes(language) ? language : 'en';
+  const html = await fs.readFile(filePath, 'utf8');
+  const bootstrap = `<script>window.__booksSelectionLanguage=${JSON.stringify(requested)};</script>`;
+  const withLanguage = html.replace(/<html lang="[^"]*"/, `<html lang="${requested}"`);
+  const body = withLanguage.includes('</head>')
+    ? withLanguage.replace('</head>', `${bootstrap}\n</head>`)
+    : `${bootstrap}\n${withLanguage}`;
+  const content = Buffer.from(body, 'utf8');
+  response.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': content.length,
+    ...headers,
+  });
+  response.end(content);
+}
+
 function openBrowser(url) {
   let command;
   let args;
@@ -249,6 +266,22 @@ function createRequestHandler(options = {}) {
           isConfigured: isAppConfigured(saved.config),
         });
       }
+    }
+
+    if (url.pathname === '/api/language') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const language = String(payload.language || '').trim();
+      if (!['en', 'ru'].includes(language)) {
+        return sendJson(response, 400, { error: 'Нужен language en или ru.' });
+      }
+      const saved = await writeAppConfig({ ...appConfig, language }, process.env);
+      return sendJson(response, 200, {
+        config: redactAppConfig(saved.config, process.env),
+        path: saved.path,
+        language,
+      });
     }
 
     if (url.pathname === '/api/update-check') {
@@ -656,7 +689,7 @@ function createRequestHandler(options = {}) {
     }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
-      return sendFile(response, path.join(publicDir, 'index.html'), 'text/html', {
+      return sendIndexFile(response, path.join(publicDir, 'index.html'), appConfig.language, {
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
         'set-cookie': `${API_COOKIE_NAME}=${apiToken}; HttpOnly; SameSite=Strict; Path=/api`,

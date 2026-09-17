@@ -652,3 +652,43 @@ test('series API binds an Author.Today page, reports new books, and unbinds', as
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('language API persists the interface language and the served page uses it', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-language-api-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({ booksRoot: dir, dbPath }, process.env);
+
+  const started = await startServer({ port: 0, openBrowser: false, log: false });
+  try {
+    const home = await request(started, 'GET', '/');
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    assert.match(home.body, /<html lang="en"/);
+    assert.match(home.body, /window\.__booksSelectionLanguage="en"/);
+
+    assert.equal((await request(started, 'POST', '/api/language', cookie, { language: 'de' })).statusCode, 400);
+    assert.equal((await request(started, 'POST', '/api/language', { language: 'ru' })).statusCode, 403);
+
+    const saved = await request(started, 'POST', '/api/language', cookie, { language: 'ru' });
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.body.language, 'ru');
+    assert.equal((await request(started, 'GET', `/api/config`, cookie)).body.config.language, 'ru');
+
+    const switchedHome = await request(started, 'GET', '/');
+    assert.match(switchedHome.body, /<html lang="ru"/);
+    assert.match(switchedHome.body, /window\.__booksSelectionLanguage="ru"/);
+
+    const settingsSave = await request(started, 'POST', '/api/config', cookie, { booksRoot: dir, dbPath });
+    assert.equal(settingsSave.statusCode, 200);
+    assert.equal(settingsSave.body.config.language, 'ru', 'saving settings must not reset the language');
+
+    const injections = switchedHome.body.match(/<script>window\.__booksSelectionLanguage=/g) || [];
+    assert.equal(injections.length, 1, 'the bootstrap language must be injected exactly once');
+  } finally {
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

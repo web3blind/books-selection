@@ -306,7 +306,8 @@
     const skippedUpdateKey = 'books-selection:skipped-update-version';
     const queryParams = new URLSearchParams(location.search);
     const queryLang = queryParams.get('lang') || '';
-    const savedLanguage = localStorage.getItem(languageKey) || 'en';
+    const bootstrapLanguage = typeof window.__booksSelectionLanguage === 'string' ? window.__booksSelectionLanguage : '';
+    const savedLanguage = bootstrapLanguage || localStorage.getItem(languageKey) || 'en';
     let activeProviderController = null;
     let activeAiOperation = false;
     let savedEmbeddingProvider = 'openrouter';
@@ -375,6 +376,7 @@
         readingUnmarkedRead: (cycle) => `Отметка прочитанного снята: ${cycle}.`,
         readingMarkedUnfinished: (cycle) => `Цикл отмечен незаконченным: ${cycle}.`,
         readingUnmarkedUnfinished: (cycle) => `Отметка «не закончен» снята: ${cycle}.`,
+        languageSaveError: (message) => `Не удалось сохранить язык: ${message}`,
         readingUpdateTitleText: 'Есть продолжение',
         readingUpdatesEmpty: 'Пока нет обновлений. Привяжи страницу цикла на Author.Today и нажми «Проверить обновления».',
         readingUpdatesIntro: 'Циклы, где появились новые книги или цикл завершился.',
@@ -585,6 +587,7 @@
         readingUnmarkedRead: (cycle) => `Read mark cleared: ${cycle}.`,
         readingMarkedUnfinished: (cycle) => `Cycle marked as unfinished: ${cycle}.`,
         readingUnmarkedUnfinished: (cycle) => `Unfinished mark cleared: ${cycle}.`,
+        languageSaveError: (message) => `Could not save the language: ${message}`,
         readingUpdateTitleText: 'Has a continuation',
         readingUpdatesEmpty: 'No updates yet. Bind the cycle page on Author.Today and press “Check for updates”.',
         readingUpdatesIntro: 'Cycles with new books or a finished cycle.',
@@ -867,6 +870,15 @@
       statusNode.textContent = message;
     }
 
+    async function saveLanguagePreference(language) {
+      const data = await fetchJson('/api/language', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ language }),
+      });
+      return data.language || language;
+    }
+
     function setAiStatus(message) {
       aiStatusNode.textContent = message;
     }
@@ -965,6 +977,10 @@
       try {
         const data = await fetchJson('/api/config');
         fillSettingsForm(data.config || {});
+        const configLanguage = String((data.config || {}).language || '');
+        if (queryLang && ['en', 'ru'].includes(configLanguage) && configLanguage !== currentLanguage) {
+          await saveLanguagePreference(currentLanguage).catch(() => {});
+        }
         await loadEmbeddingStatus();
         if (!data.isConfigured) {
           setSettingsStatus(t('settingsRequired'));
@@ -2149,6 +2165,7 @@
     searchInput.addEventListener('input', renderBooks);
     showReadyOnlyInput.addEventListener('change', renderBooks);
     languageSelect.addEventListener('change', () => {
+      const previousLanguage = currentLanguage;
       currentLanguage = languageSelect.value;
       applyLanguage();
       const pageUrl = new URL(location.href);
@@ -2157,6 +2174,15 @@
       renderBooks();
       if (favoritesLoaded) renderFavorites();
       if (readingLoaded) renderReading();
+      saveLanguagePreference(currentLanguage).catch((error) => {
+        currentLanguage = previousLanguage;
+        languageSelect.value = previousLanguage;
+        applyLanguage();
+        renderBooks();
+        if (favoritesLoaded) renderFavorites();
+        if (readingLoaded) renderReading();
+        setStatus(t('languageSaveError', error.message));
+      });
     });
 
     applyLanguage();
