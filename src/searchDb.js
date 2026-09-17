@@ -5,11 +5,11 @@ const { createSchemaSql } = require('./searchSchema');
 
 const dynamicRequire = createRequire(__filename);
 const APPLICATION_ID = 0x42534b53; // "BSKS"
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const BUSY_TIMEOUT_MS = 5000;
 const KNOWN_TABLES = new Set([
   'books', 'chunks', 'chunk_embeddings', 'entities', 'relations', 'events', 'evidence', 'derived_facts', 'corpus_state',
-  'cycle_favorites', 'cycle_query_hits', 'cycle_reading_state',
+  'cycle_favorites', 'cycle_query_hits', 'cycle_reading_state', 'cycle_series',
   'chunks_fts', 'chunks_fts_data', 'chunks_fts_idx', 'chunks_fts_docsize', 'chunks_fts_config',
 ]);
 

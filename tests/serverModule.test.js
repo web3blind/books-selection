@@ -547,3 +547,108 @@ test('Ask records ranked cycle hits for favorited cycles through the local API',
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+function seriesPageHtml(books, { complete = false } = {}) {
+  const rows = books.map((book, index) => `
+    <div class="book-row wc-row"><div class="book-row-content"><div class="book-title">
+      <span class="label label-default label-row-index">${index + 1}</span>
+      <a href="/work/${book.workId}">${book.title}</a>
+    </div></div></div>`).join('');
+  const label = complete ? 'label-success' : 'label-primary';
+  const icon = complete ? 'check' : 'pencil';
+  return `<html><body><h1>Цикл «Первый суд»</h1>
+    <span class="label ${label}"><i class="icon-${icon} book-status-icon"></i> ${complete ? 'завершен' : 'не завершен'}</span>
+    <div class="panel-body collection-work-list">${rows}</div></body></html>`;
+}
+
+test('series API binds an Author.Today page, reports new books, and unbinds', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-series-api-'));
+  const oldConfigPath = process.env.BOOKS_SELECTION_CONFIG_PATH;
+  process.env.BOOKS_SELECTION_CONFIG_PATH = path.join(dir, 'config.json');
+  const dbPath = path.join(dir, 'search.sqlite');
+  await writeAppConfig({ booksRoot: dir, dbPath }, process.env);
+
+  let html = seriesPageHtml([{ workId: 458421, title: 'Безымянный мир' }], { complete: false });
+  let failNextFetch = false;
+  const requestedUrls = [];
+  const started = await startServer({
+    port: 0,
+    openBrowser: false,
+    log: false,
+    authorTodayFetchImpl: async (target) => {
+      requestedUrls.push(target);
+      if (failNextFetch) throw new Error('сеть недоступна');
+      return new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    },
+  });
+
+  try {
+    const home = await request(started, 'GET', '/');
+    const cookie = home.headers['set-cookie'][0].split(';', 1)[0];
+    const listUrl = `/api/cycle-series?db=${encodeURIComponent(dbPath)}`;
+
+    assert.equal((await request(started, 'GET', listUrl)).statusCode, 403);
+    assert.equal((await request(started, 'GET', listUrl, cookie)).body.count, 0);
+
+    const invalid = await request(started, 'POST', '/api/cycle-series', cookie, {
+      db: dbPath, cycle: 'Первый суд', url: 'https://evil.example/work/series/47167',
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal((await request(started, 'GET', listUrl, cookie)).body.count, 0);
+
+    const bound = await request(started, 'POST', '/api/cycle-series', cookie, {
+      db: dbPath, cycle: 'Первый суд', url: 'https://www.author.today/work/series/47167?utm=1',
+    });
+    assert.equal(bound.statusCode, 200);
+    assert.equal(bound.body.binding.seriesId, 47167);
+    assert.deepEqual(bound.body.binding.workIds, [458421]);
+    assert.equal(bound.body.binding.hasUpdates, false);
+    assert.equal(requestedUrls[0], 'https://author.today/work/series/47167');
+
+    const quiet = await request(started, 'POST', '/api/cycle-series/check', cookie, { db: dbPath, cycle: 'Первый суд' });
+    assert.equal(quiet.body.ok, true);
+    assert.equal(quiet.body.binding.hasUpdates, false);
+
+    html = seriesPageHtml([
+      { workId: 458421, title: 'Безымянный мир' },
+      { workId: 496928, title: 'Церковь Света' },
+    ], { complete: true });
+    const grown = await request(started, 'POST', '/api/cycle-series/check', cookie, { db: dbPath, cycle: 'Первый суд' });
+    assert.equal(grown.body.binding.hasUpdates, true);
+    assert.deepEqual(grown.body.binding.updateKinds, ['new_works', 'now_complete']);
+    assert.deepEqual(grown.body.binding.newWorks, [{
+      workId: 496928,
+      title: 'Церковь Света',
+      url: 'https://author.today/work/496928',
+    }]);
+    assert.equal(grown.body.binding.workCount, 2);
+    assert.equal(grown.body.binding.isComplete, true);
+
+    failNextFetch = true;
+    const failed = await request(started, 'POST', '/api/cycle-series/check', cookie, { db: dbPath, cycle: 'Первый суд' });
+    assert.equal(failed.statusCode, 200);
+    assert.equal(failed.body.ok, false);
+    assert.match(failed.body.error, /сеть недоступна/);
+    assert.equal(failed.body.binding.lastCheckStatus, 'failed');
+    assert.deepEqual(failed.body.binding.workIds, [458421, 496928]);
+    failNextFetch = false;
+
+    const stored = await request(started, 'GET', listUrl, cookie);
+    assert.equal(stored.body.count, 1);
+    assert.equal(stored.body.bindings[0].cycleName, 'Первый суд');
+
+    const missing = await request(started, 'POST', '/api/cycle-series/check', cookie, { db: dbPath, cycle: 'Нет привязки' });
+    assert.equal(missing.statusCode, 404);
+
+    const unbound = await request(started, 'POST', '/api/cycle-series', cookie, {
+      db: dbPath, cycle: 'Первый суд', bound: false,
+    });
+    assert.equal(unbound.body.result.removed, true);
+    assert.equal((await request(started, 'GET', listUrl, cookie)).body.count, 0);
+  } finally {
+    await new Promise((resolve) => started.server.close(resolve));
+    if (oldConfigPath === undefined) delete process.env.BOOKS_SELECTION_CONFIG_PATH;
+    else process.env.BOOKS_SELECTION_CONFIG_PATH = oldConfigPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

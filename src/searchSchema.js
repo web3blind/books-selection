@@ -128,6 +128,25 @@ CREATE TABLE IF NOT EXISTS cycle_query_hits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cycle_query_hits_cycle ON cycle_query_hits(cycle_key, best_position);
+
+CREATE TABLE IF NOT EXISTS cycle_series (
+  cycle_key TEXT PRIMARY KEY,
+  cycle_name TEXT NOT NULL,
+  series_id INTEGER NOT NULL,
+  series_url TEXT NOT NULL,
+  series_title TEXT,
+  work_ids TEXT NOT NULL,
+  work_count INTEGER NOT NULL,
+  is_complete INTEGER,
+  has_updates INTEGER NOT NULL DEFAULT 0 CHECK (has_updates IN (0, 1)),
+  update_kinds TEXT NOT NULL DEFAULT '[]',
+  new_works TEXT NOT NULL DEFAULT '[]',
+  last_check_status TEXT NOT NULL DEFAULT 'ok',
+  last_check_error TEXT,
+  last_checked_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS cycle_reading_state (
   cycle_key TEXT PRIMARY KEY,
   cycle_name TEXT NOT NULL,

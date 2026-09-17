@@ -21,6 +21,14 @@ const {
 } = require('./favorites');
 const { indexLibrary, searchChunks } = require('./indexer');
 const { listReadingStates, setCycleRead, setCycleUnfinished } = require('./readingState');
+const { loadSeriesSnapshot } = require('./authorToday');
+const {
+  applySeriesCheck,
+  bindCycleSeries,
+  listCycleSeries,
+  recordSeriesCheckFailure,
+  unbindCycleSeries,
+} = require('./seriesWatch');
 const { scanBooks } = require('./scan');
 const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
@@ -175,6 +183,7 @@ function createRequestHandler(options = {}) {
   const defaultRoot = options.defaultRoot || '';
   const updateCheckOptions = options.updateCheckOptions || {};
   const providerFetchImpl = options.providerFetchImpl;
+  const authorTodayFetchImpl = options.authorTodayFetchImpl;
   const diagnosticWriter = options.diagnosticWriter || writeProviderNetworkDiagnostic;
   const apiToken = options.apiToken || randomBytes(32).toString('base64url');
   const embeddingOperations = new Map();
@@ -454,6 +463,75 @@ function createRequestHandler(options = {}) {
       return sendJson(response, 200, { db: databasePath, cycle, result });
     }
 
+    if (url.pathname === '/api/cycle-series') {
+      if (request.method === 'GET') {
+        const databasePath = getDbPath(url, appConfig);
+        if (!databasePath) return sendJson(response, 400, { error: 'Нужен путь к SQLite базе.' });
+        const bindings = await withSearchDatabase(databasePath, (db) => listCycleSeries(db));
+        return sendJson(response, 200, { db: databasePath, count: bindings.length, bindings });
+      }
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      const cycle = String(payload.cycle || '').trim();
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+      if (!cycle || cycle.length > MAX_CYCLE_NAME_LENGTH) {
+        return sendJson(response, 400, { error: 'Нужно название цикла.' });
+      }
+
+      if (payload.bound === false) {
+        const result = await withSearchDatabase(databasePath, (db) => unbindCycleSeries(db, { cycle }));
+        return sendJson(response, 200, { db: databasePath, cycle, bound: false, result });
+      }
+
+      let snapshot;
+      try {
+        snapshot = await loadSeriesSnapshot(payload.url, { fetchImpl: authorTodayFetchImpl });
+      } catch (error) {
+        return sendJson(response, 400, { error: error.message });
+      }
+
+      const binding = await withSearchDatabase(databasePath, (db) => bindCycleSeries(db, { cycle, snapshot }));
+      return sendJson(response, 200, { db: databasePath, cycle, bound: true, binding });
+    }
+
+    if (url.pathname === '/api/cycle-series/check') {
+      if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+      requireJsonRequest(request);
+      const payload = await readJsonBody(request);
+      const databasePath = String(payload.db || appConfig.dbPath || process.env.BOOKS_SELECTION_DB_PATH || '');
+      const cycle = String(payload.cycle || '').trim();
+
+      if (!databasePath) {
+        return sendJson(response, 400, { error: 'Нужен путь к SQLite базе через параметр db или BOOKS_SELECTION_DB_PATH.' });
+      }
+      if (!cycle || cycle.length > MAX_CYCLE_NAME_LENGTH) {
+        return sendJson(response, 400, { error: 'Нужно название цикла.' });
+      }
+
+      const existing = await withSearchDatabase(databasePath, (db) => (
+        listCycleSeries(db).find((item) => item.cycleKey === cycle) || null
+      ));
+      if (!existing) {
+        return sendJson(response, 404, { error: 'Цикл не привязан к странице Author.Today.' });
+      }
+
+      try {
+        const snapshot = await loadSeriesSnapshot(existing.seriesUrl, { fetchImpl: authorTodayFetchImpl });
+        const binding = await withSearchDatabase(databasePath, (db) => applySeriesCheck(db, { cycle, snapshot }));
+        return sendJson(response, 200, { db: databasePath, cycle, ok: true, binding });
+      } catch (error) {
+        const binding = await withSearchDatabase(databasePath, (db) => (
+          recordSeriesCheckFailure(db, { cycle, message: error.message })
+        ));
+        return sendJson(response, 200, { db: databasePath, cycle, ok: false, error: error.message, binding });
+      }
+    }
+
     if (url.pathname === '/api/semantic-search') {
       if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
       requireJsonRequest(request);
@@ -612,6 +690,7 @@ function startServer(options = {}) {
     defaultRoot,
     updateCheckOptions: options.updateCheckOptions,
     providerFetchImpl: options.providerFetchImpl,
+    authorTodayFetchImpl: options.authorTodayFetchImpl,
     diagnosticWriter: options.diagnosticWriter,
     embeddingOperationRetentionMs: options.embeddingOperationRetentionMs,
   }));

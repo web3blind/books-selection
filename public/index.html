@@ -140,6 +140,11 @@
     <p id="readingStatus" class="meta" role="status" aria-live="polite" aria-atomic="true"></p>
     <label id="readingSearchLabel" for="readingSearch">Поиск по прочитанным циклам</label>
     <input id="readingSearch" name="readingSearch" type="text" placeholder="Например: дракон">
+    <section id="readingUpdates" aria-labelledby="readingUpdateTitle">
+      <h3 id="readingUpdateTitle">Есть продолжение</h3>
+      <p id="readingUpdatesIntro" class="meta">Циклы, где появились новые книги или цикл завершился.</p>
+      <div id="readingUpdateList"></div>
+    </section>
     <section id="readingUnfinished" aria-labelledby="readingUnfinishedTitle">
       <h3 id="readingUnfinishedTitle">Незаконченные циклы</h3>
       <div id="readingUnfinishedList"></div>
@@ -221,6 +226,8 @@
     const readingPanel = document.getElementById('readingPanel');
     const readingListNode = document.getElementById('readingList');
     const readingUnfinishedNode = document.getElementById('readingUnfinishedList');
+    const readingUpdateNode = document.getElementById('readingUpdateList');
+    const readingUpdateSection = document.getElementById('readingUpdates');
     const readingStatusNode = document.getElementById('readingStatus');
     const readingSearchInput = document.getElementById('readingSearch');
     const hideReadInput = document.getElementById('hideRead');
@@ -368,6 +375,30 @@
         readingUnmarkedRead: (cycle) => `Отметка прочитанного снята: ${cycle}.`,
         readingMarkedUnfinished: (cycle) => `Цикл отмечен незаконченным: ${cycle}.`,
         readingUnmarkedUnfinished: (cycle) => `Отметка «не закончен» снята: ${cycle}.`,
+        readingUpdateTitleText: 'Есть продолжение',
+        readingUpdatesEmpty: 'Пока нет обновлений. Привяжи страницу цикла на Author.Today и нажми «Проверить обновления».',
+        readingUpdatesIntro: 'Циклы, где появились новые книги или цикл завершился.',
+        seriesLabel: 'Ссылка на страницу цикла Author.Today',
+        seriesPlaceholder: 'https://author.today/work/series/47167',
+        seriesBindButton: 'Привязать страницу',
+        seriesCheckButton: 'Проверить обновления',
+        seriesUnbindButton: 'Отвязать',
+        seriesNoneBound: 'Страница Author.Today не привязана.',
+        seriesBoundSummary: (title, count, completion) => `${title}: книг ${count}, ${completion}`,
+        seriesCompletionComplete: 'цикл завершён',
+        seriesCompletionUnfinished: 'цикл не завершён',
+        seriesCompletionUnknown: 'завершённость неизвестна',
+        seriesNeverChecked: 'Ещё не проверялось.',
+        seriesLastChecked: (when) => `Проверено: ${when}.`,
+        seriesCheckFailed: (message) => `Проверка не удалась: ${message}`,
+        seriesCheckQuiet: (cycle) => `Новых книг нет: ${cycle}.`,
+        seriesCheckFound: (cycle, count) => `Новых книг: ${count}. Цикл: ${cycle}.`,
+        seriesBound: (title, count) => `Привязан цикл «${title}»: книг ${count}.`,
+        seriesBindError: (message) => `Не удалось привязать страницу: ${message}`,
+        seriesUnbound: (cycle) => `Привязка страницы снята: ${cycle}.`,
+        seriesOpenWork: 'Открыть книгу на Author.Today',
+        updateKindNewWorks: 'новая книга',
+        updateKindComplete: 'цикл завершён',
         settingsTitleText: 'Настройки',
         settingsIntroText: 'Здесь можно настроить папку книг, SQLite базу, provider, модели, API key и лимит OpenRouter без ручного редактирования файла.',
         settingsBooksRootLabel: 'Путь к папке книг',
@@ -554,6 +585,30 @@
         readingUnmarkedRead: (cycle) => `Read mark cleared: ${cycle}.`,
         readingMarkedUnfinished: (cycle) => `Cycle marked as unfinished: ${cycle}.`,
         readingUnmarkedUnfinished: (cycle) => `Unfinished mark cleared: ${cycle}.`,
+        readingUpdateTitleText: 'Has a continuation',
+        readingUpdatesEmpty: 'No updates yet. Bind the cycle page on Author.Today and press “Check for updates”.',
+        readingUpdatesIntro: 'Cycles with new books or a finished cycle.',
+        seriesLabel: 'Author.Today series page link',
+        seriesPlaceholder: 'https://author.today/work/series/47167',
+        seriesBindButton: 'Bind page',
+        seriesCheckButton: 'Check for updates',
+        seriesUnbindButton: 'Unbind',
+        seriesNoneBound: 'No Author.Today page bound.',
+        seriesBoundSummary: (title, count, completion) => `${title}: ${count} book(s), ${completion}`,
+        seriesCompletionComplete: 'cycle is complete',
+        seriesCompletionUnfinished: 'cycle is unfinished',
+        seriesCompletionUnknown: 'completion is unknown',
+        seriesNeverChecked: 'Not checked yet.',
+        seriesLastChecked: (when) => `Checked: ${when}.`,
+        seriesCheckFailed: (message) => `Check failed: ${message}`,
+        seriesCheckQuiet: (cycle) => `No new books: ${cycle}.`,
+        seriesCheckFound: (cycle, count) => `New books: ${count}. Cycle: ${cycle}.`,
+        seriesBound: (title, count) => `Bound cycle “${title}”: ${count} book(s).`,
+        seriesBindError: (message) => `Could not bind the page: ${message}`,
+        seriesUnbound: (cycle) => `Series page unbound: ${cycle}.`,
+        seriesOpenWork: 'Open the book on Author.Today',
+        updateKindNewWorks: 'new book',
+        updateKindComplete: 'cycle is complete',
         settingsTitleText: 'Settings',
         settingsIntroText: 'Configure the books folder, SQLite database, providers, models, API keys, and the OpenRouter limit here.',
         settingsBooksRootLabel: 'Books folder path',
@@ -710,6 +765,7 @@
     let favoritesLoaded = false;
     let readingStates = new Map();
     let readingLoaded = false;
+    let seriesBindings = new Map();
 
     function t(key, ...args) {
       const value = messages[currentLanguage][key];
@@ -738,6 +794,8 @@
       document.getElementById('readingReadTitle').textContent = t('readingReadTitleText');
       readingListNode.setAttribute('aria-label', t('readingListLabel'));
       document.getElementById('hideReadText').textContent = t('hideReadText');
+      document.getElementById('readingUpdateTitle').textContent = t('readingUpdateTitleText');
+      document.getElementById('readingUpdatesIntro').textContent = t('readingUpdatesIntro');
       settingsViewButton.textContent = t('settingsViewButtonText');
       document.getElementById('favoritesTitle').textContent = t('favoritesTitleText');
       document.getElementById('favoritesIntro').textContent = t('favoritesIntroText');
@@ -952,6 +1010,7 @@
         await loadEmbeddingStatus();
         await loadFavorites();
         await loadReadingStates();
+        await loadSeriesBindings();
         setSettingsStatus(t('settingsSaved', data.path));
         showView('main');
       } catch (error) {
@@ -1572,13 +1631,186 @@
         <li>
           <h4>${escapeHtml(state.cycleName)}</h4>
           <div class="actions">${readingButtonsMarkup(state.cycleKey)}</div>
+          ${seriesBlockMarkup(state.cycleKey)}
         </li>`).join('')}</ul>`;
+    }
+
+    function seriesBindingFor(cycleKey) {
+      return seriesBindings.get(String(cycleKey || '').trim()) || null;
+    }
+
+    function seriesCompletionText(binding) {
+      if (binding.isComplete === true) return t('seriesCompletionComplete');
+      if (binding.isComplete === false) return t('seriesCompletionUnfinished');
+      return t('seriesCompletionUnknown');
+    }
+
+    function checkedAtText(timestamp) {
+      if (!timestamp) return t('seriesNeverChecked');
+      const locale = currentLanguage === 'ru' ? 'ru-RU' : 'en-US';
+      return t('seriesLastChecked', new Date(timestamp).toLocaleString(locale));
+    }
+
+    function seriesBlockMarkup(cycleKey) {
+      const key = String(cycleKey || '').trim();
+      if (!key) return '';
+      const escapedKey = escapeHtml(key);
+      const binding = seriesBindingFor(key);
+
+      if (!binding) {
+        return `
+          <div class="series-block">
+            <p class="meta">${escapeHtml(t('seriesLabel'))}</p>
+            <input class="series-input" data-cycle="${escapedKey}" type="url" inputmode="url" spellcheck="false" aria-label="${escapeHtml(`${t('seriesLabel')}: ${key}`)}" placeholder="${escapeHtml(t('seriesPlaceholder'))}">
+            <button type="button" class="series-bind" data-cycle="${escapedKey}">${escapeHtml(t('seriesBindButton'))}</button>
+            <p class="meta">${escapeHtml(t('seriesNoneBound'))}</p>
+          </div>`;
+      }
+
+      const summary = t(
+        'seriesBoundSummary',
+        binding.seriesTitle || binding.cycleName,
+        binding.workCount,
+        seriesCompletionText(binding),
+      );
+      const failure = binding.lastCheckStatus === 'failed' && binding.lastCheckError
+        ? `<p class="error">${escapeHtml(t('seriesCheckFailed', binding.lastCheckError))}</p>`
+        : '';
+      const works = binding.newWorks.length === 0 ? '' : `
+            <ul>${binding.newWorks.map((work) => `
+              <li><a href="${escapeHtml(work.url)}" target="_blank" rel="noreferrer noopener" aria-label="${escapeHtml(`${work.title}. ${t('seriesOpenWork')}`)}">${escapeHtml(work.title)}</a></li>`).join('')}
+            </ul>`;
+
+      return `
+          <div class="series-block">
+            <p class="meta">${escapeHtml(summary)}</p>
+            <p class="meta">${escapeHtml(checkedAtText(binding.lastCheckedAt))}</p>
+            ${failure}
+            ${works}
+            <div class="actions">
+              <button type="button" class="series-check" data-cycle="${escapedKey}">${escapeHtml(t('seriesCheckButton'))}</button>
+              <button type="button" class="series-unbind" data-cycle="${escapedKey}">${escapeHtml(t('seriesUnbindButton'))}</button>
+            </div>
+          </div>`;
+    }
+
+    function updateKindsText(kinds) {
+      return (Array.isArray(kinds) ? kinds : []).map((kind) => {
+        if (kind === 'new_works') return t('updateKindNewWorks');
+        if (kind === 'now_complete') return t('updateKindComplete');
+        return String(kind);
+      }).join(', ');
+    }
+
+    function renderReadingUpdates() {
+      const updates = [...seriesBindings.values()].filter((binding) => binding.hasUpdates);
+      readingUpdateNode.innerHTML = updates.length === 0
+        ? `<p>${escapeHtml(t('readingUpdatesEmpty'))}</p>`
+        : `<ul>${updates.map((binding) => `
+            <li>
+              <h4>${escapeHtml(binding.cycleName)}</h4>
+              <p class="meta">${escapeHtml(updateKindsText(binding.updateKinds))}</p>
+              ${binding.newWorks.length === 0 ? '' : `<ul>${binding.newWorks.map((work) => `
+                <li><a href="${escapeHtml(work.url)}" target="_blank" rel="noreferrer noopener" aria-label="${escapeHtml(`${work.title}. ${t('seriesOpenWork')}`)}">${escapeHtml(work.title)}</a></li>`).join('')}
+              </ul>`}
+              <div class="actions">
+                <button type="button" class="series-check" data-cycle="${escapeHtml(binding.cycleKey)}">${escapeHtml(t('seriesCheckButton'))}</button>
+              </div>
+            </li>`).join('')}</ul>`;
+    }
+
+    async function loadSeriesBindings() {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        seriesBindings = new Map();
+        renderReadingUpdates();
+        return [];
+      }
+
+      try {
+        const data = await fetchJson(`/api/cycle-series?db=${encodeURIComponent(dbPath)}`);
+        const bindings = Array.isArray(data.bindings) ? data.bindings : [];
+        seriesBindings = new Map(bindings.map((binding) => [binding.cycleKey, binding]));
+      } catch (error) {
+        seriesBindings = new Map();
+        readingStatusNode.textContent = t('readingLoadError', error.message);
+      }
+
+      renderReadingUpdates();
+      return [...seriesBindings.values()];
+    }
+
+    async function bindSeries(cycleKey, url) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      try {
+        const data = await fetchJson('/api/cycle-series', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, cycle: cycleKey, url }),
+        });
+        await loadSeriesBindings();
+        renderReading();
+        readingStatusNode.textContent = t(
+          'seriesBound',
+          data.binding.seriesTitle || data.binding.cycleName,
+          data.binding.workCount,
+        );
+      } catch (error) {
+        readingStatusNode.textContent = t('seriesBindError', error.message);
+      }
+    }
+
+    async function checkSeries(cycleKey) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      try {
+        const data = await fetchJson('/api/cycle-series/check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, cycle: cycleKey }),
+        });
+        await loadSeriesBindings();
+        renderReading();
+        if (!data.ok) readingStatusNode.textContent = t('seriesCheckFailed', data.error);
+        else if (data.binding.hasUpdates) readingStatusNode.textContent = t('seriesCheckFound', cycleKey, data.binding.newWorks.length);
+        else readingStatusNode.textContent = t('seriesCheckQuiet', cycleKey);
+      } catch (error) {
+        readingStatusNode.textContent = t('seriesCheckFailed', error.message);
+      }
+    }
+
+    async function unbindSeries(cycleKey) {
+      const dbPath = getDbPath();
+      if (!dbPath) {
+        setStatus(t('noDbPath'));
+        return;
+      }
+      try {
+        await fetchJson('/api/cycle-series', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ db: dbPath, cycle: cycleKey, bound: false }),
+        });
+        await loadSeriesBindings();
+        renderReading();
+        readingStatusNode.textContent = t('seriesUnbound', cycleKey);
+      } catch (error) {
+        readingStatusNode.textContent = t('seriesCheckFailed', error.message);
+      }
     }
 
     function renderReading() {
       if (!readingLoaded) {
         readingListNode.innerHTML = '';
         readingUnfinishedNode.innerHTML = '';
+        renderReadingUpdates();
         return;
       }
 
@@ -1598,6 +1830,7 @@
         matches.filter((state) => state.isUnfinished),
         emptyFor(t('readingUnfinishedEmpty')),
       );
+      renderReadingUpdates();
     }
 
     async function loadReadingStates() {
@@ -1861,8 +2094,28 @@
       else if (action === 'unfavorite') toggleFavorite(cycleKey, false);
       else if (action === 'clear') clearFavoritesHistory(cycleKey);
     });
-    for (const cycleListNode of [resultsNode, aiResultsNode, readingListNode, readingUnfinishedNode]) {
+    for (const cycleListNode of [resultsNode, aiResultsNode, readingListNode, readingUnfinishedNode, readingUpdateNode]) {
       cycleListNode.addEventListener('click', (event) => {
+        const bindButton = event.target.closest('.series-bind');
+        if (bindButton) {
+          const cycleKey = bindButton.getAttribute('data-cycle') || '';
+          const input = bindButton.parentElement ? bindButton.parentElement.querySelector('.series-input') : null;
+          const value = input ? input.value.trim() : '';
+          if (cycleKey && value) bindSeries(cycleKey, value);
+          return;
+        }
+        const checkButton = event.target.closest('.series-check');
+        if (checkButton) {
+          const cycleKey = checkButton.getAttribute('data-cycle') || '';
+          if (cycleKey) checkSeries(cycleKey);
+          return;
+        }
+        const unbindButton = event.target.closest('.series-unbind');
+        if (unbindButton) {
+          const cycleKey = unbindButton.getAttribute('data-cycle') || '';
+          if (cycleKey) unbindSeries(cycleKey);
+          return;
+        }
         const favoriteButton = event.target.closest('.favorite-toggle');
         if (favoriteButton) {
           const cycleKey = favoriteButton.getAttribute('data-cycle') || '';
@@ -1914,6 +2167,7 @@
       }
       await loadFavorites();
       await loadReadingStates();
+      await loadSeriesBindings();
       await loadBooks();
     });
   </script>
