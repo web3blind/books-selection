@@ -519,7 +519,10 @@ test('Ask records ranked cycle hits for favorited cycles through the local API',
           ? { intent: 'Найти фонарь', queries: [{ query: 'lantern' }] }
           : system.includes('check phase')
           ? { candidateChecks: [{ bookId, verdict: 'supported', evidence: ['evidence_1'], reason: 'Фонарь в тексте.' }], additionalQueries: [] }
-          : { answer: 'Фонарь найден.', confidence: 'high', evidence: ['evidence_1'], recommendations: [{ bookId, evidence: ['evidence_1'] }] };
+          : {
+            status: 'answered', answer: 'Фонарь найден.', confidence: 'high', evidence: ['evidence_1'], recommendations: [{ bookId, evidence: ['evidence_1'] }],
+            finalCandidateChecks: [{ bookId, verdict: 'supported', evidence: ['evidence_1'], reason: 'Фонарь прямо назван в тексте.', entities: [{ name: 'фонарь', evidence: ['evidence_1'] }], criteria: [{ criterion: 'местоположение фонаря', verdict: 'supported', reason: 'Текст сообщает местоположение.', evidence: ['evidence_1'] }] }],
+          };
         return providerJsonResponse({ choices: [{ message: { content: JSON.stringify(result) } }] });
       }
       throw new Error(`Unexpected provider request in the favorites API test: ${requestUrl}`);

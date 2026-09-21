@@ -16,6 +16,14 @@ function seedBook(db, cycleName, title, chunks) {
   return { bookId, chunkIds };
 }
 
+function supportedFinalCheck(bookId, evidence, criterion = 'requested condition') {
+  return {
+    bookId, verdict: 'supported', evidence, reason: 'Named entities satisfy the requested condition in the cited text.',
+    entities: [{ name: 'named entities', evidence }],
+    criteria: [{ criterion, verdict: 'supported', reason: 'The cited text directly supports this condition.', evidence }],
+  };
+}
+
 test('runAskResearch plans, checks, refines and returns only cited verified candidates within hard limits', async () => {
   const db = initializeSearchDatabase(':memory:');
   const accepted = seedBook(db, 'Accepted Cycle', 'Accepted Book', ['В эпилоге оба героя живы.', 'герои вместе пережили финал']);
@@ -49,6 +57,7 @@ test('runAskResearch plans, checks, refines and returns only cited verified cand
         { bookId: rejected.bookId, evidence: ['evidence_2'] },
       ],
       rejectedCycles: ['Rejected Cycle'],
+      finalCandidateChecks: [supportedFinalCheck(accepted.bookId, ['evidence_1', 'evidence_3'])],
     },
   ];
 
@@ -116,6 +125,7 @@ test('runAskResearch persists only observations tied to current source chunk has
     {
       answer: 'Оба живы.', confidence: 'high', evidence: ['evidence_1'],
       recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }],
+      finalCandidateChecks: [supportedFinalCheck(book.bookId, ['evidence_1'])],
       observations: [
         { bookId: book.bookId, factKey: 'plot.final_state', factType: 'plot_observation', factValue: 'both protagonists alive', confidence: 0.9, evidence: ['evidence_1'] },
         { bookId: 99999, factKey: 'plot.fake', factValue: 'fake', evidence: ['evidence_1'] },
@@ -153,8 +163,8 @@ test('runAskResearch reserves evidence capacity for refinement results', async (
   const book = seedBook(db, 'Cycle', 'Book', Array.from({ length: 10 }, (_, index) => `Фрагмент ${index} с доказательством.`));
   const responses = [
     { queries: [{ query: 'первичный поиск' }] },
-    { candidateChecks: [], additionalQueries: [{ query: 'уточняющий поиск', bookIds: [book.bookId] }] },
-    { answer: 'Уточнение найдено.', confidence: 'medium', evidence: ['evidence_7'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_7'] }] },
+    { candidateChecks: [{ bookId: book.bookId, verdict: 'supported', evidence: ['evidence_1'] }], additionalQueries: [{ query: 'уточняющий поиск', bookIds: [book.bookId] }] },
+    { status: 'answered', answer: 'Уточнение найдено.', confidence: 'medium', evidence: ['evidence_7'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_7'] }], finalCandidateChecks: [supportedFinalCheck(book.bookId, ['evidence_7'])] },
   ];
   try {
     const result = await runAskResearch({
@@ -229,7 +239,7 @@ test('runAskResearch retries one truncated final response and keeps the four-cal
     { queries: [{ query: 'поиск' }] },
     { candidateChecks: [{ bookId: book.bookId, verdict: 'supported', evidence: ['evidence_1'] }] },
     truncated,
-    { answer: 'Подтверждено.', confidence: 'low', evidence: ['evidence_1'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }] },
+    { status: 'answered', answer: 'Подтверждено.', confidence: 'low', evidence: ['evidence_1'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }], finalCandidateChecks: [supportedFinalCheck(book.bookId, ['evidence_1'])] },
   ];
   const phases = [];
   try {
@@ -271,5 +281,121 @@ test('runAskResearch catalog is limited to the active root and discloses its siz
     assert.doesNotMatch(planText, /Old Book/);
     assert.match(planText, /showing 240 of 241 active-root books/);
     assert.deepEqual(result.research.catalog, { total: 241, included: 240, truncated: true });
+  } finally { db.close(); }
+});
+
+test('foreign verbose plan and rejected weak roster evidence cannot produce a recommendation', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const book = seedBook(db, 'Ложный цикл', 'Книга-призыв', ['* * *', 'На совет призвали: Алина, Борис, Вера.', 'Алина и Борис стояли в одном зале.']);
+  const queries = [];
+  const responses = [
+    { queries: [{ query: 'find all romantic protagonists who remain together and survive throughout every volume in the complete series' }] },
+    { candidateChecks: [{ bookId: book.bookId, verdict: 'rejected', evidence: ['evidence_1'] }], additionalQueries: [{ query: 'Алина Борис', bookIds: [book.bookId] }] },
+    { answer: 'Цикл подходит.', evidence: ['evidence_1'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }] },
+    { status: 'evidence_insufficient', recommendations: [] },
+  ];
+  try {
+    const result = await runAskResearch({
+      db, question: 'Найди цикл, где два главных героя действуют вместе и оба живы в финале.',
+      providerClient: { chatCompletion: async () => responses.shift() }, providerName: 'mock', provider: { model: 'mock' },
+      retrievalFn: async ({ question, scope }) => {
+        queries.push({ question, scope });
+        return { evidence: [
+          { chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Ложный цикл', title: 'Книга-призыв', chunk_index: 0, snippet: '* * *', content_hash: 'hash-Книга-призыв-0', source: 'neighbor' },
+          { chunk_id: book.chunkIds[1], book_id: book.bookId, cycle_name: 'Ложный цикл', title: 'Книга-призыв', chunk_index: 1, snippet: 'На совет призвали: Алина, Борис, Вера.', content_hash: 'hash-Книга-призыв-1', source: 'semantic' },
+          { chunk_id: book.chunkIds[2], book_id: book.bookId, cycle_name: 'Ложный цикл', title: 'Книга-призыв', chunk_index: 2, snippet: 'Алина и Борис стояли в одном зале.', content_hash: 'hash-Книга-призыв-2', source: 'neighbor' },
+        ], semantic: { status: 'searched' } };
+      },
+    });
+    assert.match(queries[0].question, /[А-Яа-яЁё]/);
+    assert.ok(queries[0].question.split(/\s+/).length <= 12);
+    assert.deepEqual(queries[1].scope.bookIds, [book.bookId]);
+    assert.equal(result.status, 'evidence_insufficient');
+    assert.deepEqual(result.candidates, []);
+    assert.equal(result.evidence.some((item) => item.excerpt === '* * *'), false);
+    assert.equal(result.evidence.some((item) => /стояли в одном зале/.test(item.excerpt)), true);
+  } finally { db.close(); }
+});
+
+test('refinement can revise uncertain to supported using newly retrieved book evidence', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const book = seedBook(db, 'Cycle', 'Book', ['Ада и Бен названы.', 'В эпилоге Ада и Бен вместе вернулись домой.']);
+  const responses = [
+    { intentType: 'recommendation', queries: [{ query: 'Ада Бен' }] },
+    { candidateChecks: [{ bookId: book.bookId, verdict: 'uncertain', evidence: ['evidence_1'], reason: 'Имена есть, отношение не доказано.' }], additionalQueries: [{ query: 'Ада Бен эпилог', bookIds: [book.bookId] }] },
+    { status: 'answered', answer: 'Книга подходит.', evidence: ['evidence_2'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_2'] }], finalCandidateChecks: [supportedFinalCheck(book.bookId, ['evidence_2'], 'вместе в финале')] },
+  ];
+  let retrieval = 0;
+  try {
+    const result = await runAskResearch({
+      db, question: 'Найди книгу, где Ада и Бен вместе в финале',
+      providerClient: { chatCompletion: async () => responses.shift() },
+      retrievalFn: async () => {
+        const index = retrieval++;
+        return { evidence: [{ chunk_id: book.chunkIds[index], book_id: book.bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: index, snippet: index ? 'В эпилоге Ада и Бен вместе вернулись домой.' : 'Ада и Бен названы.', content_hash: `hash-Book-${index}`, source: 'semantic' }], semantic: { status: 'searched' } };
+      },
+    });
+    assert.deepEqual(result.candidates.map((item) => item.bookId), [book.bookId]);
+    assert.equal(result.research.chatCalls, 3);
+    assert.equal(result.research.embeddingQueries, 2);
+  } finally { db.close(); }
+});
+
+test('model-supplied book and evidence IDs cannot turn a roster into a supported recommendation without final criterion and entity checks', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const book = seedBook(db, 'Roster', 'Roster Book', ['Участники совета: Ада, Бен, Вера.']);
+  const responses = [
+    { intentType: 'recommendation', queries: [{ query: 'Ада Бен' }] },
+    { candidateChecks: [{ bookId: book.bookId, verdict: 'uncertain', evidence: ['evidence_1'], reason: 'Только список имён.' }] },
+    { status: 'answered', answer: 'Подходит.', evidence: ['evidence_1'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }], finalCandidateChecks: [{ bookId: book.bookId, verdict: 'supported', evidence: ['evidence_1'], reason: 'Они в списке.' }] },
+    { status: 'evidence_insufficient', recommendations: [], finalCandidateChecks: [] },
+  ];
+  try {
+    const result = await runAskResearch({ db, question: 'Найди книгу об отношениях Ады и Бена', providerClient: { chatCompletion: async () => responses.shift() }, retrievalFn: async () => ({ evidence: [{ chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Roster', title: 'Roster Book', chunk_index: 0, snippet: 'Участники совета: Ада, Бен, Вера.', content_hash: 'hash-Roster Book-0', source: 'semantic' }], semantic: { status: 'searched' } }) });
+    assert.equal(result.status, 'evidence_insufficient');
+    assert.deepEqual(result.candidates, []);
+    assert.equal(result.research.chatCalls, 4);
+  } finally { db.close(); }
+});
+
+test('ordinary question-answer intent does not require recommendation candidates', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const book = seedBook(db, 'Cycle', 'Book', ['Фонарь лежал у двери.']);
+  const responses = [
+    { intentType: 'question_answer', queries: [{ query: 'фонарь дверь' }] },
+    { candidateChecks: [] },
+    { status: 'answered', answer: 'Фонарь лежал у двери.', evidence: ['evidence_1'], recommendations: [], finalCandidateChecks: [] },
+  ];
+  try {
+    const result = await runAskResearch({ db, question: 'Где лежал фонарь?', providerClient: { chatCompletion: async () => responses.shift() }, retrievalFn: async () => ({ evidence: [{ chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: 0, snippet: 'Фонарь лежал у двери.', content_hash: 'hash-Book-0', source: 'semantic' }], semantic: { status: 'searched' } }) });
+    assert.equal(result.status, 'answered');
+    assert.equal(result.answer, 'Фонарь лежал у двери.');
+    assert.deepEqual(result.candidates, []);
+  } finally { db.close(); }
+});
+
+test('generic non-romance question can support a realistic pair of books in one scoped cycle', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const first = seedBook(db, 'Архивисты', 'Карта пепла', ['Ира и Тим вместе расшифровали карту.']);
+  const second = seedBook(db, 'Архивисты', 'Последний архив', ['Ира и Тим открыли архив в эпилоге.']);
+  const responses = [
+    { queries: [{ query: 'архив карта экспедиция' }] },
+    { candidateChecks: [{ bookId: first.bookId, verdict: 'supported', evidence: ['evidence_1'] }, { bookId: second.bookId, verdict: 'supported', evidence: ['evidence_2'] }], additionalQueries: [{ query: 'Ира Тим архив', cycleNames: ['Архивисты'] }] },
+    { status: 'answered', answer: 'Одна команда исследует архивы в двух книгах.', confidence: 'medium', evidence: ['evidence_1', 'evidence_2'], recommendations: [{ bookId: first.bookId, evidence: ['evidence_1'] }, { bookId: second.bookId, evidence: ['evidence_2'] }], finalCandidateChecks: [supportedFinalCheck(first.bookId, ['evidence_1']), supportedFinalCheck(second.bookId, ['evidence_2'])] },
+  ];
+  let retrievalCall = 0;
+  try {
+    const result = await runAskResearch({
+      db, question: 'В каком цикле одна команда исследует древние архивы в нескольких книгах?',
+      providerClient: { chatCompletion: async () => responses.shift() }, providerName: 'mock', provider: { model: 'mock' },
+      retrievalFn: async ({ scope }) => {
+        retrievalCall += 1;
+        if (retrievalCall === 2) assert.deepEqual(scope.cycleNames, ['Архивисты']);
+        return { evidence: [first, second].map((item, index) => ({ chunk_id: item.chunkIds[0], book_id: item.bookId, cycle_name: 'Архивисты', title: index ? 'Последний архив' : 'Карта пепла', chunk_index: 0, snippet: index ? 'Ира и Тим открыли архив в эпилоге.' : 'Ира и Тим вместе расшифровали карту.', content_hash: `hash-${index ? 'Последний архив' : 'Карта пепла'}-0`, source: 'semantic' })), semantic: { status: 'searched' } };
+      },
+    });
+    assert.equal(result.status, 'answered');
+    assert.deepEqual(result.candidates.map((item) => item.bookId), [first.bookId, second.bookId]);
+    assert.equal(result.cycleGroups[0].bookCount, 2);
   } finally { db.close(); }
 });

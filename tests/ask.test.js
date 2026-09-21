@@ -300,7 +300,12 @@ test('answerLibraryQuestion reports complete local consideration separately from
       db, question: 'Где герои выжили вместе?', env: { OPENROUTER_API_KEY: 'test-key' },
       providerClient: {
         createEmbedding: async () => [1, 0],
-        chatCompletion: async () => ({ answer: 'В Book.', confidence: 'high', evidence: ['evidence_1'] }),
+        chatCompletion: async ({ messages }) => {
+          const phase = messages[0].content;
+          if (phase.includes('plan phase')) return { queries: [{ query: 'герои вместе финал' }] };
+          if (phase.includes('check phase')) return { candidateChecks: [{ bookId, verdict: 'supported', evidence: ['evidence_1'] }] };
+          return { answer: 'В Book.', confidence: 'high', evidence: ['evidence_1'], recommendations: [{ bookId, evidence: ['evidence_1'] }] };
+        },
       },
     });
     assert.equal(result.status, 'answered');

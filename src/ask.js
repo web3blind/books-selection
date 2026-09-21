@@ -349,6 +349,7 @@ async function answerLibraryQuestion({
           retrievedChunks: 0,
           exhaustive: false,
           searchComplete: false,
+          indexReady: false,
           indexErrors: Number(preflightStatus?.indexErrors || 0),
         },
         semantic: { status: preflightStatus?.status || 'unavailable' },

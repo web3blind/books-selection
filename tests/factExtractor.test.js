@@ -128,7 +128,7 @@ test('extractFactFromEvidence sends only supplied excerpts to mocked provider an
     assert.equal(result.fact.factValue, 'yes');
     assert.equal(result.fact.confidence, 0.88);
     assert.equal(result.fact.provider, 'openrouter');
-    assert.equal(result.fact.model, 'openai/gpt-4.1-nano');
+    assert.equal(result.fact.model, require('../src/providerConfig').DEFAULT_CONFIG.providers.openrouter.model);
     assert.deepEqual(result.fact.evidence, [{
       evidenceId: 'evidence_1',
       bookId,

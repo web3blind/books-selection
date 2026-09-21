@@ -528,9 +528,11 @@
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Фрагмент ${chunkIndex}`,
         answerHeading: 'Ответ',
         checkedHeading: 'Книги, представленные в найденных фрагментах',
-        coverageSummary: (coverage) => coverage.searchComplete
-          ? `Индекс охватывает ${coverage.totalCycles ?? coverage.searchedCycles} циклов и ${coverage.totalBooks ?? coverage.searchedBooks} книг. Для ответа отобрано ${coverage.retrievedChunks} фрагментов из ${coverage.representedBooks} книг. Это выборочная проверка, а не чтение всех циклов.`
-          : `Индекс ещё не готов полностью. Отобрано фрагментов: ${coverage.retrievedChunks ?? 0}. Полнота сюжетной проверки не установлена.`,
+        coverageSummary: (coverage) => coverage.indexReady === false || (!coverage.indexReady && !coverage.searchComplete)
+          ? `Индекс ещё не готов полностью. Отобрано фрагментов: ${coverage.retrievedChunks ?? 0}. Полнота сюжетной проверки не установлена.`
+          : coverage.searchComplete
+            ? `Индекс готов и охватывает ${coverage.totalCycles ?? coverage.searchedCycles} циклов и ${coverage.totalBooks ?? coverage.searchedBooks} книг. Для ответа отобрано ${coverage.retrievedChunks} фрагментов из ${coverage.representedBooks} книг. Это выборочная проверка, а не чтение всех циклов.`
+            : `Индекс готов. Для этого вопроса отобрано ${coverage.retrievedChunks ?? 0} фрагментов из ${coverage.representedBooks ?? 0} книг; охват запроса частичный, а не чтение всей библиотеки.`,
         corpusNotReady: 'Сначала подготовь локальный индекс и embeddings до 100%. Ответ не создавался.',
         evidenceInsufficient: 'ИИ завершил проверку, но подтверждённых доказательств недостаточно.',
         providerStatusHeading: 'Provider/setup status',
@@ -755,9 +757,11 @@
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Snippet ${chunkIndex}`,
         answerHeading: 'Answer',
         checkedHeading: 'Books represented in retrieved evidence',
-        coverageSummary: (coverage) => coverage.searchComplete
-          ? `The index covers ${coverage.totalCycles ?? coverage.searchedCycles} series and ${coverage.totalBooks ?? coverage.searchedBooks} books. The answer uses ${coverage.retrievedChunks} passages from ${coverage.representedBooks} books. This is a selective check, not a reading of every series.`
-          : `The index is not fully ready. Selected passages: ${coverage.retrievedChunks ?? 0}. Plot coverage has not been established.`,
+        coverageSummary: (coverage) => coverage.indexReady === false || (!coverage.indexReady && !coverage.searchComplete)
+          ? `The index is not fully ready. Selected passages: ${coverage.retrievedChunks ?? 0}. Plot coverage has not been established.`
+          : coverage.searchComplete
+            ? `The index is ready and covers ${coverage.totalCycles ?? coverage.searchedCycles} series and ${coverage.totalBooks ?? coverage.searchedBooks} books. The answer uses ${coverage.retrievedChunks} passages from ${coverage.representedBooks} books. This is a selective check, not a reading of every series.`
+            : `The index is ready. This question selected ${coverage.retrievedChunks ?? 0} passages from ${coverage.representedBooks ?? 0} books; query coverage is partial, not a reading of the whole library.`,
         corpusNotReady: 'Prepare the local index and embeddings to 100% first. No answer was generated.',
         evidenceInsufficient: 'AI finished the check, but there is insufficient evidence.',
         providerStatusHeading: 'Provider/setup status',

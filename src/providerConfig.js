@@ -5,7 +5,7 @@ const DEFAULT_CONFIG = {
     openrouter: {
       type: 'openai-compatible',
       baseUrl: 'https://openrouter.ai/api/v1',
-      model: 'openai/gpt-4.1-nano',
+      model: 'google/gemini-2.5-flash-lite',
       embeddingModel: 'openai/text-embedding-3-small',
       apiKeyEnv: 'OPENROUTER_API_KEY',
       budget: {

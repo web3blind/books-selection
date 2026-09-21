@@ -6,6 +6,10 @@ function stripMarkup(value) {
   return String(value || '').replace(/<[^>]+>/g, '');
 }
 
+function hasMeaningfulText(value) {
+  return (String(value || '').match(/[\p{L}\p{N}]/gu) || []).length >= 2;
+}
+
 const MAX_SEMANTIC_ROWS_PER_BOOK = 3;
 
 const QUERY_STOPWORDS = new Set([
@@ -261,6 +265,7 @@ function expandEvidenceContext(db, rows, { neighborRadius = 1, limit = 18, maxEx
     });
     for (const chunk of context?.chunks || []) {
       if (result.length >= limit || seen.has(chunk.chunkId)) continue;
+      if (!hasMeaningfulText(chunk.text)) continue;
       seen.add(chunk.chunkId);
       const source = chunk.isTarget ? (targetRow.source || 'fts') : 'neighbor';
       result.push({

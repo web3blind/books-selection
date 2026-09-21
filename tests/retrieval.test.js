@@ -315,3 +315,20 @@ test('cached fact validation uses the full excerpt before display truncation', a
     assert.ok(result.evidence[0].snippet.length <= 700);
   } finally { db.close(); }
 });
+
+test('expandEvidenceContext drops punctuation-only target and neighbor separators', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = insertBook(db, { cycleName: 'Cycle', title: 'Book', filePath: '/tmp/separators.fb2', contentHash: 'book' });
+    const ids = [
+      insertChunk(db, { bookId, chunkIndex: 0, text: '* * *', contentHash: 'h0' }),
+      insertChunk(db, { bookId, chunkIndex: 1, text: '— — —', contentHash: 'h1' }),
+      insertChunk(db, { bookId, chunkIndex: 2, text: 'Герои нашли старую карту.', contentHash: 'h2' }),
+    ];
+    const rows = expandEvidenceContext(db, [{
+      chunk_id: ids[1], book_id: bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: 1,
+      snippet: '— — —', source: 'semantic', sources: ['semantic'],
+    }], { neighborRadius: 1, limit: 4, maxExcerptChars: 1000 });
+    assert.deepEqual(rows.map((row) => row.chunk_id), [ids[2]]);
+  } finally { db.close(); }
+});

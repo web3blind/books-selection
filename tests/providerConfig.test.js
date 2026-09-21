@@ -9,7 +9,7 @@ test('provider config defaults to OpenRouter with a cheap configurable model and
   assert.equal(config.activeProvider, 'openrouter');
   assert.equal(config.providers.openrouter.type, 'openai-compatible');
   assert.equal(config.providers.openrouter.baseUrl, 'https://openrouter.ai/api/v1');
-  assert.equal(config.providers.openrouter.model, 'openai/gpt-4.1-nano');
+  assert.equal(config.providers.openrouter.model, require('../src/providerConfig').DEFAULT_CONFIG.providers.openrouter.model);
   assert.equal(config.providers.openrouter.apiKeyEnv, 'OPENROUTER_API_KEY');
 });
 

@@ -39,7 +39,10 @@ for (const language of ['ru', 'en']) {
     assert.ok(output.includes('&lt;img'));
     assert.ok(!output.includes('<img'));
     assert.ok(!output.includes('0.9'));
-    context.result = { status: 'corpus_not_ready', coverage: { searchComplete: false, retrievedChunks: 0 } };
+    context.result = { status: 'answered', answer: '', coverage: { indexReady: true, searchComplete: false, retrievedChunks: 2, representedBooks: 1 }, research: { searches: [] }, evidence: [], citedEvidence: [], cycleGroups: [] };
+    vm.runInContext('renderAskResult(result)', context);
+    assert.match(node('aiResults').innerHTML, language === 'ru' ? /Индекс готов.*охват запроса частичный/s : /index is ready.*query coverage is partial/is);
+    context.result = { status: 'corpus_not_ready', coverage: { indexReady: false, searchComplete: false, retrievedChunks: 0 } };
     vm.runInContext('renderAskResult(result)', context);
     assert.doesNotMatch(node('aiResults').innerHTML, /Проверен весь индекс|Entire index checked/);
   });

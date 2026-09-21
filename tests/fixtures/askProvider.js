@@ -32,9 +32,15 @@ function createAskProvider({ onRequest = () => {} } = {}) {
           };
         } else {
           result = {
+            status: 'answered',
             answer: 'Похоже, подходит «Путь двоих»: Лира и Марк учатся и путешествуют вместе. Весь цикл не проверен.',
             confidence: 'medium', uncertainty: 'Вывод ограничен прочитанными отрывками.', evidence: [good.id],
             recommendations: [{ bookId: good.bookId, evidence: [good.id] }], rejectedCycles: ['Ложный след'],
+            finalCandidateChecks: [{
+              bookId: good.bookId, verdict: 'supported', evidence: [good.id], reason: 'Лира и Марк названы и совместно путешествуют.',
+              entities: [{ name: 'Лира и Марк', evidence: [good.id] }],
+              criteria: [{ criterion: 'действуют вместе', verdict: 'supported', reason: 'Они путешествуют и помогают друг другу.', evidence: [good.id] }],
+            }],
             observations: [{ bookId: good.bookId, factKey: 'pair.journey', factType: 'plot_trait', factValue: 'Лира и Марк путешествуют вместе в этом эпизоде.', confidence: 0.6, evidence: [good.id] }],
           };
         }
