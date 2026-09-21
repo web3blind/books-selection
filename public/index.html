@@ -501,7 +501,7 @@
         noDbPath: 'Укажи путь к SQLite базе для локального индекса.',
         noAiQuery: 'Введи поисковый запрос или вопрос.',
         indexing: 'Готовлю локальный индекс: читаю книги, создаю SQLite и проверяю семантический кэш...',
-        asking: 'Собираю evidence и запускаю Ask mode...',
+        asking: 'Разбираю вопрос, ищу по книгам и проверяю найденное. При необходимости уточняю поиск…',
         indexDone: (result) => `Индекс готов: обработано ${result.total}, обновлено ${result.indexed}, пропущено ${result.skipped}, ошибок ${result.errors}.`,
         semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
           ? `Базовый индекс готов. Настрой provider ${result.setup.provider} для семантического поиска. Уже embedded: ${result.embedded}, осталось: ${result.remaining}.`
@@ -516,6 +516,8 @@
         aiProcessingError: (message) => `Удалось обработать через ИИ: нет. Ошибка: ${message}`,
         providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
         resultHeading: 'Результаты',
+        researchHeading: 'Как искали',
+        researchSummary: (r) => `Поисковых запросов: ${r.searches?.length ?? 0}. Обращений к модели: ${r.chatCalls ?? 0}. Сохранено наблюдений: ${r.persistedFacts ?? 0}.`,
         citedEvidenceHeading: 'Фрагменты, использованные в ответе',
         evidenceHeading: 'Все найденные фрагменты',
         candidatesHeading: 'Найденные варианты',
@@ -526,11 +528,11 @@
         answerHeading: 'Ответ',
         checkedHeading: 'Книги, представленные в найденных фрагментах',
         coverageSummary: (coverage) => coverage.searchComplete
-          ? `Проверен весь индекс: ${coverage.searchedCycles} циклов, ${coverage.searchedBooks} книг, ${coverage.searchedChunks} фрагментов. Лучшие доказательства: ${coverage.retrievedChunks} фрагментов из ${coverage.representedBooks} книг.`
-          : `Поиск по всему индексу не завершён. Проверено: ${coverage.searchedCycles ?? 0} циклов, ${coverage.searchedBooks ?? 0} книг, ${coverage.searchedChunks ?? 0} фрагментов.`,
+          ? `Индекс охватывает ${coverage.totalCycles ?? coverage.searchedCycles} циклов и ${coverage.totalBooks ?? coverage.searchedBooks} книг. Для ответа отобрано ${coverage.retrievedChunks} фрагментов из ${coverage.representedBooks} книг. Это выборочная проверка, а не чтение всех циклов.`
+          : `Индекс ещё не готов полностью. Отобрано фрагментов: ${coverage.retrievedChunks ?? 0}. Полнота сюжетной проверки не установлена.`,
         corpusNotReady: 'Сначала подготовь локальный индекс и embeddings до 100%. Ответ не создавался.',
         providerStatusHeading: 'Provider/setup status',
-        confidenceLabel: 'Уверенность:',
+        confidenceLabel: 'Самооценка модели (не вероятность правильности):',
         uncertaintyLabel: 'Неопределённость:',
         statusShown: (shown, total, hidden) => `Показано ${shown} из ${total}, скрыто ${hidden}`,
         titleLabel: 'Название:',
@@ -724,7 +726,7 @@
         noDbPath: 'Enter the SQLite database path for the local index.',
         noAiQuery: 'Enter a search query or question.',
         indexing: 'Preparing the local index: reading books, creating SQLite, and checking semantic cache...',
-        asking: 'Collecting evidence and running Ask mode...',
+        asking: 'Interpreting your question, searching books and checking passages. Refining the search if needed…',
         indexDone: (result) => `Index ready: processed ${result.total}, updated ${result.indexed}, skipped ${result.skipped}, errors ${result.errors}.`,
         semanticStepDone: (result) => ['needs_embedding_provider_key', 'needs_embedding_provider_setup'].includes(result.status)
           ? `The base index is ready. Configure provider ${result.setup.provider} for semantic search. Embedded: ${result.embedded}, remaining: ${result.remaining}.`
@@ -739,6 +741,8 @@
         aiProcessingError: (message) => `Processed through AI: no. Error: ${message}`,
         providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
         resultHeading: 'Results',
+        researchHeading: 'Search details',
+        researchSummary: (r) => `Search queries: ${r.searches?.length ?? 0}. Model calls: ${r.chatCalls ?? 0}. Saved observations: ${r.persistedFacts ?? 0}.`,
         citedEvidenceHeading: 'Snippets used in the answer',
         evidenceHeading: 'All retrieved snippets',
         candidatesHeading: 'Found candidates',
@@ -749,11 +753,11 @@
         answerHeading: 'Answer',
         checkedHeading: 'Books represented in retrieved evidence',
         coverageSummary: (coverage) => coverage.searchComplete
-          ? `Entire index checked: ${coverage.searchedCycles} series, ${coverage.searchedBooks} books, ${coverage.searchedChunks} snippets. Best evidence: ${coverage.retrievedChunks} snippets from ${coverage.representedBooks} books.`
-          : `Full-index search is not ready. Checked: ${coverage.searchedCycles ?? 0} series, ${coverage.searchedBooks ?? 0} books, ${coverage.searchedChunks ?? 0} snippets.`,
+          ? `The index covers ${coverage.totalCycles ?? coverage.searchedCycles} series and ${coverage.totalBooks ?? coverage.searchedBooks} books. The answer uses ${coverage.retrievedChunks} passages from ${coverage.representedBooks} books. This is a selective check, not a reading of every series.`
+          : `The index is not fully ready. Selected passages: ${coverage.retrievedChunks ?? 0}. Plot coverage has not been established.`,
         corpusNotReady: 'Prepare the local index and embeddings to 100% first. No answer was generated.',
         providerStatusHeading: 'Provider/setup status',
-        confidenceLabel: 'Confidence:',
+        confidenceLabel: 'Model self-assessment (not a probability of correctness):',
         uncertaintyLabel: 'Uncertainty:',
         statusShown: (shown, total, hidden) => `Showing ${shown} of ${total}, hidden ${hidden}`,
         titleLabel: 'Title:',
@@ -1418,9 +1422,10 @@
         ${renderAiProcessingStatus(result)}
         ${renderSetupStatus(setup)}
         ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
-        ${result.confidence ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
+        ${result.confidence && !result.research ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
         ${result.uncertainty ? `<p><strong>${escapeHtml(t('uncertaintyLabel'))}</strong> ${escapeHtml(result.uncertainty)}</p>` : ''}
         ${coverage ? `<p>${escapeHtml(t('coverageSummary', coverage))}</p>` : ''}
+        ${result.research ? `<details><summary>${escapeHtml(t('researchHeading'))}</summary><p>${escapeHtml(t('researchSummary', result.research))}</p><ul>${(result.research.searches || []).map((item) => `<li>${escapeHtml(item.query)}</li>`).join('')}</ul></details>` : ''}
         ${citedEvidence.length > 0 ? `<h3>${escapeHtml(t('citedEvidenceHeading'))}</h3>${renderEvidenceList(citedEvidence)}` : ''}
         ${renderCycleGroups(cycleGroups)}
         <details>

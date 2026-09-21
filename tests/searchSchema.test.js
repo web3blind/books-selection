@@ -14,6 +14,10 @@ test('search schema defines durable books, chunks, graph fact, and FTS tables', 
   assert.match(sql, /CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts\s+USING fts5/i);
   assert.match(sql, /content='chunks'/i);
   assert.match(sql, /content_hash TEXT/i);
+  assert.match(sql, /context_version INTEGER NOT NULL DEFAULT 0/i);
+  for (const column of ['body_index', 'section_path', 'source_order', 'source_kind']) {
+    assert.match(sql, new RegExp(`${column}\\s+(?:INTEGER|TEXT)\\s+NOT NULL`, 'i'));
+  }
 });
 
 test('search schema can initialize an in-memory SQLite database when node sqlite is available', () => {

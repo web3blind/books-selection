@@ -301,8 +301,11 @@ test('desktop provider fetch is injected through the server and network failures
     assert.equal(staleVolume.statusCode, 409);
     assert.match(staleVolume.body.error, /осталось 1 фрагментов/);
     assert.equal(fetchCalls, 0);
+    const unready = await request(started, 'POST', '/api/ask', cookie, { q: 'indexed evidence' });
+    assert.equal(unready.statusCode, 200);
+    assert.equal(unready.body.result.status, 'corpus_not_ready');
+    assert.equal(fetchCalls, 0, 'Ask preflight must not call a provider before preparation');
     const routes = [
-      ['/api/ask', { q: 'indexed evidence' }],
       ['/api/semantic-search', { q: 'indexed evidence' }],
       ['/api/embed-index', { limit: 1, expectedProvider: 'openrouter', cloudConsent: true }],
       ['/api/extract-fact', { q: 'indexed evidence', bookId, factKey: 'test_fact' }],
@@ -510,9 +513,14 @@ test('Ask records ranked cycle hits for favorited cycles through the local API',
         return providerJsonResponse({ data: inputs.map((_, index) => ({ index, embedding: [1, 0] })) });
       }
       if (String(requestUrl).endsWith('/chat/completions')) {
-        return providerJsonResponse({
-          choices: [{ message: { content: JSON.stringify({ answer: 'Фонарь найден.', confidence: 'high', evidence: ['evidence_1'] }) } }],
-        });
+        const body = JSON.parse(options.body);
+        const system = body.messages[0].content;
+        const result = system.includes('plan phase')
+          ? { intent: 'Найти фонарь', queries: [{ query: 'lantern' }] }
+          : system.includes('check phase')
+          ? { candidateChecks: [{ bookId, verdict: 'supported', evidence: ['evidence_1'], reason: 'Фонарь в тексте.' }], additionalQueries: [] }
+          : { answer: 'Фонарь найден.', confidence: 'high', evidence: ['evidence_1'], recommendations: [{ bookId, evidence: ['evidence_1'] }] };
+        return providerJsonResponse({ choices: [{ message: { content: JSON.stringify(result) } }] });
       }
       throw new Error(`Unexpected provider request in the favorites API test: ${requestUrl}`);
     },

@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS books (
   annotation TEXT NOT NULL,
   index_status TEXT NOT NULL DEFAULT 'pending',
   indexed_at TEXT,
-  indexed_root TEXT
+  indexed_root TEXT,
+  context_version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -25,6 +26,10 @@ CREATE TABLE IF NOT EXISTS chunks (
   content_hash TEXT NOT NULL,
   start_offset INTEGER NOT NULL,
   end_offset INTEGER NOT NULL,
+  body_index INTEGER NOT NULL DEFAULT 0,
+  section_path TEXT NOT NULL DEFAULT '[]',
+  source_order INTEGER NOT NULL DEFAULT 0,
+  source_kind TEXT NOT NULL DEFAULT 'legacy',
   UNIQUE(book_id, chunk_index)
 );
 

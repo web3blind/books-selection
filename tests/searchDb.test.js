@@ -280,16 +280,51 @@ test('search DB adapter adds fact_type column when opening an older derived_fact
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(book_id, fact_key)
       );
+      CREATE TABLE chunk_embeddings (
+        id INTEGER PRIMARY KEY,
+        chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        embedding_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(chunk_id, provider, model, content_hash)
+      );
+      CREATE TABLE cycle_favorites (
+        cycle_key TEXT PRIMARY KEY, cycle_name TEXT NOT NULL, added_at INTEGER NOT NULL, sort_position INTEGER NOT NULL
+      );
+      CREATE TABLE cycle_reading_state (
+        cycle_key TEXT PRIMARY KEY, cycle_name TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0 CHECK (is_read IN (0, 1)),
+        is_unfinished INTEGER NOT NULL DEFAULT 0 CHECK (is_unfinished IN (0, 1)), updated_at INTEGER NOT NULL
+      );
+      INSERT INTO books (id, cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status)
+      VALUES (1, 'Cycle', '/library/Cycle', '/library/Cycle/book.fb2', 10, 20, 'book-hash', 'Title', 'Annotation', 'indexed');
+      INSERT INTO chunks (id, book_id, chunk_index, text, content_hash, start_offset, end_offset)
+      VALUES (7, 1, 0, 'stable text', 'chunk-hash', 0, 11);
+      INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json)
+      VALUES (7, 'test', 'stable', 'chunk-hash', '[0.1,0.2]');
+      INSERT INTO cycle_favorites VALUES ('cycle', 'Cycle', 1, 0);
+      INSERT INTO cycle_reading_state VALUES ('cycle', 'Cycle', 1, 0, 1);
+      PRAGMA user_version = 5;
     \`);
     oldDb.close();
 
     const db = initializeSearchDatabase(dbPath);
     const columns = db.prepare('PRAGMA table_info(derived_facts)').all().map((row) => row.name);
+    const bookColumns = db.prepare('PRAGMA table_info(books)').all().map((row) => row.name);
+    const chunkColumns = db.prepare('PRAGMA table_info(chunks)').all().map((row) => row.name);
+    const preserved = {
+      embedding: db.prepare('SELECT chunk_id, content_hash, embedding_json FROM chunk_embeddings').get(),
+      favorite: db.prepare('SELECT cycle_key, cycle_name FROM cycle_favorites').get(),
+      reading: db.prepare('SELECT cycle_key, is_read FROM cycle_reading_state').get(),
+      chunk: db.prepare('SELECT id, text, source_kind, section_path FROM chunks').get(),
+    };
     const applicationId = db.prepare('PRAGMA application_id').get().application_id;
     const userVersion = db.prepare('PRAGMA user_version').get().user_version;
     db.close();
     const backups = fs.readdirSync(dir).filter((name) => name.startsWith('old.sqlite.backup-'));
-    console.log(JSON.stringify({ columns, applicationId, userVersion, backups }));
+    console.log(JSON.stringify({ columns, bookColumns, chunkColumns, preserved, applicationId, userVersion, backups }));
     fs.rmSync(dir, { recursive: true, force: true });
   `);
 
@@ -301,7 +336,15 @@ test('search DB adapter adds fact_type column when opening an older derived_fact
   assert.equal(child.status, 0, child.stderr);
   const result = JSON.parse(child.stdout.trim());
   assert.ok(result.columns.includes('fact_type'));
+  assert.ok(result.bookColumns.includes('context_version'));
+  for (const column of ['body_index', 'section_path', 'source_order', 'source_kind']) {
+    assert.ok(result.chunkColumns.includes(column), column);
+  }
+  assert.deepEqual(result.preserved.embedding, { chunk_id: 7, content_hash: 'chunk-hash', embedding_json: '[0.1,0.2]' });
+  assert.deepEqual(result.preserved.favorite, { cycle_key: 'cycle', cycle_name: 'Cycle' });
+  assert.deepEqual(result.preserved.reading, { cycle_key: 'cycle', is_read: 1 });
+  assert.deepEqual(result.preserved.chunk, { id: 7, text: 'stable text', source_kind: 'legacy', section_path: '[]' });
   assert.notEqual(result.applicationId, 0);
-  assert.ok(result.userVersion >= 1);
+  assert.equal(result.userVersion, 6);
   assert.equal(result.backups.length, 1);
 });

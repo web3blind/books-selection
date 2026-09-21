@@ -2,6 +2,7 @@ const { getApiKey, loadProviderConfig } = require('./providerConfig');
 const { createOpenAiCompatibleClient } = require('./providerClient');
 const { collectHybridEvidence, createFtsQueryFromQuestion } = require('./retrieval');
 const { getEmbeddingIndexStatus } = require('./embeddingIndexer');
+const { runAskResearch } = require('./askResearch');
 
 function stripMarkup(value) {
   return String(value || '').replace(/<[^>]+>/g, '');
@@ -307,6 +308,106 @@ async function answerLibraryQuestion({
     throw new Error('Question is required.');
   }
 
+  const config = loadProviderConfig(providerOverrides, env);
+  const providerName = config.activeProvider;
+  const provider = config.providers[providerName];
+  const apiKey = getApiKey(provider, env);
+  const useModelGuidedResearch = Boolean(
+    apiKey
+    && !searchFn
+    && retrievalFn === collectHybridEvidence
+    && db
+    && typeof db.prepare === 'function'
+  );
+
+  if (useModelGuidedResearch) {
+    let preflightStatus = null;
+    try {
+      preflightStatus = getEmbeddingIndexStatus({ db, providerOverrides, env });
+    } catch {
+      preflightStatus = null;
+    }
+    if (!preflightStatus || preflightStatus.status !== 'ready' || preflightStatus.corpusComplete === false) {
+      return {
+        status: 'corpus_not_ready',
+        answer: '',
+        confidence: 'unknown',
+        uncertainty: preflightStatus?.indexErrors > 0
+          ? `Индекс содержит ошибок: ${preflightStatus.indexErrors}. Исправь файлы и повтори подготовку.`
+          : 'Embeddings подготовлены не для всех фрагментов. Продолжи подготовку до 100%.',
+        question: trimmedQuestion,
+        evidence: [],
+        citedEvidence: [],
+        candidates: [],
+        cycleGroups: [],
+        coverage: {
+          totalCycles: null,
+          totalBooks: null,
+          totalChunks: preflightStatus?.total ?? null,
+          representedCycles: 0,
+          representedBooks: 0,
+          retrievedChunks: 0,
+          exhaustive: false,
+          searchComplete: false,
+          indexErrors: Number(preflightStatus?.indexErrors || 0),
+        },
+        semantic: { status: preflightStatus?.status || 'unavailable' },
+        checked: { books: [], cycles: [], chunks: [] },
+        research: {
+          mode: 'model_guided', phases: ['preflight'], chatCalls: 0, embeddingQueries: 0,
+          searches: [], plannedQueries: [], refinedQueries: [], checkedCandidates: [], rejectedCycles: [],
+          persistedFacts: 0, partial: true,
+        },
+      };
+    }
+
+    const client = providerClient || createOpenAiCompatibleClient({ provider, apiKey, fetchImpl });
+    const researchResult = await runAskResearch({
+      db,
+      question: trimmedQuestion,
+      providerClient: client,
+      retrievalProviderClient: providerClient,
+      providerName,
+      provider,
+      retrievalFn,
+      providerOverrides,
+      env,
+      fetchImpl,
+      signal,
+      limit,
+    });
+    const semantic = researchResult.semantic || { status: 'unavailable' };
+    const evidence = researchResult.evidence || [];
+    const coverage = createCoverage(db, evidence, semantic.coverage, semantic, preflightStatus);
+    coverage.indexReady = true;
+    if (evidence.length === 0) {
+      return {
+        status: 'no_evidence', answer: '', confidence: 'unknown',
+        uncertainty: [researchResult.uncertainty, coverageUncertainty(coverage), semanticUncertainty(semantic)].filter(Boolean).join(' '),
+        question: trimmedQuestion, evidence: [], citedEvidence: [], candidates: [], cycleGroups: [], coverage, semantic,
+        checked: { books: [], cycles: [], chunks: [] }, research: researchResult.research,
+      };
+    }
+    const deterministicUncertainty = /[А-Яа-яЁё]/.test(trimmedQuestion)
+      ? 'Проверены выбранные отрывки, а не полный текст всех книг цикла.'
+      : 'Selected passages were checked, not the full text of every book in the series.';
+    return {
+      status: 'answered',
+      answer: researchResult.answer || '',
+      confidence: researchResult.confidence || 'unknown',
+      uncertainty: [researchResult.uncertainty, deterministicUncertainty, semanticUncertainty(semantic)].filter(Boolean).join(' '),
+      question: trimmedQuestion,
+      evidence,
+      citedEvidence: researchResult.citedEvidence || [],
+      coverage,
+      semantic,
+      candidates: researchResult.candidates || [],
+      cycleGroups: researchResult.cycleGroups || [],
+      checked: createChecked(evidence),
+      research: researchResult.research,
+    };
+  }
+
   const retrievalQuery = createFtsQueryFromQuestion(trimmedQuestion);
   const retrievalResult = searchFn
     ? { evidence: searchFn(db, retrievalQuery, { limit }) }
@@ -378,11 +479,6 @@ async function answerLibraryQuestion({
       checked,
     };
   }
-  const config = loadProviderConfig(providerOverrides, env);
-  const providerName = config.activeProvider;
-  const provider = config.providers[providerName];
-  const apiKey = getApiKey(provider, env);
-
   if (!apiKey) {
     return createFallbackResult({ providerName, provider, evidence, question: trimmedQuestion, coverage, semantic });
   }

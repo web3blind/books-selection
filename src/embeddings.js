@@ -81,6 +81,21 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
   const maxPerBook = Number.isInteger(options.maxPerBook) && options.maxPerBook > 0
     ? options.maxPerBook
     : null;
+  const scopeBookIds = [...new Set((Array.isArray(options.bookIds) ? options.bookIds : [])
+    .slice(0, 240).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))];
+  const scopeCycleNames = [...new Set((Array.isArray(options.cycleNames) ? options.cycleNames : [])
+    .slice(0, 240).map((value) => String(value || '').trim().slice(0, 240)).filter(Boolean))];
+  const scopeClauses = [];
+  const scopeParams = [];
+  if (scopeBookIds.length > 0) {
+    scopeClauses.push(`books.id IN (${scopeBookIds.map(() => '?').join(', ')})`);
+    scopeParams.push(...scopeBookIds);
+  }
+  if (scopeCycleNames.length > 0) {
+    scopeClauses.push(`books.cycle_name IN (${scopeCycleNames.map(() => '?').join(', ')})`);
+    scopeParams.push(...scopeCycleNames);
+  }
+  const scopeSql = scopeClauses.length > 0 ? `AND (${scopeClauses.join(' OR ')})` : '';
   const rows = db.prepare(`
     SELECT
       chunk_embeddings.chunk_id,
@@ -100,7 +115,8 @@ function semanticSearchChunks(db, queryEmbedding, options = {}) {
         NOT EXISTS (SELECT 1 FROM corpus_state WHERE id = 1)
         OR books.indexed_root = (SELECT indexed_root FROM corpus_state WHERE id = 1)
       )
-  `).all(provider, model);
+      ${scopeSql}
+  `).all(provider, model, ...scopeParams);
 
   const ranked = rows
     .map((row) => ({ row, embedding: tryParseEmbeddingJson(row.embedding_json, queryEmbedding.length) }))

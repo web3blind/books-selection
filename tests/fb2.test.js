@@ -9,7 +9,9 @@ const {
   chunkText,
   decodeXmlBuffer,
   extractBookInfoFromXml,
+  extractBookContextFromXml,
   extractBodyTextFromXml,
+  readBookDocument,
   readBookInfo,
 } = require('../src/fb2');
 
@@ -145,6 +147,74 @@ test('extracts normalized full body text from fb2 sections without annotation te
 
   assert.equal(result, 'Глава 1\n\nПервый абзац & знак.\n\nВторой абзац.\n\nГлава 2\n\nФинальный абзац.');
   assert.doesNotMatch(result, /аннотация/i);
+});
+
+test('extracts ordered nested headings, non-paragraph text, notes, and negative statements without changing legacy body text', () => {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  <FictionBook>
+    <body>
+      <section>
+        <title><p>Часть первая</p></title>
+        <p>Герой не погиб и не покинул спутницу.</p>
+        <section>
+          <title>Глава без p</title>
+          <subtitle>Три года спустя</subtitle>
+          <poem><stanza><v>Они вернулись вместе.</v></stanza></poem>
+        </section>
+      </section>
+    </body>
+    <body name="notes">
+      <section><title><p>Примечание 1</p></title><p>Он выжил после финала.</p></section>
+    </body>
+  </FictionBook>`;
+
+  const bodyText = extractBodyTextFromXml(xml);
+  const blocks = extractBookContextFromXml(xml);
+
+  assert.equal(bodyText, 'Часть первая\n\nГерой не погиб и не покинул спутницу.');
+  assert.deepEqual(
+    blocks.map((block) => ({
+      body: block.bodyIndex,
+      kind: block.kind,
+      represented: block.representedInBodyText,
+      path: block.sectionPath,
+      text: block.text,
+    })),
+    [
+      { body: 0, kind: 'title', represented: true, path: ['Часть первая'], text: 'Часть первая' },
+      { body: 0, kind: 'paragraph', represented: true, path: ['Часть первая'], text: 'Герой не погиб и не покинул спутницу.' },
+      { body: 0, kind: 'title', represented: false, path: ['Часть первая', 'Глава без p'], text: 'Глава без p' },
+      { body: 0, kind: 'subtitle', represented: false, path: ['Часть первая', 'Глава без p'], text: 'Три года спустя' },
+      { body: 0, kind: 'verse', represented: false, path: ['Часть первая', 'Глава без p'], text: 'Они вернулись вместе.' },
+      { body: 1, kind: 'title', represented: false, path: ['Примечание 1'], text: 'Примечание 1' },
+      { body: 1, kind: 'paragraph', represented: false, path: ['Примечание 1'], text: 'Он выжил после финала.' },
+    ],
+  );
+  assert.equal(bodyText.slice(blocks[1].startOffset, blocks[1].endOffset), blocks[1].text);
+});
+
+test('readBookDocument exposes the same rich context for plain and zipped FB2 sources', async () => {
+  const xml = `<?xml version="1.0" encoding="utf-8"?><FictionBook>
+    <description><title-info><book-title>Контекст</book-title></title-info></description>
+    <body><section><title><p>Глава</p></title><p>Она не умерла.</p><subtitle>После битвы</subtitle></section></body>
+    <body name="notes"><section><p>Сноска о спасении.</p></section></body>
+  </FictionBook>`;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-context-'));
+  const plainPath = path.join(root, 'plain.fb2');
+  const zipPath = path.join(root, 'archive.fb2.zip');
+  await fs.writeFile(plainPath, xml);
+  await fs.writeFile(zipPath, createZipBuffer('nested/book.fb2', xml));
+
+  try {
+    const plain = await readBookDocument(plainPath);
+    const zipped = await readBookDocument(zipPath);
+    assert.deepEqual(zipped, plain);
+    assert.match(plain.bodyText, /не умерла/);
+    assert.ok(plain.contextBlocks.some((block) => block.text === 'После битвы' && !block.representedInBodyText));
+    assert.ok(plain.contextBlocks.some((block) => block.bodyName === 'notes' && block.text === 'Сноска о спасении.'));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('chunkText creates stable bounded chunks with offsets and hashes', () => {

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { initializeSearchDatabase } = require('../src/searchDb');
 const { storeChunkEmbedding } = require('../src/embeddings');
 const { upsertDerivedFact } = require('../src/facts');
-const { collectHybridEvidence, createFtsQueryFromQuestion } = require('../src/retrieval');
+const { collectHybridEvidence, createFtsQueryFromQuestion, expandEvidenceContext } = require('../src/retrieval');
 
 function insertBook(db, { cycleName, title, filePath, contentHash }) {
   return Number(db.prepare(`
@@ -140,7 +140,7 @@ test('collectHybridEvidence adds cached derived facts for explicit filters and r
 
   try {
     const bookId = insertBook(db, { cycleName: 'Cycle C', title: 'Book C', filePath: '/tmp/c.fb2', contentHash: 'book-c' });
-    insertChunk(db, {
+    const chunkId = insertChunk(db, {
       bookId,
       chunkIndex: 0,
       text: 'локальный FTS фрагмент про фонарь. Скрытый полный хвост не должен уйти как факт.',
@@ -152,14 +152,14 @@ test('collectHybridEvidence adds cached derived facts for explicit filters and r
       factType: 'plot_trait',
       factValue: 'yes',
       confidence: 0.88,
-      evidence: [{ excerpt: 'В эпилоге героиня отвечает на письмо.' }],
+      evidence: [{ bookId, chunkId, contentHash: 'chunk-c', excerpt: 'локальный FTS фрагмент про фонарь.' }],
       provider: 'mock',
       model: 'fact-model',
     });
 
     const result = await collectHybridEvidence({
       db,
-      question: 'Кто жив в финале и где фонарь?',
+      question: 'Каково сохранённое финальное состояние?',
       env: {},
       factFilters: [{ factType: 'plot_trait', factKey: 'survives_finale' }],
       limit: 5,
@@ -168,9 +168,8 @@ test('collectHybridEvidence adds cached derived facts for explicit filters and r
     const factRows = result.evidence.filter((row) => row.source === 'fact');
     assert.equal(factRows.length, 1);
     assert.equal(factRows[0].book_id, bookId);
-    assert.equal(factRows[0].chunk_index, 'fact:survives_finale');
-    assert.match(factRows[0].snippet, /survives_finale/);
-    assert.match(factRows[0].snippet, /В эпилоге героиня отвечает на письмо/);
+    assert.equal(factRows[0].chunk_id, chunkId);
+    assert.match(factRows[0].snippet, /локальный FTS фрагмент про фонарь/);
     assert.doesNotMatch(factRows[0].snippet, /Скрытый полный хвост/);
   } finally {
     db.close();
@@ -239,4 +238,80 @@ test('collectHybridEvidence passes natural language to safe FTS search instead o
   });
   assert.equal(receivedQuery, 'red lamp');
   assert.equal(result.ftsQuery, '"red" OR "lamp"');
+});
+
+test('expandEvidenceContext replaces tiny hits with full source chunks and bounded neighbors', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = insertBook(db, { cycleName: 'Cycle', title: 'Book', filePath: '/tmp/context.fb2', contentHash: 'book' });
+    const ids = [
+      insertChunk(db, { bookId, chunkIndex: 0, text: 'Предыдущая сцена.', contentHash: 'h0' }),
+      insertChunk(db, { bookId, chunkIndex: 1, text: 'Главная сцена с важным финалом.', contentHash: 'h1' }),
+      insertChunk(db, { bookId, chunkIndex: 2, text: 'Следующая сцена.', contentHash: 'h2' }),
+      insertChunk(db, { bookId, chunkIndex: 3, text: 'Слишком далёкая сцена.', contentHash: 'h3' }),
+    ];
+    db.prepare("UPDATE chunks SET section_path = '[\"Финал\"]', source_kind = 'body' WHERE id = ?").run(ids[1]);
+    const rows = expandEvidenceContext(db, [{
+      chunk_id: ids[1], book_id: bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: 1,
+      snippet: 'важным финалом', source: 'fts', sources: ['fts'],
+    }], { neighborRadius: 1, limit: 3, maxExcerptChars: 1000 });
+    assert.deepEqual(rows.map((row) => row.chunk_id), [ids[1], ids[0], ids[2]]);
+    assert.match(rows[0].snippet, /^Главная сцена/);
+    assert.equal(rows[0].content_hash, 'h1');
+    assert.deepEqual(rows[0].section_path, ['Финал']);
+    assert.equal(rows[0].source_kind, 'body');
+    assert.deepEqual(rows.slice(1).map((row) => row.source), ['neighbor', 'neighbor']);
+    assert.doesNotMatch(JSON.stringify(rows), /Слишком далёкая/);
+  } finally {
+    db.close();
+  }
+});
+
+test('cached facts are retrieval leads only when their original chunk hash still matches', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = insertBook(db, { cycleName: 'Cycle', title: 'Book', filePath: '/tmp/fact-lead.fb2', contentHash: 'book' });
+    const chunkId = insertChunk(db, { bookId, chunkIndex: 0, text: 'В эпилоге героиня жива.', contentHash: 'current-hash' });
+    upsertDerivedFact(db, {
+      bookId, factKey: 'plot.final_state', factType: 'plot_observation', factValue: 'alive', confidence: 0.8,
+      evidence: [{ bookId, chunkId, contentHash: 'current-hash', excerpt: 'В эпилоге героиня жива.' }],
+      provider: 'mock', model: 'mock',
+    });
+    upsertDerivedFact(db, {
+      bookId, factKey: 'plot.stale', factType: 'plot_observation', factValue: 'stale', confidence: 0.8,
+      evidence: [{ bookId, chunkId, contentHash: 'old-hash', excerpt: 'В эпилоге героиня жива.' }],
+      provider: 'mock', model: 'mock',
+    });
+    const result = await collectHybridEvidence({
+      db, question: 'финальное состояние', env: {}, searchFn: () => [], semanticLimit: 0,
+      factFilters: [{ factType: 'plot_observation' }], includeRelatedFacts: false, limit: 5,
+    });
+    assert.equal(result.evidence.length, 1);
+    assert.equal(result.evidence[0].chunk_id, chunkId);
+    assert.equal(result.evidence[0].source, 'fact');
+    assert.match(result.evidence[0].snippet, /героиня жива/);
+    assert.doesNotMatch(result.evidence[0].snippet, /Derived fact|stale/i);
+  } finally {
+    db.close();
+  }
+});
+
+test('cached fact validation uses the full excerpt before display truncation', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = insertBook(db, { cycleName: 'Cycle', title: 'Book', filePath: '/tmp/long-fact.fb2', contentHash: 'book' });
+    const longExcerpt = `Начало ${'важная деталь '.repeat(70)}конец.`;
+    const chunkId = insertChunk(db, { bookId, chunkIndex: 0, text: longExcerpt, contentHash: 'long-hash' });
+    upsertDerivedFact(db, {
+      bookId, factKey: 'plot.long', factType: 'plot_observation', factValue: 'present', confidence: 0.9,
+      evidence: [{ bookId, chunkId, contentHash: 'long-hash', excerpt: longExcerpt }], provider: 'mock', model: 'mock',
+    });
+    const result = await collectHybridEvidence({
+      db, question: 'длинный факт', env: {}, searchFn: () => [], semanticLimit: 0,
+      factFilters: [{ factKey: 'plot.long' }], includeRelatedFacts: false, limit: 2,
+    });
+    assert.equal(result.evidence.length, 1);
+    assert.equal(result.evidence[0].source, 'fact');
+    assert.ok(result.evidence[0].snippet.length <= 700);
+  } finally { db.close(); }
 });

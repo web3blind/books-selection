@@ -1,6 +1,6 @@
 const { embedQueryIfConfigured, semanticSearchChunks } = require('./embeddings');
 const { queryDerivedFacts } = require('./facts');
-const { searchChunks } = require('./indexer');
+const { getChunkContext, searchChunks } = require('./indexer');
 
 function stripMarkup(value) {
   return String(value || '').replace(/<[^>]+>/g, '');
@@ -47,15 +47,16 @@ function trimExcerpt(value, maxLength = 700) {
   return `${text.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function normalizeChunkRow(row, source) {
+function normalizeChunkRow(row, source, maxExcerptChars = 700) {
   return {
     chunk_id: row.chunk_id,
     book_id: row.book_id,
     cycle_name: row.cycle_name,
     title: row.title,
     chunk_index: row.chunk_index,
-    snippet: trimExcerpt(row.snippet || row.text || ''),
+    snippet: trimExcerpt(row.snippet || row.text || '', maxExcerptChars),
     text: row.snippet ? stripMarkup(row.snippet) : trimExcerpt(row.text || ''),
+    content_hash: row.content_hash,
     source,
     sources: [source],
     score: row.score,
@@ -94,23 +95,31 @@ function scoreEvidenceRows(rows, question) {
     .map((item) => item.row);
 }
 
-function factToEvidenceRow(fact) {
-  const factEvidence = Array.isArray(fact.evidence) ? fact.evidence : [];
-  const excerpts = factEvidence
-    .map((item) => item?.excerpt || item?.snippet || '')
-    .map((item) => trimExcerpt(item, 350))
-    .filter(Boolean);
-  const evidenceText = excerpts.length > 0 ? ` Evidence: ${excerpts.join(' | ')}` : '';
-  return {
-    book_id: fact.bookId,
-    cycle_name: fact.cycleName,
-    title: fact.bookTitle,
-    chunk_index: `fact:${fact.factKey}`,
-    snippet: trimExcerpt(`Derived fact ${fact.factKey} (${fact.factType}): ${fact.factValue}.${evidenceText}`),
-    text: '',
-    source: 'fact',
-    confidence: fact.confidence,
-  };
+function factToEvidenceRows(db, fact) {
+  const rows = [];
+  for (const reference of Array.isArray(fact.evidence) ? fact.evidence : []) {
+    const chunkId = Number(reference?.chunkId ?? reference?.chunk_id);
+    const bookId = Number(reference?.bookId ?? reference?.book_id);
+    const contentHash = String(reference?.contentHash ?? reference?.content_hash ?? '');
+    if (!Number.isSafeInteger(chunkId) || !Number.isSafeInteger(bookId) || !contentHash || bookId !== Number(fact.bookId)) continue;
+    const chunk = db.prepare(`
+      SELECT chunks.id AS chunk_id, chunks.book_id, chunks.chunk_index, chunks.text, chunks.content_hash,
+             books.cycle_name, books.title
+      FROM chunks JOIN books ON books.id = chunks.book_id
+      WHERE chunks.id = ? AND chunks.book_id = ? AND chunks.content_hash = ?
+    `).get(chunkId, bookId, contentHash);
+    if (!chunk) continue;
+    const fullExcerpt = stripMarkup(reference?.excerpt || reference?.snippet || '').replace(/\s+/g, ' ').trim();
+    const normalizedChunkText = String(chunk.text || '').replace(/\s+/g, ' ');
+    if (!fullExcerpt || !normalizedChunkText.includes(fullExcerpt)) continue;
+    rows.push({
+      ...normalizeChunkRow(chunk, 'fact'),
+      snippet: trimExcerpt(fullExcerpt, 700),
+      fact_key: fact.factKey,
+      confidence: fact.confidence,
+    });
+  }
+  return rows;
 }
 
 function addDeduped(rows, row, limit) {
@@ -205,7 +214,74 @@ function collectFactRows(db, { factFilters = [], candidateBookIds = [], includeR
     }
   }
 
-  return facts.slice(0, factsLimit).map(factToEvidenceRow);
+  return facts.slice(0, factsLimit).flatMap((fact) => factToEvidenceRows(db, fact));
+}
+
+function normalizeScope(scope = {}) {
+  return {
+    cycleNames: [...new Set((Array.isArray(scope.cycleNames) ? scope.cycleNames : []).slice(0, 240)
+      .map((value) => String(value || '').trim().slice(0, 240)).filter(Boolean))],
+    bookIds: [...new Set((Array.isArray(scope.bookIds) ? scope.bookIds : [])
+      .slice(0, 240).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0))],
+  };
+}
+
+function rowInScope(row, scope) {
+  const normalized = normalizeScope(scope);
+  if (normalized.cycleNames.length === 0 && normalized.bookIds.length === 0) return true;
+  return normalized.bookIds.includes(Number(row.book_id)) || normalized.cycleNames.includes(String(row.cycle_name || ''));
+}
+
+function searchFtsInScope(db, searchFn, question, { scope, limit }) {
+  const normalized = normalizeScope(scope);
+  if (normalized.bookIds.length === 0 && normalized.cycleNames.length > 0 && db && typeof db.prepare === 'function') {
+    const placeholders = normalized.cycleNames.map(() => '?').join(', ');
+    normalized.bookIds = db.prepare(`SELECT id FROM books WHERE cycle_name IN (${placeholders}) ORDER BY id`)
+      .all(...normalized.cycleNames).map((row) => Number(row.id));
+  }
+  if (normalized.bookIds.length === 0) {
+    return searchFn(db, question, { limit }).filter((row) => rowInScope(row, normalized));
+  }
+  const rows = [];
+  for (const bookId of normalized.bookIds) {
+    rows.push(...searchFn(db, question, { limit, bookId }));
+  }
+  return rows.filter((row) => rowInScope(row, normalized)).slice(0, limit);
+}
+
+function expandEvidenceContext(db, rows, { neighborRadius = 1, limit = 18, maxExcerptChars = 1800 } = {}) {
+  if (!db || typeof db.prepare !== 'function' || !Array.isArray(rows) || rows.length === 0) return rows || [];
+  const result = [];
+  const seen = new Set();
+  for (const targetRow of rows.slice(0, limit)) {
+    if (!Number.isSafeInteger(Number(targetRow.chunk_id))) continue;
+    const context = getChunkContext(db, Number(targetRow.chunk_id), {
+      neighborCount: Math.min(Math.max(Number(neighborRadius) || 0, 0), 10),
+      maxChars: Math.min(Math.max(Number(maxExcerptChars) || 1800, 1), 50000) * ((neighborRadius * 2) + 1),
+    });
+    for (const chunk of context?.chunks || []) {
+      if (result.length >= limit || seen.has(chunk.chunkId)) continue;
+      seen.add(chunk.chunkId);
+      const source = chunk.isTarget ? (targetRow.source || 'fts') : 'neighbor';
+      result.push({
+        chunk_id: chunk.chunkId,
+        book_id: context.bookId,
+        cycle_name: context.cycleName,
+        title: context.title,
+        chunk_index: chunk.chunkIndex,
+        snippet: trimExcerpt(chunk.text, maxExcerptChars),
+        text: trimExcerpt(chunk.text, maxExcerptChars),
+        content_hash: chunk.contentHash,
+        section_path: chunk.sectionPath,
+        source_kind: chunk.sourceKind,
+        source_order: chunk.sourceOrder,
+        source,
+        sources: chunk.isTarget ? (targetRow.sources || [source]) : ['neighbor'],
+        score: chunk.isTarget ? targetRow.score : undefined,
+      });
+    }
+  }
+  return result;
 }
 
 async function collectSemanticRows({
@@ -219,20 +295,25 @@ async function collectSemanticRows({
   embedFn = embedQueryIfConfigured,
   semanticSearchFn = semanticSearchChunks,
   semanticLimit,
+  scope,
 }) {
   const embeddingResult = await embedFn({ query: question, providerOverrides, env, fetchImpl, providerClient, signal });
   if (embeddingResult.status !== 'embedded') {
     return { status: embeddingResult.status, rows: [], setup: embeddingResult.setup };
   }
 
+  const normalizedScope = normalizeScope(scope);
+  const semanticCandidateLimit = semanticLimit;
   const semanticCandidates = semanticSearchFn(db, embeddingResult.embedding, {
     provider: embeddingResult.provider,
     model: embeddingResult.model,
-    limit: semanticLimit,
+    limit: semanticCandidateLimit,
     maxPerBook: MAX_SEMANTIC_ROWS_PER_BOOK,
+    bookIds: normalizedScope.bookIds,
+    cycleNames: normalizedScope.cycleNames,
   });
   const coverage = semanticCandidates.coverage;
-  const rows = diversifyRowsByBook(semanticCandidates.map((row) => normalizeChunkRow(row, 'semantic')), {
+  const rows = diversifyRowsByBook(semanticCandidates.map((row) => normalizeChunkRow(row, 'semantic')).filter((row) => rowInScope(row, scope)), {
     limit: semanticLimit,
   });
 
@@ -264,6 +345,10 @@ async function collectHybridEvidence({
   ftsLimit = limit,
   semanticLimit = Math.max(0, limit - 1),
   factsLimit = 8,
+  scope = {},
+  includeNeighbors = false,
+  neighborRadius = 1,
+  maxExcerptChars = 4000,
 } = {}) {
   const trimmedQuestion = String(question || '').trim();
   if (!trimmedQuestion) {
@@ -272,7 +357,7 @@ async function collectHybridEvidence({
 
   const ftsQuery = createFtsQueryFromQuestion(trimmedQuestion);
   const ftsRows = scoreEvidenceRows(
-    searchFn(db, trimmedQuestion, { limit: ftsLimit }).map((row) => normalizeChunkRow(row, 'fts')),
+    searchFtsInScope(db, searchFn, trimmedQuestion, { scope, limit: ftsLimit }).map((row) => normalizeChunkRow(row, 'fts')),
     trimmedQuestion,
   );
   const semantic = await collectSemanticRows({
@@ -286,6 +371,7 @@ async function collectHybridEvidence({
     embedFn,
     semanticSearchFn,
     semanticLimit,
+    scope,
   });
   const factRows = collectFactRows(db, {
     factFilters,
@@ -296,14 +382,25 @@ async function collectHybridEvidence({
   });
 
   const evidence = [];
-  addSourceGroup(evidence, ftsRows, [semantic.rows, factRows], limit);
-  addSourceGroup(evidence, semantic.rows, [factRows], limit);
-  addSourceGroup(evidence, factRows, [], limit);
+  if (includeNeighbors) {
+    // Keep semantic and cached-source candidates ahead of repeated lexical matches.
+    // Context expansion has its own cap, so source fairness must happen here.
+    const groups = [semantic.rows, ftsRows, factRows];
+    for (let index = 0; index < limit; index += 1) {
+      for (const group of groups) if (group[index]) addDeduped(evidence, group[index], limit);
+    }
+  } else {
+    addSourceGroup(evidence, ftsRows, [semantic.rows, factRows], limit);
+    addSourceGroup(evidence, semantic.rows, [factRows], limit);
+    addSourceGroup(evidence, factRows, [], limit);
+  }
 
   return {
     query: trimmedQuestion,
     ftsQuery,
-    evidence,
+    evidence: includeNeighbors
+      ? expandEvidenceContext(db, evidence, { neighborRadius, limit, maxExcerptChars })
+      : evidence,
     semantic: {
       status: semantic.status,
       provider: semantic.provider,
@@ -318,6 +415,7 @@ async function collectHybridEvidence({
 module.exports = {
   collectHybridEvidence,
   createFtsQueryFromQuestion,
+  expandEvidenceContext,
   extractQueryTerms,
   scoreEvidenceRows,
 };

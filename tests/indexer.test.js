@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { initializeSearchDatabase } = require('../src/searchDb');
-const { indexLibrary, searchChunks } = require('../src/indexer');
+const { getChunkContext, indexLibrary, searchChunks } = require('../src/indexer');
 
 async function createTempRoot() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'books-selection-indexer-'));
@@ -30,6 +30,24 @@ async function writeSampleBook(root, cycleName = 'Cycle One') {
         <p>Героиня ищет редкое слово маяк и находит друзей.</p>
       </section>
     </body>
+  </FictionBook>`;
+  await fs.writeFile(filePath, xml);
+  return filePath;
+}
+
+async function writeRichBook(root, cycleName = 'Rich Cycle') {
+  const folder = path.join(root, cycleName);
+  await fs.mkdir(folder, { recursive: true });
+  const filePath = path.join(folder, 'rich.fb2');
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  <FictionBook>
+    <description><title-info><book-title>Rich Context Book</book-title><annotation><p>Context fixture.</p></annotation></title-info></description>
+    <body>
+      <section><title><p>Часть первая</p></title><p>Герой не погиб в последней битве.</p>
+        <section><title>Глава без абзаца</title><subtitle>Три года спустя</subtitle><poem><stanza><v>Они вернулись вместе.</v></stanza></poem></section>
+      </section>
+    </body>
+    <body name="notes"><section><title><p>Примечание</p></title><p>Он выжил после финала.</p></section></body>
   </FictionBook>`;
   await fs.writeFile(filePath, xml);
   return filePath;
@@ -70,6 +88,173 @@ test('indexLibrary stores a scanned FB2 book, writes chunks, and makes body text
     assert.match(hits[0].text, /маяк/);
     assert.match(hits[0].snippet, /маяк/);
     assert.equal(typeof hits[0].chunk_index, 'number');
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('indexLibrary adds searchable omitted text and exposes bounded neighboring context with nested headings', async () => {
+  const root = await createTempRoot();
+  await writeRichBook(root);
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    await indexLibrary(db, root, { chunkOptions: { maxChars: 80 } });
+    const negative = searchChunks(db, 'погиб');
+    const subtitle = searchChunks(db, 'спустя');
+    const verse = searchChunks(db, 'вернулись');
+    const notes = searchChunks(db, 'выжил');
+
+    assert.equal(negative.length, 1);
+    assert.match(negative[0].text, /не погиб/);
+    assert.equal(subtitle[0].source_kind, 'supplemental');
+    assert.equal(verse[0].source_kind, 'supplemental');
+    assert.equal(notes[0].source_kind, 'notes');
+    assert.equal(notes[0].body_index, 1);
+    assert.deepEqual(JSON.parse(notes[0].section_path), ['Примечание']);
+
+    const context = getChunkContext(db, subtitle[0].chunk_id, { neighborCount: 2, maxChars: 1000 });
+    assert.equal(context.title, 'Rich Context Book');
+    assert.ok(context.chunks.some((chunk) => chunk.isTarget && chunk.sectionPath.includes('Глава без абзаца')));
+    assert.ok(context.chunks.every((chunk) => typeof chunk.text === 'string'));
+    assert.ok(context.chunks.every((chunk) => /^[a-f0-9]{64}$/.test(chunk.contentHash)));
+    assert.equal(getChunkContext(db, 999999), null);
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('context source order keeps every fragment of a split paragraph before intervening supplemental text and notes', async () => {
+  const root = await createTempRoot();
+  const folder = path.join(root, 'Ordered Cycle');
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(path.join(folder, 'ordered.fb2'), `<?xml version="1.0" encoding="utf-8"?>
+    <FictionBook>
+      <description><title-info><book-title>Ordered Context</book-title></title-info></description>
+      <body><section><p>alpha01 alpha02 alpha03 alpha04 alpha05 alpha06</p><subtitle>middle marker</subtitle><p>omega marker</p></section></body>
+      <body name="notes"><section><p>notes marker</p></section></body>
+    </FictionBook>`);
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    await indexLibrary(db, root, { chunkOptions: { maxChars: 14 } });
+    const rows = db.prepare(`
+      SELECT text, source_order, source_kind FROM chunks ORDER BY source_order, chunk_index
+    `).all();
+    const middleIndex = rows.findIndex((row) => row.text === 'middle marker');
+    const omegaIndex = rows.findIndex((row) => row.text === 'omega marker');
+    const notesIndex = rows.findIndex((row) => row.text === 'notes marker');
+
+    assert.ok(rows.filter((row) => row.text.startsWith('alpha')).length > 1);
+    assert.ok(rows.slice(0, middleIndex).every((row) => row.source_kind === 'body'));
+    assert.ok(middleIndex > 0 && middleIndex < omegaIndex && omegaIndex < notesIndex);
+    assert.deepEqual(rows.map((row) => row.source_order), rows.map((_, index) => index));
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('supplemental chunks do not merge across represented paragraphs', async () => {
+  const root = await createTempRoot();
+  const folder = path.join(root, 'Separated Cycle');
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(path.join(folder, 'separated.fb2'), `<?xml version="1.0" encoding="utf-8"?>
+    <FictionBook>
+      <description><title-info><book-title>Separated Context</book-title></title-info></description>
+      <body><section><subtitle>before marker</subtitle><p>represented marker</p><subtitle>after marker</subtitle></section></body>
+    </FictionBook>`);
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    await indexLibrary(db, root, { chunkOptions: { maxChars: 1000 } });
+    const rows = db.prepare('SELECT text, source_kind FROM chunks ORDER BY source_order').all()
+      .map((row) => ({ ...row }));
+    assert.deepEqual(rows, [
+      { text: 'before marker', source_kind: 'supplemental' },
+      { text: 'represented marker', source_kind: 'body' },
+      { text: 'after marker', source_kind: 'supplemental' },
+    ]);
+  } finally {
+    db.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('getChunkContext keeps the target and enforces maxChars as a hard text budget', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const bookId = Number(db.prepare(`
+      INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation)
+      VALUES ('Cycle', '/tmp', '/tmp/context.fb2', 1, 1, 'book', 'Book', '')
+    `).run().lastInsertRowid);
+    const insert = db.prepare(`
+      INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset, source_order, source_kind)
+      VALUES (?, ?, ?, ?, 0, 20, ?, 'body')
+    `);
+    insert.run(bookId, 0, 'previous neighbor', 'previous-hash', 0);
+    const targetId = Number(insert.run(bookId, 1, 'target text is longer', 'target-hash', 1).lastInsertRowid);
+    insert.run(bookId, 2, 'following neighbor', 'following-hash', 2);
+
+    const context = getChunkContext(db, targetId, { neighborCount: 2, maxChars: 6 });
+    assert.equal(context.chunks.length, 1);
+    assert.equal(context.chunks[0].chunkId, targetId);
+    assert.equal(context.chunks[0].text, 'target');
+    assert.equal(context.chunks[0].contentHash, 'target-hash');
+    assert.equal(context.chunks[0].isTarget, true);
+    assert.ok(context.chunks.reduce((sum, chunk) => sum + chunk.text.length, 0) <= 6);
+  } finally {
+    db.close();
+  }
+});
+
+test('unchanged context backfill preserves chunk embeddings and user marks while adding only omitted chunks', async () => {
+  const root = await createTempRoot();
+  const filePath = await writeRichBook(root);
+  const db = initializeSearchDatabase(':memory:');
+
+  try {
+    await indexLibrary(db, root, { chunkOptions: { maxChars: 80 } });
+    const book = db.prepare('SELECT id FROM books').get();
+    const bodyChunks = db.prepare("SELECT id, content_hash FROM chunks WHERE source_kind = 'body' ORDER BY id").all();
+    const bodyTextBefore = db.prepare("SELECT id, text FROM chunks WHERE source_kind = 'body' ORDER BY id").all();
+    const supplemental = db.prepare("SELECT id, text FROM chunks WHERE source_kind != 'body'").all();
+    const deleteFts = db.prepare("INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES('delete', ?, ?)");
+    for (const row of supplemental) deleteFts.run(row.id, row.text);
+    db.prepare("DELETE FROM chunks WHERE source_kind != 'body'").run();
+    db.prepare("UPDATE chunks SET body_index = 0, section_path = '[]', source_order = 0, source_kind = 'legacy'").run();
+    db.prepare('UPDATE books SET context_version = 0').run();
+    db.prepare(`
+      INSERT INTO chunk_embeddings (chunk_id, provider, model, content_hash, embedding_json)
+      VALUES (?, 'test', 'stable', ?, '[0.1,0.2]')
+    `).run(bodyChunks[0].id, bodyChunks[0].content_hash);
+    db.prepare("INSERT INTO cycle_favorites (cycle_key, cycle_name, added_at, sort_position) VALUES ('rich', 'Rich Cycle', 1, 0)").run();
+    db.prepare("INSERT INTO cycle_reading_state (cycle_key, cycle_name, is_read, is_unfinished, updated_at) VALUES ('rich', 'Rich Cycle', 1, 0, 1)").run();
+
+    const result = await indexLibrary(db, root, { chunkOptions: { maxChars: 80 } });
+    const afterBodyIds = db.prepare("SELECT id FROM chunks WHERE source_kind = 'body' ORDER BY id").all().map((row) => row.id);
+    const bodyTextAfter = db.prepare("SELECT id, text FROM chunks WHERE source_kind = 'body' ORDER BY id").all();
+
+    assert.equal(filePath.endsWith('.fb2'), true);
+    assert.deepEqual(result, { indexed: 0, skipped: 1, errors: 0, total: 1, removed: 0 });
+    assert.deepEqual(afterBodyIds, bodyChunks.map((row) => row.id));
+    assert.deepEqual(bodyTextAfter, bodyTextBefore);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM cycle_favorites').get().count, 1);
+    assert.equal(db.prepare('SELECT is_read FROM cycle_reading_state').get().is_read, 1);
+    assert.equal(db.prepare('SELECT context_version FROM books').get().context_version, 1);
+    assert.equal(searchChunks(db, 'спустя').length, 1);
+    assert.equal(searchChunks(db, 'выжил')[0].source_kind, 'notes');
+
+    await fs.writeFile(filePath, (await fs.readFile(filePath, 'utf8')).replace('Он выжил после финала.', 'Он исчез после финала.'));
+    const changed = await indexLibrary(db, root, { chunkOptions: { maxChars: 80 } });
+    assert.equal(changed.indexed, 1);
+    assert.equal(searchChunks(db, 'выжил').length, 0);
+    assert.equal(searchChunks(db, 'исчез').length, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM chunk_embeddings').get().count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM cycle_favorites').get().count, 1);
   } finally {
     db.close();
     await fs.rm(root, { recursive: true, force: true });

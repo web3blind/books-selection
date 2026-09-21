@@ -279,3 +279,21 @@ test('semanticSearchChunks skips invalid JSON and vectors with a different query
     assert.deepEqual(results.map((row) => row.chunk_index), [0]);
   } finally { db.close(); }
 });
+
+test('semanticSearchChunks applies book scope before ranking and limiting', () => {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const ids = [];
+    for (let index = 0; index < 3; index += 1) {
+      const bookId = Number(db.prepare("INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status) VALUES (?, '/tmp', ?, 1, 2, ?, ?, '', 'indexed')")
+        .run(`Cycle ${index}`, `/tmp/${index}.fb2`, `book-${index}`, `Book ${index}`).lastInsertRowid);
+      const hash = `hash-${index}`;
+      const chunkId = Number(db.prepare('INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset) VALUES (?, 0, ?, ?, 0, 1)')
+        .run(bookId, `text ${index}`, hash).lastInsertRowid);
+      storeChunkEmbedding(db, { chunkId, provider: 'openrouter', model: 'embed', contentHash: hash, embedding: [1 - index * 0.1, index * 0.1] });
+      ids.push(bookId);
+    }
+    const result = semanticSearchChunks(db, [1, 0], { provider: 'openrouter', model: 'embed', limit: 1, bookIds: [ids[2]] });
+    assert.deepEqual(result.map((row) => row.book_id), [ids[2]]);
+  } finally { db.close(); }
+});

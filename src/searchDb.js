@@ -5,7 +5,7 @@ const { createSchemaSql } = require('./searchSchema');
 
 const dynamicRequire = createRequire(__filename);
 const APPLICATION_ID = 0x42534b53; // "BSKS"
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const BUSY_TIMEOUT_MS = 5000;
 const KNOWN_TABLES = new Set([
   'books', 'chunks', 'chunk_embeddings', 'entities', 'relations', 'events', 'evidence', 'derived_facts', 'corpus_state',
@@ -146,6 +146,14 @@ function initializeSearchDatabase(databasePath) {
     if (!bookColumns.includes('indexed_root')) {
       db.exec('ALTER TABLE books ADD COLUMN indexed_root TEXT');
     }
+    if (!bookColumns.includes('context_version')) {
+      db.exec('ALTER TABLE books ADD COLUMN context_version INTEGER NOT NULL DEFAULT 0');
+    }
+    const chunkColumns = db.prepare('PRAGMA table_info(chunks)').all().map((row) => row.name);
+    if (!chunkColumns.includes('body_index')) db.exec('ALTER TABLE chunks ADD COLUMN body_index INTEGER NOT NULL DEFAULT 0');
+    if (!chunkColumns.includes('section_path')) db.exec("ALTER TABLE chunks ADD COLUMN section_path TEXT NOT NULL DEFAULT '[]'");
+    if (!chunkColumns.includes('source_order')) db.exec('ALTER TABLE chunks ADD COLUMN source_order INTEGER NOT NULL DEFAULT 0');
+    if (!chunkColumns.includes('source_kind')) db.exec("ALTER TABLE chunks ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'legacy'");
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');

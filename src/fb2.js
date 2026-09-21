@@ -97,6 +97,147 @@ function extractBodyTextFromXml(xml) {
   return bodyRaw ? extractParagraphs(bodyRaw) : '';
 }
 
+function readAttribute(attributes, name) {
+  const match = String(attributes || '').match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, 'i'));
+  return match ? normalizeWhitespace(decodeEntities(match[1])) : '';
+}
+
+function buildSectionPath(section) {
+  const pathParts = [];
+  for (let current = section; current; current = current.parent) {
+    if (current.title) pathParts.push(current.title);
+  }
+  return pathParts.reverse();
+}
+
+/**
+ * Extract ordered source blocks without changing the legacy body text used for
+ * existing chunks. Paragraphs in the first body reference offsets in that text;
+ * text omitted by the legacy extractor is returned inline for supplemental chunks.
+ */
+function extractBookContextFromXml(xml) {
+  const bodies = [...xml.matchAll(/<body\b([^>]*)>([\s\S]*?)<\/body>/gi)];
+  const blocks = [];
+  let sourceOrder = 0;
+
+  bodies.forEach((bodyMatch, bodyIndex) => {
+    const attributes = bodyMatch[1];
+    const bodyXml = bodyMatch[2];
+    const bodyName = readAttribute(attributes, 'name');
+    const sectionStack = [];
+    const elementStack = [];
+    let paragraphOffset = 0;
+    let sectionCounter = 0;
+
+    const tokenRegex = /<[^>]+>/g;
+    let token;
+    while ((token = tokenRegex.exec(bodyXml)) !== null) {
+      const rawTag = token[0];
+      if (/^<\?|^<!/u.test(rawTag)) continue;
+      const closing = /^<\//u.test(rawTag);
+      const selfClosing = /\/\s*>$/u.test(rawTag);
+      const nameMatch = rawTag.match(/^<\/?\s*([\w:-]+)/u);
+      if (!nameMatch) continue;
+      const tag = nameMatch[1].toLowerCase();
+
+      if (!closing) {
+        if (tag === 'section') {
+          const parent = sectionStack.at(-1) || null;
+          const section = { id: sectionCounter, parent, title: '' };
+          sectionCounter += 1;
+          sectionStack.push(section);
+          elementStack.push({ tag, section });
+          continue;
+        }
+
+        if (tag === 'title') {
+          const node = {
+            tag,
+            contentStart: tokenRegex.lastIndex,
+            section: sectionStack.at(-1) || null,
+            hasBlock: false,
+          };
+          elementStack.push(node);
+          continue;
+        }
+
+        if (['p', 'subtitle', 'v', 'text-author', 'date'].includes(tag)) {
+          const parentBlock = [...elementStack].reverse().find((node) => node.isBlock);
+          if (parentBlock) parentBlock.hasNestedBlock = true;
+          const titleNode = [...elementStack].reverse().find((node) => node.tag === 'title');
+          if (titleNode) titleNode.hasBlock = true;
+          elementStack.push({
+            tag,
+            contentStart: tokenRegex.lastIndex,
+            section: sectionStack.at(-1) || null,
+            inTitle: Boolean(titleNode),
+            isBlock: true,
+            hasNestedBlock: false,
+          });
+          continue;
+        }
+
+        if (!selfClosing) elementStack.push({ tag });
+        continue;
+      }
+
+      let stackIndex = elementStack.length - 1;
+      while (stackIndex >= 0 && elementStack[stackIndex].tag !== tag) stackIndex -= 1;
+      if (stackIndex < 0) continue;
+      const [node] = elementStack.splice(stackIndex, 1);
+
+      if (tag === 'section') {
+        const sectionIndex = sectionStack.lastIndexOf(node.section);
+        if (sectionIndex >= 0) sectionStack.splice(sectionIndex, 1);
+        continue;
+      }
+
+      const text = node.contentStart === undefined
+        ? ''
+        : normalizeWhitespace(stripTags(bodyXml.slice(node.contentStart, token.index)));
+      if (tag === 'title') {
+        if (node.section && text) node.section.title = text;
+        if (text && !node.hasBlock) {
+          blocks.push({
+            bodyIndex,
+            bodyName,
+            kind: 'title',
+            representedInBodyText: false,
+            startOffset: null,
+            endOffset: null,
+            sourceOrder: sourceOrder++,
+            text,
+            section: node.section,
+          });
+        }
+        continue;
+      }
+
+      if (!node.isBlock || node.hasNestedBlock || !text) continue;
+      const representedInBodyText = bodyIndex === 0 && tag === 'p';
+      const startOffset = representedInBodyText ? paragraphOffset : null;
+      const endOffset = representedInBodyText ? startOffset + text.length : null;
+      if (representedInBodyText) paragraphOffset = endOffset + 2;
+      blocks.push({
+        bodyIndex,
+        bodyName,
+        kind: node.inTitle ? 'title' : ({ p: 'paragraph', v: 'verse', 'text-author': 'text-author' }[tag] || tag),
+        representedInBodyText,
+        startOffset,
+        endOffset,
+        sourceOrder: sourceOrder++,
+        text,
+        section: node.section,
+      });
+    }
+  });
+
+  return blocks.map(({ section, ...block }) => ({
+    ...block,
+    sectionPath: buildSectionPath(section),
+  }));
+}
+
 function hashText(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
@@ -304,6 +445,7 @@ async function readBookDocument(filePath, source = {}) {
   return {
     ...extractBookInfoFromXml(xml),
     bodyText: extractBodyTextFromXml(xml),
+    contextBlocks: extractBookContextFromXml(xml),
   };
 }
 
@@ -330,6 +472,7 @@ module.exports = {
   chunkText,
   decodeXmlBuffer,
   extractBookInfoFromXml,
+  extractBookContextFromXml,
   extractBodyTextFromXml,
   readBookDocument,
   readBookInfo,

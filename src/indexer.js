@@ -6,6 +6,8 @@ const { BOOK_STATUSES } = require('./constants');
 const { assertBookSourceSize, chunkText, readBookDocument } = require('./fb2');
 const { scanBooks, yieldToEventLoop } = require('./scan');
 
+const CURRENT_CONTEXT_VERSION = 1;
+
 function hashBuffer(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
@@ -25,7 +27,7 @@ async function getFileFingerprint(filePath) {
 }
 
 function getExistingBook(db, filePath) {
-  return db.prepare('SELECT id, file_size, mtime_ms, content_hash FROM books WHERE file_path = ?').get(filePath);
+  return db.prepare('SELECT id, file_size, mtime_ms, content_hash, context_version FROM books WHERE file_path = ?').get(filePath);
 }
 
 function isUnchanged(existing, fingerprint) {
@@ -43,7 +45,7 @@ function upsertBook(db, book) {
       UPDATE books
       SET cycle_name = ?, folder_path = ?, file_size = ?, mtime_ms = ?, content_hash = ?,
           title = ?, annotation = ?, index_status = 'indexed', indexed_at = CURRENT_TIMESTAMP,
-          indexed_root = ?
+          indexed_root = ?, context_version = ?
       WHERE id = ?
     `).run(
       book.cycleName,
@@ -54,14 +56,15 @@ function upsertBook(db, book) {
       book.title,
       book.annotation,
       book.indexedRoot,
+      CURRENT_CONTEXT_VERSION,
       existing.id,
     );
     return existing.id;
   }
 
   const result = db.prepare(`
-    INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status, indexed_at, indexed_root)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP, ?)
+    INSERT INTO books (cycle_name, folder_path, file_path, file_size, mtime_ms, content_hash, title, annotation, index_status, indexed_at, indexed_root, context_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed', CURRENT_TIMESTAMP, ?, ?)
   `).run(
     book.cycleName,
     book.folderPath,
@@ -72,6 +75,7 @@ function upsertBook(db, book) {
     book.title,
     book.annotation,
     book.indexedRoot,
+    CURRENT_CONTEXT_VERSION,
   );
   return Number(result.lastInsertRowid);
 }
@@ -124,8 +128,10 @@ function removeMissingBooks(db, indexedRoot, presentFilePaths) {
 
 function insertChunks(db, bookId, chunks) {
   const insertChunk = db.prepare(`
-    INSERT INTO chunks (book_id, chunk_index, text, content_hash, start_offset, end_offset)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO chunks (
+      book_id, chunk_index, text, content_hash, start_offset, end_offset,
+      body_index, section_path, source_order, source_kind
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertFts = db.prepare('INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)');
 
@@ -137,9 +143,126 @@ function insertChunks(db, bookId, chunks) {
       chunk.contentHash,
       chunk.startOffset,
       chunk.endOffset,
+      chunk.bodyIndex || 0,
+      JSON.stringify(chunk.sectionPath || []),
+      chunk.sourceOrder ?? chunk.index,
+      chunk.sourceKind || 'legacy',
     );
     insertFts.run(Number(result.lastInsertRowid), chunk.text);
   }
+}
+
+function metadataForLegacyChunk(chunk, representedBlocks) {
+  const overlapping = representedBlocks.filter((block) => (
+    block.endOffset > chunk.startOffset && block.startOffset < chunk.endOffset
+  ));
+  const block = overlapping[0]
+    || representedBlocks.find((item) => item.startOffset >= chunk.startOffset)
+    || representedBlocks.at(-1);
+  return {
+    ...chunk,
+    bodyIndex: block?.bodyIndex || 0,
+    sectionPath: block?.sectionPath || [],
+    sourceAnchor: block?.sourceOrder ?? chunk.index,
+    fragmentOrder: chunk.index,
+    sourceKind: 'body',
+  };
+}
+
+function createSupplementalChunks(contextBlocks, options, startingIndex) {
+  const omitted = contextBlocks.filter((block) => !block.representedInBodyText && block.text);
+  const groups = [];
+  for (const block of omitted) {
+    const sectionKey = JSON.stringify(block.sectionPath || []);
+    const previous = groups.at(-1);
+    const previousBlock = previous?.blocks.at(-1);
+    if (previous
+      && previous.bodyIndex === block.bodyIndex
+      && previous.sectionKey === sectionKey
+      && previousBlock.sourceOrder + 1 === block.sourceOrder) {
+      previous.blocks.push(block);
+    } else {
+      groups.push({
+        bodyIndex: block.bodyIndex,
+        bodyName: block.bodyName,
+        sectionKey,
+        sectionPath: block.sectionPath || [],
+        blocks: [block],
+      });
+    }
+  }
+
+  const supplemental = [];
+  for (const group of groups) {
+    const text = group.blocks.map((block) => block.text).join('\n\n');
+    const firstOrder = group.blocks[0].sourceOrder;
+    for (const chunk of chunkText(text, options)) {
+      const fragmentOrder = chunk.index;
+      supplemental.push({
+        ...chunk,
+        index: startingIndex + supplemental.length,
+        bodyIndex: group.bodyIndex,
+        sectionPath: group.sectionPath,
+        sourceAnchor: firstOrder,
+        fragmentOrder,
+        sourceKind: group.bodyName.toLowerCase() === 'notes' ? 'notes' : 'supplemental',
+      });
+    }
+  }
+  return supplemental;
+}
+
+function assignSourceOrder(chunks) {
+  const ordered = [...chunks].sort((left, right) => (
+    left.sourceAnchor - right.sourceAnchor
+    || left.fragmentOrder - right.fragmentOrder
+    || left.index - right.index
+  ));
+  ordered.forEach((chunk, sourceOrder) => {
+    chunk.sourceOrder = sourceOrder;
+  });
+  return chunks;
+}
+
+function buildContextualChunks(document, chunkOptions) {
+  const representedBlocks = document.contextBlocks.filter((block) => block.representedInBodyText);
+  const legacy = chunkText(document.bodyText, chunkOptions)
+    .map((chunk) => metadataForLegacyChunk(chunk, representedBlocks));
+  const supplemental = createSupplementalChunks(document.contextBlocks, chunkOptions, legacy.length);
+  return assignSourceOrder([...legacy, ...supplemental]);
+}
+
+function backfillBookContext(db, bookId, document, chunkOptions) {
+  const representedBlocks = document.contextBlocks.filter((block) => block.representedInBodyText);
+  const existingChunks = db.prepare(`
+    SELECT id, chunk_index, text, content_hash, start_offset, end_offset
+    FROM chunks WHERE book_id = ? ORDER BY chunk_index
+  `).all(bookId);
+  const update = db.prepare(`
+    UPDATE chunks
+    SET body_index = ?, section_path = ?, source_order = ?, source_kind = 'body'
+    WHERE id = ?
+  `);
+  const legacy = existingChunks.map((row) => ({
+    id: row.id,
+    ...metadataForLegacyChunk({
+      index: row.chunk_index,
+      text: row.text,
+      contentHash: row.content_hash,
+      startOffset: row.start_offset,
+      endOffset: row.end_offset,
+    }, representedBlocks),
+  }));
+  const nextIndex = existingChunks.length === 0
+    ? 0
+    : Math.max(...existingChunks.map((row) => row.chunk_index)) + 1;
+  const supplemental = createSupplementalChunks(document.contextBlocks, chunkOptions, nextIndex);
+  assignSourceOrder([...legacy, ...supplemental]);
+  for (const metadata of legacy) {
+    update.run(metadata.bodyIndex, JSON.stringify(metadata.sectionPath), metadata.sourceOrder, metadata.id);
+  }
+  insertChunks(db, bookId, supplemental);
+  db.prepare('UPDATE books SET context_version = ? WHERE id = ?').run(CURRENT_CONTEXT_VERSION, bookId);
 }
 
 function updateCorpusState(db, { indexedRoot, scanResult, errors }) {
@@ -198,7 +321,7 @@ async function indexLibrary(db, rootPath, options = {}) {
     try {
       const fingerprint = await getFileFingerprint(filePath);
       const existing = getExistingBook(db, filePath);
-      if (isUnchanged(existing, fingerprint)) {
+      if (isUnchanged(existing, fingerprint) && existing.context_version >= CURRENT_CONTEXT_VERSION) {
         preparedBooks.push({ unchanged: true, existing });
         continue;
       }
@@ -206,7 +329,10 @@ async function indexLibrary(db, rootPath, options = {}) {
         buffer: fingerprint.buffer,
         stat: fingerprint.stat,
       });
-      preparedBooks.push({ item, folderPath, filePath, fingerprint, document, existing });
+      preparedBooks.push({
+        item, folderPath, filePath, fingerprint, document, existing,
+        contextBackfill: isUnchanged(existing, fingerprint),
+      });
     } catch {
       summary.errors += 1;
     }
@@ -220,6 +346,12 @@ async function indexLibrary(db, rootPath, options = {}) {
   try {
     for (const prepared of preparedBooks) {
       if (prepared.unchanged) {
+        db.prepare('UPDATE books SET indexed_root = ? WHERE id = ?').run(indexedRoot, prepared.existing.id);
+        summary.skipped += 1;
+        continue;
+      }
+      if (prepared.contextBackfill) {
+        backfillBookContext(db, prepared.existing.id, prepared.document, options.chunkOptions);
         db.prepare('UPDATE books SET indexed_root = ? WHERE id = ?').run(indexedRoot, prepared.existing.id);
         summary.skipped += 1;
         continue;
@@ -238,7 +370,7 @@ async function indexLibrary(db, rootPath, options = {}) {
       });
       invalidateBookDerivedData(db, bookId);
       deleteChunksForBook(db, bookId);
-      const chunks = chunkText(document.bodyText, options.chunkOptions);
+      const chunks = buildContextualChunks(document, options.chunkOptions);
       insertChunks(db, bookId, chunks);
       if (chunks.length === 0) {
         db.prepare("UPDATE books SET index_status = 'no_searchable_text' WHERE id = ?").run(bookId);
@@ -279,7 +411,11 @@ function searchChunks(db, query, options = {}) {
       books.title,
       snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 12) AS snippet,
       chunks.text,
-      chunks.chunk_index
+      chunks.chunk_index,
+      chunks.body_index,
+      chunks.section_path,
+      chunks.source_order,
+      chunks.source_kind
     FROM chunks_fts
     JOIN chunks ON chunks.id = chunks_fts.rowid
     JOIN books ON books.id = chunks.book_id
@@ -295,7 +431,72 @@ function searchChunks(db, query, options = {}) {
   return rows;
 }
 
+/**
+ * Read a bounded, target-first local context window around a retrieved chunk.
+ * This performs no vector scan or network request. `sourceOrder` preserves the
+ * original FB2 order, `sectionPath` contains nested headings, and `sourceKind`
+ * distinguishes body, notes and omitted text.
+ */
+function getChunkContext(db, chunkId, options = {}) {
+  const neighborCount = Number.isSafeInteger(options.neighborCount) && options.neighborCount >= 0
+    ? Math.min(options.neighborCount, 10)
+    : 1;
+  const maxChars = Number.isSafeInteger(options.maxChars) && options.maxChars > 0
+    ? Math.min(options.maxChars, 50000)
+    : 12000;
+  const target = db.prepare(`
+    SELECT chunks.*, books.title, books.cycle_name
+    FROM chunks JOIN books ON books.id = chunks.book_id
+    WHERE chunks.id = ?
+  `).get(chunkId);
+  if (!target) return null;
+  const rows = db.prepare(`
+    SELECT id AS chunk_id, chunk_index, text, content_hash, body_index, section_path, source_order, source_kind
+    FROM chunks WHERE book_id = ?
+    ORDER BY source_order, chunk_index
+  `).all(target.book_id);
+  const position = rows.findIndex((row) => row.chunk_id === target.id);
+  const candidatePositions = [position];
+  for (let distance = 1; distance <= neighborCount; distance += 1) {
+    if (position - distance >= 0) candidatePositions.push(position - distance);
+    if (position + distance < rows.length) candidatePositions.push(position + distance);
+  }
+
+  let remainingChars = maxChars;
+  const selected = [];
+  for (const rowPosition of candidatePositions) {
+    if (remainingChars <= 0) break;
+    const row = rows[rowPosition];
+    const text = row.text.slice(0, remainingChars);
+    if (!text) continue;
+    let sectionPath = [];
+    try { sectionPath = JSON.parse(row.section_path); } catch {}
+    selected.push({
+      rowPosition,
+      chunkId: row.chunk_id,
+      chunkIndex: row.chunk_index,
+      text,
+      contentHash: row.content_hash,
+      bodyIndex: row.body_index,
+      sectionPath: Array.isArray(sectionPath) ? sectionPath : [],
+      sourceOrder: row.source_order,
+      sourceKind: row.source_kind,
+      isTarget: row.chunk_id === target.id,
+    });
+    remainingChars -= text.length;
+  }
+  const chunks = selected.map(({ rowPosition, ...chunk }) => chunk);
+  return {
+    bookId: target.book_id,
+    title: target.title,
+    cycleName: target.cycle_name,
+    targetChunkId: target.id,
+    chunks,
+  };
+}
+
 module.exports = {
+  getChunkContext,
   indexLibrary,
   searchChunks,
 };
