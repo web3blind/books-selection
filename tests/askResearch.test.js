@@ -98,9 +98,14 @@ test('runAskResearch plans, checks, refines and returns only cited verified cand
 
     assert.equal(chatRequests.length, 3);
     assert.match(chatRequests[2].messages[1].content, /Write answer and uncertainty in Russian/);
-    assert.equal(retrievalRequests.length, 3);
-    assert.deepEqual(retrievalRequests[0].scope, { cycleNames: ['Accepted Cycle'], bookIds: [] });
-    assert.deepEqual(retrievalRequests[1].scope, { cycleNames: [], bookIds: [rejected.bookId] });
+    assert.equal(retrievalRequests.length, 4);
+    assert.equal(retrievalRequests[0].question, 'Где двое действуют вместе и выживают');
+    assert.deepEqual(retrievalRequests.slice(0, 3).map((item) => item.scope), [
+      { cycleNames: [], bookIds: [] },
+      { cycleNames: [], bookIds: [] },
+      { cycleNames: [], bookIds: [] },
+    ]);
+    assert.deepEqual(retrievalRequests[3].scope, { cycleNames: [], bookIds: [accepted.bookId] });
     assert.equal(result.answer, 'Подходит Accepted Cycle.');
     assert.deepEqual(result.candidates.map((candidate) => candidate.book), ['Accepted Book']);
     assert.deepEqual(result.cycleGroups.map((group) => group.cycle), ['Accepted Cycle']);
@@ -108,7 +113,7 @@ test('runAskResearch plans, checks, refines and returns only cited verified cand
     assert.equal(result.research.mode, 'model_guided');
     assert.deepEqual(result.research.phases, ['plan', 'retrieve', 'check', 'refine', 'final']);
     assert.equal(result.research.chatCalls, 3);
-    assert.equal(result.research.embeddingQueries, 3);
+    assert.equal(result.research.embeddingQueries, 4);
     assert.equal(result.research.partial, true);
     assert.deepEqual(result.research.rejectedCycles, ['Rejected Cycle']);
   } finally {
@@ -337,7 +342,7 @@ test('refinement can revise uncertain to supported using newly retrieved book ev
     });
     assert.deepEqual(result.candidates.map((item) => item.bookId), [book.bookId]);
     assert.equal(result.research.chatCalls, 3);
-    assert.equal(result.research.embeddingQueries, 2);
+    assert.equal(result.research.embeddingQueries, 3);
   } finally { db.close(); }
 });
 
@@ -390,12 +395,115 @@ test('generic non-romance question can support a realistic pair of books in one 
       providerClient: { chatCompletion: async () => responses.shift() }, providerName: 'mock', provider: { model: 'mock' },
       retrievalFn: async ({ scope }) => {
         retrievalCall += 1;
-        if (retrievalCall === 2) assert.deepEqual(scope.cycleNames, ['Архивисты']);
+        if (retrievalCall < 3) assert.deepEqual(scope, { cycleNames: [], bookIds: [] });
+        if (retrievalCall === 3) assert.deepEqual(scope.cycleNames, ['Архивисты']);
         return { evidence: [first, second].map((item, index) => ({ chunk_id: item.chunkIds[0], book_id: item.bookId, cycle_name: 'Архивисты', title: index ? 'Последний архив' : 'Карта пепла', chunk_index: 0, snippet: index ? 'Ира и Тим открыли архив в эпилоге.' : 'Ира и Тим вместе расшифровали карту.', content_hash: `hash-${index ? 'Последний архив' : 'Карта пепла'}-0`, source: 'semantic' })), semantic: { status: 'searched' } };
       },
     });
     assert.equal(result.status, 'answered');
     assert.deepEqual(result.candidates.map((item) => item.bookId), [first.bookId, second.bookId]);
     assert.equal(result.cycleGroups[0].bookCount, 2);
+  } finally { db.close(); }
+});
+
+test('short Cyrillic question without a question mark remains question-answer intent', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const book = seedBook(db, 'Цикл', 'Книга', ['Фонарь лежал у двери.']);
+  const responses = [
+    { intentType: 'question_answer', queries: [{ query: 'фонарь дверь' }] },
+    { candidateChecks: [] },
+    { status: 'answered', answer: 'Фонарь лежал у двери.', evidence: ['evidence_1'], recommendations: [], finalCandidateChecks: [] },
+  ];
+  try {
+    const result = await runAskResearch({
+      db, question: 'Где лежал фонарь', providerName: 'mock', provider: { model: 'mock' },
+      providerClient: { chatCompletion: async () => responses.shift() },
+      retrievalFn: async () => ({ evidence: [{
+        chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Цикл', title: 'Книга', chunk_index: 0,
+        snippet: 'Фонарь лежал у двери.', content_hash: 'hash-Книга-0', source: 'fts',
+      }], semantic: { status: 'searched' } }),
+    });
+    assert.equal(result.status, 'answered');
+    assert.equal(result.answer, 'Фонарь лежал у двери.');
+    assert.deepEqual(result.candidates, []);
+    assert.equal(result.research.chatCalls, 3);
+  } finally { db.close(); }
+});
+
+test('wrong planner scopes cannot exclude an unhinted target from initial retrieval', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const decoy = seedBook(db, 'Цикл 24', 'Том 24', ['У ворот появился один демон.']);
+  const target = seedBook(db, 'Цикл 11', 'Том 11', ['Герой удерживал нескольких демонов внутри себя.']);
+  const retrievals = [];
+  const responses = [
+    {
+      intentType: 'recommendation',
+      queries: [
+        { query: 'демоны герой', cycleNames: ['Цикл 24'] },
+        { query: 'существа внутри', bookIds: [decoy.bookId] },
+      ],
+    },
+    { candidateChecks: [{ bookId: target.bookId, verdict: 'supported', evidence: ['evidence_1'] }] },
+    {
+      status: 'answered', answer: 'Найдено совпадение.', evidence: ['evidence_1'],
+      recommendations: [{ bookId: target.bookId, evidence: ['evidence_1'] }],
+      finalCandidateChecks: [supportedFinalCheck(target.bookId, ['evidence_1'], 'несколько демонов находятся внутри героя')],
+    },
+  ];
+  try {
+    const result = await runAskResearch({
+      db, question: 'Несколько демонов внутри героя', providerName: 'mock', provider: { model: 'mock' },
+      providerClient: { chatCompletion: async () => responses.shift() },
+      retrievalFn: async ({ question, scope }) => {
+        retrievals.push({ question, scope });
+        const book = scope.cycleNames.includes('Цикл 24') || scope.bookIds.includes(decoy.bookId) ? decoy : target;
+        return { evidence: [{
+          chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: book === target ? 'Цикл 11' : 'Цикл 24',
+          title: book === target ? 'Том 11' : 'Том 24', chunk_index: 0,
+          snippet: book === target ? 'Герой удерживал нескольких демонов внутри себя.' : 'У ворот появился один демон.',
+          content_hash: `hash-${book === target ? 'Том 11' : 'Том 24'}-0`, source: 'fts',
+        }], semantic: { status: 'searched' } };
+      },
+    });
+    assert.equal(retrievals[0].question, 'Несколько демонов внутри героя');
+    assert.deepEqual(retrievals.map((item) => item.scope), [
+      { cycleNames: [], bookIds: [] },
+      { cycleNames: [], bookIds: [] },
+      { cycleNames: [], bookIds: [] },
+    ]);
+    assert.deepEqual(result.candidates.map((item) => item.bookId), [target.bookId]);
+    assert.deepEqual(result.cycleGroups.map((item) => item.cycle), ['Цикл 11']);
+  } finally { db.close(); }
+});
+
+test('unscoped refinement can discover a candidate omitted from initial evidence', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const initial = seedBook(db, 'Первый цикл', 'Слабый след', ['Демонесса назвала героя.']);
+  const recovered = seedBook(db, 'Второй цикл', 'Точное совпадение', ['Я призвал трёх демонов и воплотил их внутри себя.']);
+  const responses = [
+    { intentType: 'recommendation', queries: [{ query: 'демоны внутри героя' }] },
+    { candidateChecks: [{ bookId: initial.bookId, verdict: 'uncertain', evidence: ['evidence_1'] }], additionalQueries: [{ query: 'призвал демонов воплотил внутри себя' }] },
+    { status: 'answered', answer: 'Подходит «Точное совпадение».', evidence: ['evidence_2'], recommendations: [{ bookId: recovered.bookId, evidence: ['evidence_2'] }], finalCandidateChecks: [supportedFinalCheck(recovered.bookId, ['evidence_2'], 'демоны находятся внутри героя')] },
+  ];
+  const retrievals = [];
+  try {
+    const result = await runAskResearch({
+      db, question: 'Демоны внутри героя', providerName: 'mock', provider: { model: 'mock' },
+      providerClient: { chatCompletion: async () => responses.shift() },
+      retrievalFn: async ({ question, scope }) => {
+        retrievals.push({ question, scope });
+        const isRefine = question.includes('воплотил');
+        const book = isRefine ? recovered : initial;
+        return { evidence: [{
+          chunk_id: book.chunkIds[0], book_id: book.bookId,
+          cycle_name: isRefine ? 'Второй цикл' : 'Первый цикл', title: isRefine ? 'Точное совпадение' : 'Слабый след', chunk_index: 0,
+          snippet: isRefine ? 'Я призвал трёх демонов и воплотил их внутри себя.' : 'Демонесса назвала героя.',
+          content_hash: `hash-${isRefine ? 'Точное совпадение' : 'Слабый след'}-0`, source: 'fts',
+        }], semantic: { status: 'searched' } };
+      },
+    });
+    assert.equal(retrievals.length, 2);
+    assert.deepEqual(retrievals[1].scope, { cycleNames: [], bookIds: [] });
+    assert.deepEqual(result.cycleGroups.map((item) => item.cycle), ['Второй цикл']);
   } finally { db.close(); }
 });

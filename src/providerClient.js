@@ -12,11 +12,11 @@ function boundedOutputTokens(requested, configured) {
   const configuredValue = Number(configured);
   const providerMaximum = Number.isInteger(configuredValue) && configuredValue > 0
     ? Math.min(configuredValue, MAX_OUTPUT_TOKENS_CAP)
-    : DEFAULT_MAX_OUTPUT_TOKENS;
+    : MAX_OUTPUT_TOKENS_CAP;
   const requestedValue = Number(requested);
   return Number.isInteger(requestedValue) && requestedValue > 0
     ? Math.min(requestedValue, providerMaximum)
-    : providerMaximum;
+    : (Number.isInteger(configuredValue) && configuredValue > 0 ? providerMaximum : DEFAULT_MAX_OUTPUT_TOKENS);
 }
 
 function networkLimits(provider) {

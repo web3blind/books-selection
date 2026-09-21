@@ -332,3 +332,38 @@ test('expandEvidenceContext drops punctuation-only target and neighbor separator
     assert.deepEqual(rows.map((row) => row.chunk_id), [ids[2]]);
   } finally { db.close(); }
 });
+
+test('collectHybridEvidence keeps inflected multi-term Russian evidence ahead of incidental literal matches', async () => {
+  const rows = [
+    { chunk_id: 1, book_id: 1, cycle_name: 'Ложный цикл', title: 'Ложная книга', chunk_index: 0, snippet: 'Внутри стало тихо, прошли дни и недели, а у далёких ворот собрались демоны.' },
+    { chunk_id: 2, book_id: 2, cycle_name: 'Подходящий цикл', title: 'Подходящая книга', chunk_index: 0, snippet: 'Я призвал сразу трёх демонов и воплотил их внутри себя.' },
+    { chunk_id: 3, book_id: 3, cycle_name: 'Шум', title: 'Герой', chunk_index: 0, snippet: 'Памятник героя стоял на площади.' },
+  ];
+  const result = await collectHybridEvidence({
+    db: {}, question: 'Демоны внутри героя', env: {}, searchFn: () => rows,
+    embedFn: async () => ({ status: 'needs_embedding_provider_key', setup: {} }),
+    queryFactsFn: () => [], includeRelatedFacts: false, semanticLimit: 0, limit: 3,
+  });
+  assert.equal(result.evidence[0].book_id, 2);
+  assert.equal(result.evidence.some((row) => row.book_id === 3), false);
+});
+
+test('collectHybridEvidence broadens and diversifies semantic candidates by cycle', async () => {
+  const dominant = Array.from({ length: 12 }, (_, index) => ({
+    chunk_id: index + 1, book_id: index + 1, cycle_name: 'Большой шумный цикл',
+    title: `Шум ${index + 1}`, chunk_index: 0, text: `похожий шум ${index + 1}`, score: 1 - index / 100,
+  }));
+  const relevant = { chunk_id: 99, book_id: 99, cycle_name: 'Другой цикл', title: 'Точное совпадение', chunk_index: 0, text: 'демоны живут внутри героя', score: 0.75 };
+  let requestedLimit = 0;
+  const result = await collectHybridEvidence({
+    db: {}, question: 'Демоны внутри героя', env: { OPENROUTER_API_KEY: 'test-key' }, searchFn: () => [],
+    embedFn: async () => ({ status: 'embedded', provider: 'openrouter', model: 'embed', embedding: [1] }),
+    semanticSearchFn: (_db, _embedding, options) => {
+      requestedLimit = options.limit;
+      return [...dominant, relevant].slice(0, options.limit);
+    },
+    queryFactsFn: () => [], includeRelatedFacts: false, limit: 6, semanticLimit: 6,
+  });
+  assert.ok(requestedLimit > 6);
+  assert.ok(result.evidence.some((row) => row.cycle_name === 'Другой цикл'));
+});

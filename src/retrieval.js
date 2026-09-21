@@ -68,26 +68,68 @@ function normalizeChunkRow(row, source, maxExcerptChars = 700) {
 }
 
 function textForScoring(row) {
-  return [row.cycle_name, row.title, row.snippet, row.text]
+  return [row.cycle_name, row.title, row.text || row.snippet]
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase('ru-RU');
 }
 
+function lightRussianStem(word) {
+  const normalized = String(word || '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е');
+  if (!/^[а-я]+$/u.test(normalized) || normalized.length < 5) return normalized;
+  const ending = [
+    'иями', 'ями', 'ами', 'ого', 'ему', 'ому', 'ими', 'ыми', 'ией', 'ей', 'ий', 'ый', 'ой',
+    'ов', 'ев', 'ам', 'ям', 'ах', 'ях', 'ом', 'ем', 'ую', 'юю', 'ая', 'яя', 'ое', 'ее',
+    'ы', 'и', 'а', 'я', 'у', 'ю', 'е', 'о', 'й',
+  ].find((suffix) => normalized.endsWith(suffix) && normalized.length - suffix.length >= 4);
+  return ending ? normalized.slice(0, -ending.length) : normalized;
+}
+
+function scoringTokens(value) {
+  return (String(value || '').toLocaleLowerCase('ru-RU').match(/[\p{L}\p{N}_-]+/gu) || [])
+    .map((token) => lightRussianStem(token));
+}
+
+function minimumMatchedSpan(tokens, terms) {
+  if (terms.length < 2) return Number.POSITIVE_INFINITY;
+  const needed = new Set(terms);
+  const counts = new Map();
+  let covered = 0;
+  let left = 0;
+  let best = Number.POSITIVE_INFINITY;
+  for (let right = 0; right < tokens.length; right += 1) {
+    const token = tokens[right];
+    if (!needed.has(token)) continue;
+    const next = (counts.get(token) || 0) + 1;
+    counts.set(token, next);
+    if (next === 1) covered += 1;
+    while (covered === needed.size && left <= right) {
+      while (left <= right && !needed.has(tokens[left])) left += 1;
+      best = Math.min(best, right - left);
+      const leftToken = tokens[left];
+      counts.set(leftToken, counts.get(leftToken) - 1);
+      if (counts.get(leftToken) === 0) covered -= 1;
+      left += 1;
+    }
+  }
+  return best;
+}
+
 function scoreEvidenceRows(rows, question) {
-  const terms = extractQueryTerms(question, { maxTerms: 16 });
+  const terms = [...new Set(extractQueryTerms(question, { maxTerms: 16 }).map(lightRussianStem))];
   if (terms.length <= 1 || rows.length <= 1) {
     return rows;
   }
 
   const scored = rows.map((row, index) => {
-    const haystack = textForScoring(row);
-    const matchedTerms = terms.filter((term) => haystack.includes(term));
+    const tokens = scoringTokens(textForScoring(row));
+    const matchedTerms = terms.filter((term) => tokens.includes(term));
     return {
       row,
       index,
       matchedCount: matchedTerms.length,
       score: matchedTerms.length / terms.length,
+      span: minimumMatchedSpan(tokens, matchedTerms),
     };
   });
   const bestMatchedCount = Math.max(...scored.map((item) => item.matchedCount));
@@ -95,7 +137,7 @@ function scoreEvidenceRows(rows, question) {
 
   return scored
     .filter((item) => item.matchedCount >= minimumMatchedCount)
-    .sort((a, b) => b.matchedCount - a.matchedCount || b.score - a.score || a.index - b.index)
+    .sort((a, b) => b.matchedCount - a.matchedCount || a.span - b.span || b.score - a.score || a.index - b.index)
     .map((item) => item.row);
 }
 
@@ -157,15 +199,31 @@ function countNonEmpty(groups) {
 
 function diversifyRowsByBook(rows, { limit, maxPerBook = MAX_SEMANTIC_ROWS_PER_BOOK }) {
   if (!Number.isFinite(limit) || limit <= 0) return [];
-  const selected = [];
+  const eligible = [];
   const counts = new Map();
   for (const row of rows) {
     const key = `${row.cycle_name || ''}\u0000${row.title || ''}\u0000${row.book_id ?? ''}`;
     const count = counts.get(key) || 0;
     if (count >= maxPerBook) continue;
-    selected.push(row);
+    eligible.push(row);
     counts.set(key, count + 1);
-    if (selected.length >= limit) break;
+  }
+  const groups = new Map();
+  for (const row of eligible) {
+    const cycle = String(row.cycle_name || '');
+    if (!groups.has(cycle)) groups.set(cycle, []);
+    groups.get(cycle).push(row);
+  }
+  const selected = [];
+  for (let round = 0; selected.length < limit; round += 1) {
+    let added = false;
+    for (const group of groups.values()) {
+      if (!group[round]) continue;
+      selected.push(group[round]);
+      added = true;
+      if (selected.length >= limit) break;
+    }
+    if (!added) break;
   }
   return selected;
 }
@@ -257,13 +315,19 @@ function expandEvidenceContext(db, rows, { neighborRadius = 1, limit = 18, maxEx
   if (!db || typeof db.prepare !== 'function' || !Array.isArray(rows) || rows.length === 0) return rows || [];
   const result = [];
   const seen = new Set();
+  const targetIds = new Set(rows.map((row) => Number(row.chunk_id)));
+  const contexts = new Map();
+  // Reserve evidence slots for search hits before adding surrounding prose.
+  for (const targetsOnly of [true, false]) {
   for (const targetRow of rows.slice(0, limit)) {
     if (!Number.isSafeInteger(Number(targetRow.chunk_id))) continue;
-    const context = getChunkContext(db, Number(targetRow.chunk_id), {
+    const context = contexts.get(targetRow.chunk_id) || getChunkContext(db, Number(targetRow.chunk_id), {
       neighborCount: Math.min(Math.max(Number(neighborRadius) || 0, 0), 10),
       maxChars: Math.min(Math.max(Number(maxExcerptChars) || 1800, 1), 50000) * ((neighborRadius * 2) + 1),
     });
+    contexts.set(targetRow.chunk_id, context);
     for (const chunk of context?.chunks || []) {
+      if (targetsOnly ? !chunk.isTarget : targetIds.has(chunk.chunkId)) continue;
       if (result.length >= limit || seen.has(chunk.chunkId)) continue;
       if (!hasMeaningfulText(chunk.text)) continue;
       seen.add(chunk.chunkId);
@@ -285,6 +349,7 @@ function expandEvidenceContext(db, rows, { neighborRadius = 1, limit = 18, maxEx
         score: chunk.isTarget ? targetRow.score : undefined,
       });
     }
+  }
   }
   return result;
 }
@@ -308,7 +373,7 @@ async function collectSemanticRows({
   }
 
   const normalizedScope = normalizeScope(scope);
-  const semanticCandidateLimit = semanticLimit;
+  const semanticCandidateLimit = Math.min(Math.max(semanticLimit * 4, semanticLimit), 72);
   const semanticCandidates = semanticSearchFn(db, embeddingResult.embedding, {
     provider: embeddingResult.provider,
     model: embeddingResult.model,
@@ -388,9 +453,9 @@ async function collectHybridEvidence({
 
   const evidence = [];
   if (includeNeighbors) {
-    // Keep semantic and cached-source candidates ahead of repeated lexical matches.
-    // Context expansion has its own cap, so source fairness must happen here.
-    const groups = [semantic.rows, ftsRows, factRows];
+    // Alternate lexical and semantic hits before expanding surrounding context.
+    // Direct wording matches must not be displaced by loosely related vectors.
+    const groups = [ftsRows, semantic.rows, factRows];
     for (let index = 0; index < limit; index += 1) {
       for (const group of groups) if (group[index]) addDeduped(evidence, group[index], limit);
     }
