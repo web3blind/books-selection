@@ -512,6 +512,7 @@
         askDone: 'Ответ готов.',
         aiProcessingStatusHeading: 'Статус ИИ',
         aiProcessed: 'Удалось обработать через ИИ: да. Ответ ниже получен от настроенного AI provider.',
+        aiEvidenceInsufficient: 'Удалось обработать через ИИ: да, но подтверждённых доказательств недостаточно для надёжного ответа.',
         aiNotProcessed: 'Удалось обработать через ИИ: нет. Показаны только локально найденные evidence.',
         aiProcessingError: (message) => `Удалось обработать через ИИ: нет. Ошибка: ${message}`,
         providerNeeded: (setup) => `Нужен provider key: ${setup.apiKeyEnv} для ${setup.provider}. Локальные evidence показаны ниже.`,
@@ -531,6 +532,7 @@
           ? `Индекс охватывает ${coverage.totalCycles ?? coverage.searchedCycles} циклов и ${coverage.totalBooks ?? coverage.searchedBooks} книг. Для ответа отобрано ${coverage.retrievedChunks} фрагментов из ${coverage.representedBooks} книг. Это выборочная проверка, а не чтение всех циклов.`
           : `Индекс ещё не готов полностью. Отобрано фрагментов: ${coverage.retrievedChunks ?? 0}. Полнота сюжетной проверки не установлена.`,
         corpusNotReady: 'Сначала подготовь локальный индекс и embeddings до 100%. Ответ не создавался.',
+        evidenceInsufficient: 'ИИ завершил проверку, но подтверждённых доказательств недостаточно.',
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Самооценка модели (не вероятность правильности):',
         uncertaintyLabel: 'Неопределённость:',
@@ -737,6 +739,7 @@
         askDone: 'Answer ready.',
         aiProcessingStatusHeading: 'AI status',
         aiProcessed: 'Processed through AI: yes. The answer below came from the configured AI provider.',
+        aiEvidenceInsufficient: 'Processed through AI: yes, but there is insufficient evidence for a reliable answer.',
         aiNotProcessed: 'Processed through AI: no. Only locally retrieved evidence is shown.',
         aiProcessingError: (message) => `Processed through AI: no. Error: ${message}`,
         providerNeeded: (setup) => `Provider key needed: ${setup.apiKeyEnv} for ${setup.provider}. Local evidence is shown below.`,
@@ -756,6 +759,7 @@
           ? `The index covers ${coverage.totalCycles ?? coverage.searchedCycles} series and ${coverage.totalBooks ?? coverage.searchedBooks} books. The answer uses ${coverage.retrievedChunks} passages from ${coverage.representedBooks} books. This is a selective check, not a reading of every series.`
           : `The index is not fully ready. Selected passages: ${coverage.retrievedChunks ?? 0}. Plot coverage has not been established.`,
         corpusNotReady: 'Prepare the local index and embeddings to 100% first. No answer was generated.',
+        evidenceInsufficient: 'AI finished the check, but there is insufficient evidence.',
         providerStatusHeading: 'Provider/setup status',
         confidenceLabel: 'Model self-assessment (not a probability of correctness):',
         uncertaintyLabel: 'Uncertainty:',
@@ -1313,8 +1317,8 @@
     }
 
     function renderAiProcessingStatus(result) {
-      const processed = result && result.status === 'answered';
-      const message = processed ? t('aiProcessed') : t('aiNotProcessed');
+      const processed = result && ['answered', 'evidence_insufficient'].includes(result.status);
+      const message = result?.status === 'evidence_insufficient' ? t('aiEvidenceInsufficient') : (processed ? t('aiProcessed') : t('aiNotProcessed'));
       const cssClass = processed ? 'ok' : 'warn';
       return `
         <section class="ai-processing-status ${cssClass}" aria-labelledby="aiProcessingStatusHeading">
@@ -2259,6 +2263,8 @@
         const result = data.result || {};
         if (result.status === 'corpus_not_ready') {
           setAiStatus(t('corpusNotReady'));
+        } else if (result.status === 'evidence_insufficient') {
+          setAiStatus(t('evidenceInsufficient'));
         } else if (result.status === 'needs_provider_key' && result.setup) {
           setAiStatus(t('providerNeeded', result.setup));
         } else {

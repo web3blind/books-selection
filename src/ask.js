@@ -392,7 +392,7 @@ async function answerLibraryQuestion({
       ? 'Проверены выбранные отрывки, а не полный текст всех книг цикла.'
       : 'Selected passages were checked, not the full text of every book in the series.';
     return {
-      status: 'answered',
+      status: researchResult.status === 'evidence_insufficient' ? 'evidence_insufficient' : 'answered',
       answer: researchResult.answer || '',
       confidence: researchResult.confidence || 'unknown',
       uncertainty: [researchResult.uncertainty, deterministicUncertainty, semanticUncertainty(semantic)].filter(Boolean).join(' '),

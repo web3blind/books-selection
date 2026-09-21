@@ -23,21 +23,41 @@ function networkLimits(provider) {
   return { timeoutMs: provider.requestTimeoutMs, maxResponseBytes: provider.maxResponseBytes };
 }
 
-function parseJsonContent(content) {
+function withProviderResponse(value, metadata) {
+  Object.defineProperty(value, '_providerResponse', {
+    value: metadata,
+    enumerable: false,
+  });
+  return value;
+}
+
+function parseJsonContent(content, { finishReason = '' } = {}) {
   if (typeof content !== 'string') {
-    return { answer: String(content || ''), confidence: 'unknown' };
+    return withProviderResponse(
+      { answer: String(content || ''), confidence: 'unknown' },
+      { parsedJson: false, finishReason: String(finishReason || '') },
+    );
   }
 
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const jsonText = fenced ? fenced[1].trim() : trimmed;
   try {
-    const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === 'object') {
-      return parsed;
+    const parsed = JSON.parse(jsonText);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return withProviderResponse(parsed, {
+        parsedJson: true,
+        finishReason: String(finishReason || ''),
+      });
     }
   } catch {
-    // Plain text model output is acceptable for the scaffold.
+    // Plain text output remains available to legacy callers; metadata marks it as non-JSON.
   }
 
-  return { answer: content, confidence: 'unknown' };
+  return withProviderResponse(
+    { answer: content, confidence: 'unknown' },
+    { parsedJson: false, finishReason: String(finishReason || '') },
+  );
 }
 
 function createOpenAiCompatibleClient({
@@ -139,7 +159,8 @@ function createOpenAiCompatibleClient({
         }
 
         const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider chat response', { ...networkLimits(provider), signal });
-        return parseJsonContent(payload?.choices?.[0]?.message?.content || '');
+        const choice = payload?.choices?.[0];
+        return parseJsonContent(choice?.message?.content || '', { finishReason: choice?.finish_reason });
       });
     },
 

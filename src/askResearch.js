@@ -258,6 +258,19 @@ function throwIfAborted(signal) {
   throw error;
 }
 
+function deterministicInsufficientResult(question) {
+  if (/[А-Яа-яЁё]/.test(String(question || ''))) {
+    return {
+      answer: 'Недостаточно подтверждённых данных, чтобы дать надёжный ответ.',
+      uncertainty: 'В выбранных отрывках модель не нашла достаточного подтверждения. Это не означает, что подходящих книг нет в библиотеке.',
+    };
+  }
+  return {
+    answer: 'There is not enough supported evidence to give a reliable answer.',
+    uncertainty: 'The model found insufficient support in the selected passages. This does not establish that no books in the library match.',
+  };
+}
+
 async function runAskResearch({
   db,
   question,
@@ -363,7 +376,7 @@ async function runAskResearch({
   }
 
   phases.push('final');
-  const final = await chat('final', [
+  const finalPrompt = [
     'Produce the evidence-grounded final answer. Recommend only candidates actually supported by cited book text. Exclude rejected cycles. State uncertainty and bounded/partial coverage honestly. A few passages cannot prove a condition holds throughout a series; state only apparent suitability, never claim all books were verified. Distinguish a narrative pattern from isolated mentions. Say insufficient evidence rather than asserting absence across the library.',
     /[А-Яа-яЁё]/.test(String(question || ''))
       ? 'Write answer and uncertainty in Russian.'
@@ -372,22 +385,74 @@ async function runAskResearch({
     `Question: ${cleanText(question, 1000)}`,
     `Prior candidate check: ${JSON.stringify({ checkedCandidates, rejectedCycles })}`,
     evidencePrompt(evidence),
-    'Return {"answer":"...","confidence":"high|medium|low|unknown","uncertainty":"...","evidence":["evidence_1"],"recommendations":[{"bookId":1,"evidence":["evidence_1"]}],"rejectedCycles":[],"observations":[{"bookId":1,"factKey":"generic.key","factType":"generic","factValue":"...","confidence":0.5,"evidence":["evidence_1"]}]}.'
-  ].join('\n\n'), 1400);
-
-  rejectedCycles = [...new Set([...rejectedCycles, ...normalizeRejectedCycles(final?.rejectedCycles, catalog)])];
+    'If evidence is insufficient, return status: evidence_insufficient with recommendations: [] and do not assert absence throughout the library. Otherwise return status: answered and provide top-level evidence plus evidence on each recommendation.',
+    'Return {"answer":"...","confidence":"high|medium|low|unknown","uncertainty":"...","evidence":["evidence_1"],"recommendations":[{"bookId":1,"evidence":["evidence_1"]}],"rejectedCycles":[],"observations":[{"bookId":1,"factKey":"generic.key","factType":"generic","factValue":"...","confidence":0.5,"evidence":["evidence_1"]}]}.',
+  ].join('\n\n');
   const rejectedBookIds = new Set(checkedCandidates.filter((item) => item.verdict === 'rejected').map((item) => item.bookId));
-  const recommendations = Array.isArray(final?.recommendations) ? final.recommendations : [];
-  const candidates = buildCandidates(recommendations, evidence, rejectedCycles, rejectedBookIds);
-  const candidateBookIds = new Set(candidates.map((item) => item.bookId));
-  const citedEvidence = resolveEvidenceIds(final?.evidence, evidence)
-    .filter((item) => recommendations.length === 0 || candidateBookIds.has(item.bookId));
-  const answer = cleanText(final?.answer, 12000);
-  if (!answer || citedEvidence.length === 0) throw new Error('Provider final answer must include an answer supported by supplied evidence IDs.');
+  const validateFinal = (value) => {
+    const transport = value?._providerResponse;
+    if (transport?.finishReason === 'length') return { problem: 'truncated' };
+    if (transport?.parsedJson === false) return { problem: 'invalid_json' };
+    const rejected = [...new Set([...rejectedCycles, ...normalizeRejectedCycles(value?.rejectedCycles, catalog)])];
+    const recommendations = Array.isArray(value?.recommendations) ? value.recommendations : [];
+    const answer = typeof value?.answer === 'string' ? cleanText(value.answer, 12000) : '';
+    if (value?.status === 'evidence_insufficient' && Array.isArray(value.recommendations) && recommendations.length === 0) {
+      return { insufficient: true, rejected };
+    }
+    const candidates = buildCandidates(recommendations, evidence, rejected, rejectedBookIds);
+    const candidateIds = new Set(candidates.map((item) => item.bookId));
+    const citedEvidence = resolveEvidenceIds(value?.evidence, evidence)
+      .filter((item) => recommendations.length === 0 || candidateIds.has(item.bookId));
+    if (!answer || !citedEvidence.length) return { problem: 'invalid_evidence' };
+    return { answer, candidates, citedEvidence, rejected };
+  };
+  let final = await chat('final', finalPrompt, 1400);
+  let validated = validateFinal(final);
+  if (validated.problem) {
+    phases.push('final-recovery');
+    final = await chat('final-recovery', [
+      `The previous final response failed validation (${validated.problem}). Return a new, compact, complete JSON object only. Use exact evidence IDs, including top-level evidence. Never invent references.`,
+      'Keep answer under 600 characters. Cite supplied evidence IDs. Include only evidence-supported recommendations; otherwise use empty recommendations and explain insufficiency in uncertainty. Omit observations if space is limited.',
+      finalPrompt,
+    ].join('\n\n'), 1800);
+    validated = validateFinal(final);
+    if (validated.problem) {
+      const russian = /[А-Яа-яЁё]/.test(String(question || ''));
+      const error = new Error(russian
+        ? 'Модель не смогла вернуть полный ответ с проверяемыми ссылками даже после повторной попытки. Это ошибка ответа модели, а не отсутствие подходящих книг.'
+        : 'The model could not return a complete answer with valid references after one retry. This is a model response error, not evidence that no books match.');
+      error.code = 'PROVIDER_PROTOCOL_ERROR';
+      throw error;
+    }
+  }
+  rejectedCycles = validated.rejected;
+  const { answer, candidates, citedEvidence } = validated;
+  if (validated.insufficient) {
+    const insufficient = deterministicInsufficientResult(question);
+    return {
+      status: 'evidence_insufficient',
+      answer: insufficient.answer,
+      confidence: 'unknown',
+      uncertainty: insufficient.uncertainty,
+      evidence: publicEvidence(evidence),
+      citedEvidence: [],
+      candidates: [],
+      cycleGroups: [],
+      semantic: primaryRetrieval?.semantic || { status: 'unavailable' },
+      research: {
+        mode: 'model_guided', phases, chatCalls, embeddingQueries, searches,
+        plannedQueries, refinedQueries, checkedCandidates, rejectedCycles, persistedFacts: 0,
+        partial: true,
+        catalog: { total: catalogInfo.total, included: catalog.length, truncated: catalogInfo.truncated },
+        limits: LIMITS,
+      },
+    };
+  }
   throwIfAborted(signal);
   const persistedFacts = persistObservations(db, final?.observations, evidence, { providerName, provider });
 
   return {
+    status: 'answered',
     answer,
     confidence: cleanText(final?.confidence || 'unknown', 40),
     uncertainty: cleanText(final?.uncertainty, 2000),

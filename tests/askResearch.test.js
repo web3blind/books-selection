@@ -175,24 +175,31 @@ test('runAskResearch reserves evidence capacity for refinement results', async (
   } finally { db.close(); }
 });
 
-test('runAskResearch excludes books explicitly rejected by candidate checks', async () => {
+test('runAskResearch returns evidence_insufficient without candidate cards for a contradicted recommendation', async () => {
   const db = initializeSearchDatabase(':memory:');
   const book = seedBook(db, 'Cycle', 'Book', ['Фрагмент опровергает условие.']);
   const responses = [
     { queries: [{ query: 'проверка' }] },
     { candidateChecks: [{ bookId: book.bookId, verdict: 'rejected', evidence: ['evidence_1'] }] },
     { answer: 'Книга не подходит.', confidence: 'high', evidence: ['evidence_1'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }] },
+    { status: 'evidence_insufficient', recommendations: [] },
   ];
   try {
-    await assert.rejects(runAskResearch({
+    const result = await runAskResearch({
       db, question: 'Подходит ли книга?', providerName: 'mock', provider: { model: 'mock' },
       providerClient: { chatCompletion: async () => responses.shift() },
       retrievalFn: async () => ({ evidence: [{ chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: 0, snippet: 'Фрагмент опровергает условие.', content_hash: 'hash-Book-0', source: 'semantic' }], semantic: { status: 'searched' } }),
-    }), /supported by supplied evidence/i);
+    });
+    assert.equal(result.status, 'evidence_insufficient');
+    assert.match(result.answer, /недостаточно подтверждённых данных/i);
+    assert.deepEqual(result.citedEvidence, []);
+    assert.deepEqual(result.candidates, []);
+    assert.deepEqual(result.cycleGroups, []);
+    assert.equal(result.research.persistedFacts, 0);
   } finally { db.close(); }
 });
 
-test('runAskResearch rejects uncited final answers and observes cancellation between mocked calls', async () => {
+test('runAskResearch returns evidence_insufficient for uncited final prose and observes cancellation between mocked calls', async () => {
   const db = initializeSearchDatabase(':memory:');
   const book = seedBook(db, 'Cycle', 'Book', ['Доказательство.']);
   const makeRun = (providerClient, signal) => runAskResearch({
@@ -200,13 +207,41 @@ test('runAskResearch rejects uncited final answers and observes cancellation bet
     retrievalFn: async () => ({ evidence: [{ chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: 0, snippet: 'Доказательство.', content_hash: 'hash-Book-0', source: 'semantic' }], semantic: { status: 'searched' } }),
   });
   try {
-    const responses = [{ queries: [{ query: 'поиск' }] }, {}, { answer: 'Без ссылки.', evidence: [] }];
-    await assert.rejects(makeRun({ chatCompletion: async () => responses.shift() }), /supported by supplied evidence/i);
+    const responses = [{ queries: [{ query: 'поиск' }] }, {}, { answer: 'Без ссылки.', evidence: [] }, { status: 'evidence_insufficient', recommendations: [] }];
+    const insufficient = await makeRun({ chatCompletion: async () => responses.shift() });
+    assert.equal(insufficient.status, 'evidence_insufficient');
+    assert.doesNotMatch(insufficient.answer, /Без ссылки/);
+    assert.deepEqual(insufficient.candidates, []);
     const controller = new AbortController();
     await assert.rejects(makeRun({ chatCompletion: async () => {
       controller.abort();
       return { queries: [{ query: 'поиск' }] };
     } }, controller.signal), (error) => error.name === 'AbortError');
+  } finally { db.close(); }
+});
+
+test('runAskResearch retries one truncated final response and keeps the four-call cap', async () => {
+  const db = initializeSearchDatabase(':memory:');
+  const book = seedBook(db, 'Cycle', 'Book', ['Доказательство.']);
+  const truncated = { answer: '{"answer":"Оборвано' };
+  Object.defineProperty(truncated, '_providerResponse', { value: { parsedJson: false, finishReason: 'length' } });
+  const responses = [
+    { queries: [{ query: 'поиск' }] },
+    { candidateChecks: [{ bookId: book.bookId, verdict: 'supported', evidence: ['evidence_1'] }] },
+    truncated,
+    { answer: 'Подтверждено.', confidence: 'low', evidence: ['evidence_1'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_1'] }] },
+  ];
+  const phases = [];
+  try {
+    const result = await runAskResearch({
+      db, question: 'Что подтверждено?', providerName: 'mock', provider: { model: 'mock' },
+      providerClient: { chatCompletion: async ({ messages }) => { phases.push(messages[0].content); return responses.shift(); } },
+      retrievalFn: async () => ({ evidence: [{ chunk_id: book.chunkIds[0], book_id: book.bookId, cycle_name: 'Cycle', title: 'Book', chunk_index: 0, snippet: 'Доказательство.', content_hash: 'hash-Book-0', source: 'semantic' }], semantic: { status: 'searched' } }),
+    });
+    assert.equal(result.status, 'answered');
+    assert.equal(result.answer, 'Подтверждено.');
+    assert.equal(result.research.chatCalls, 4);
+    assert.match(phases[3], /final-recovery phase/);
   } finally { db.close(); }
 });
 

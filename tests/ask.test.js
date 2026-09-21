@@ -489,6 +489,25 @@ test('OpenAI-compatible provider client posts chat completions through injectabl
   assert.doesNotMatch(JSON.stringify(result), /secret-key/);
 });
 
+test('OpenAI-compatible provider client parses fenced JSON and exposes truncation metadata', async () => {
+  const client = createOpenAiCompatibleClient({
+    provider: { baseUrl: 'https://example.test/v1', model: 'fiction-model' },
+    apiKey: 'secret-key',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return { choices: [{ finish_reason: 'length', message: { content: '```json\n{"answer":"ok","evidence":["evidence_1"]}\n```' } }] };
+      },
+    }),
+  });
+  const result = await client.chatCompletion({ messages: [{ role: 'user', content: 'Evidence only' }] });
+  assert.equal(result.answer, 'ok');
+  assert.deepEqual(result.evidence, ['evidence_1']);
+  assert.deepEqual(result._providerResponse, { parsedJson: true, finishReason: 'length' });
+  assert.equal(Object.keys(result).includes('_providerResponse'), false);
+});
+
 test('every Ask outcome propagates semantic setup and degraded uncertainty', async () => {
   const semantic = { status: 'needs_embedding_provider_key', setup: { provider: 'local-embed', apiKeyEnv: 'EMBED_KEY', message: 'Configure embeddings.' } };
   const noEvidence = await answerLibraryQuestion({ db: {}, question: 'none', env: {}, retrievalFn: async () => ({ evidence: [], semantic }) });

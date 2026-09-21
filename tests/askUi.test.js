@@ -43,4 +43,21 @@ for (const language of ['ru', 'en']) {
     vm.runInContext('renderAskResult(result)', context);
     assert.doesNotMatch(node('aiResults').innerHTML, /Проверен весь индекс|Entire index checked/);
   });
+
+  test(`guided Ask distinguishes an AI evidence-insufficient result (${language})`, () => {
+    const { context, node } = page(language);
+    context.result = {
+      status: 'evidence_insufficient',
+      answer: language === 'ru' ? 'Недостаточно подтверждённых данных.' : 'There is not enough supported evidence.',
+      uncertainty: language === 'ru' ? 'Неподтверждённый текст модели не показан.' : 'Unsupported model prose was not shown.',
+      coverage: { searchComplete: true, totalCycles: 1, totalBooks: 1, retrievedChunks: 1, representedBooks: 1 },
+      research: { searches: [], chatCalls: 3, persistedFacts: 0 },
+      evidence: [], citedEvidence: [], cycleGroups: [], checked: { books: [] },
+    };
+    vm.runInContext('renderAskResult(result)', context);
+    const output = node('aiResults').innerHTML;
+    assert.match(output, language === 'ru' ? /обработать через ИИ: да/i : /Processed through AI: yes/i);
+    assert.match(output, language === 'ru' ? /доказательств недостаточно/i : /insufficient evidence/i);
+    assert.doesNotMatch(output, language === 'ru' ? /обработать через ИИ: нет/i : /Processed through AI: no/i);
+  });
 }
