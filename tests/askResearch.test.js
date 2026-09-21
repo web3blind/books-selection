@@ -167,13 +167,13 @@ test('runAskResearch reserves evidence capacity for refinement results', async (
   const db = initializeSearchDatabase(':memory:');
   const book = seedBook(db, 'Cycle', 'Book', Array.from({ length: 10 }, (_, index) => `Фрагмент ${index} с доказательством.`));
   const responses = [
-    { queries: [{ query: 'первичный поиск' }] },
+    { intentType: 'question_answer', queries: [{ query: 'первичный поиск' }] },
     { candidateChecks: [{ bookId: book.bookId, verdict: 'supported', evidence: ['evidence_1'] }], additionalQueries: [{ query: 'уточняющий поиск', bookIds: [book.bookId] }] },
     { status: 'answered', answer: 'Уточнение найдено.', confidence: 'medium', evidence: ['evidence_7'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_7'] }], finalCandidateChecks: [supportedFinalCheck(book.bookId, ['evidence_7'])] },
   ];
   try {
     const result = await runAskResearch({
-      db, question: 'Найди уточнение', providerName: 'mock', provider: { model: 'mock' },
+      db, question: 'Что за уточнение?', providerName: 'mock', provider: { model: 'mock' },
       providerClient: { chatCompletion: async () => responses.shift() },
       retrievalFn: async ({ question }) => ({
         evidence: (question.includes('уточняющий') ? book.chunkIds.slice(6, 9) : book.chunkIds.slice(0, 6)).map((chunkId, index) => ({
@@ -285,7 +285,8 @@ test('runAskResearch catalog is limited to the active root and discloses its siz
     assert.match(planText, /Active Book/);
     assert.doesNotMatch(planText, /Old Book/);
     assert.match(planText, /showing 240 of 241 active-root books/);
-    assert.deepEqual(result.research.catalog, { total: 241, included: 240, truncated: true });
+    assert.doesNotMatch(planText, /filePath|\/active\/a\.fb2/);
+    assert.deepEqual(result.research.catalog, { total: 241, included: 241, truncated: false });
   } finally { db.close(); }
 });
 
@@ -326,14 +327,14 @@ test('refinement can revise uncertain to supported using newly retrieved book ev
   const db = initializeSearchDatabase(':memory:');
   const book = seedBook(db, 'Cycle', 'Book', ['Ада и Бен названы.', 'В эпилоге Ада и Бен вместе вернулись домой.']);
   const responses = [
-    { intentType: 'recommendation', queries: [{ query: 'Ада Бен' }] },
+    { intentType: 'question_answer', queries: [{ query: 'Ада Бен' }] },
     { candidateChecks: [{ bookId: book.bookId, verdict: 'uncertain', evidence: ['evidence_1'], reason: 'Имена есть, отношение не доказано.' }], additionalQueries: [{ query: 'Ада Бен эпилог', bookIds: [book.bookId] }] },
     { status: 'answered', answer: 'Книга подходит.', evidence: ['evidence_2'], recommendations: [{ bookId: book.bookId, evidence: ['evidence_2'] }], finalCandidateChecks: [supportedFinalCheck(book.bookId, ['evidence_2'], 'вместе в финале')] },
   ];
   let retrieval = 0;
   try {
     const result = await runAskResearch({
-      db, question: 'Найди книгу, где Ада и Бен вместе в финале',
+      db, question: 'Что случилось с Адой и Беном в финале?',
       providerClient: { chatCompletion: async () => responses.shift() },
       retrievalFn: async () => {
         const index = retrieval++;
@@ -384,14 +385,14 @@ test('generic non-romance question can support a realistic pair of books in one 
   const first = seedBook(db, 'Архивисты', 'Карта пепла', ['Ира и Тим вместе расшифровали карту.']);
   const second = seedBook(db, 'Архивисты', 'Последний архив', ['Ира и Тим открыли архив в эпилоге.']);
   const responses = [
-    { queries: [{ query: 'архив карта экспедиция' }] },
+    { intentType: 'question_answer', queries: [{ query: 'архив карта экспедиция' }] },
     { candidateChecks: [{ bookId: first.bookId, verdict: 'supported', evidence: ['evidence_1'] }, { bookId: second.bookId, verdict: 'supported', evidence: ['evidence_2'] }], additionalQueries: [{ query: 'Ира Тим архив', cycleNames: ['Архивисты'] }] },
     { status: 'answered', answer: 'Одна команда исследует архивы в двух книгах.', confidence: 'medium', evidence: ['evidence_1', 'evidence_2'], recommendations: [{ bookId: first.bookId, evidence: ['evidence_1'] }, { bookId: second.bookId, evidence: ['evidence_2'] }], finalCandidateChecks: [supportedFinalCheck(first.bookId, ['evidence_1']), supportedFinalCheck(second.bookId, ['evidence_2'])] },
   ];
   let retrievalCall = 0;
   try {
     const result = await runAskResearch({
-      db, question: 'В каком цикле одна команда исследует древние архивы в нескольких книгах?',
+      db, question: 'Что одна команда исследует в нескольких книгах?',
       providerClient: { chatCompletion: async () => responses.shift() }, providerName: 'mock', provider: { model: 'mock' },
       retrievalFn: async ({ scope }) => {
         retrievalCall += 1;
@@ -437,7 +438,7 @@ test('wrong planner scopes cannot exclude an unhinted target from initial retrie
   const retrievals = [];
   const responses = [
     {
-      intentType: 'recommendation',
+      intentType: 'question_answer',
       queries: [
         { query: 'демоны герой', cycleNames: ['Цикл 24'] },
         { query: 'существа внутри', bookIds: [decoy.bookId] },
@@ -452,7 +453,7 @@ test('wrong planner scopes cannot exclude an unhinted target from initial retrie
   ];
   try {
     const result = await runAskResearch({
-      db, question: 'Несколько демонов внутри героя', providerName: 'mock', provider: { model: 'mock' },
+      db, question: 'Что находится внутри героя?', providerName: 'mock', provider: { model: 'mock' },
       providerClient: { chatCompletion: async () => responses.shift() },
       retrievalFn: async ({ question, scope }) => {
         retrievals.push({ question, scope });
@@ -465,7 +466,7 @@ test('wrong planner scopes cannot exclude an unhinted target from initial retrie
         }], semantic: { status: 'searched' } };
       },
     });
-    assert.equal(retrievals[0].question, 'Несколько демонов внутри героя');
+    assert.equal(retrievals[0].question, 'Что находится внутри героя');
     assert.deepEqual(retrievals.map((item) => item.scope), [
       { cycleNames: [], bookIds: [] },
       { cycleNames: [], bookIds: [] },
@@ -481,14 +482,14 @@ test('unscoped refinement can discover a candidate omitted from initial evidence
   const initial = seedBook(db, 'Первый цикл', 'Слабый след', ['Демонесса назвала героя.']);
   const recovered = seedBook(db, 'Второй цикл', 'Точное совпадение', ['Я призвал трёх демонов и воплотил их внутри себя.']);
   const responses = [
-    { intentType: 'recommendation', queries: [{ query: 'демоны внутри героя' }] },
+    { intentType: 'question_answer', queries: [{ query: 'Что находится внутри героя' }] },
     { candidateChecks: [{ bookId: initial.bookId, verdict: 'uncertain', evidence: ['evidence_1'] }], additionalQueries: [{ query: 'призвал демонов воплотил внутри себя' }] },
     { status: 'answered', answer: 'Подходит «Точное совпадение».', evidence: ['evidence_2'], recommendations: [{ bookId: recovered.bookId, evidence: ['evidence_2'] }], finalCandidateChecks: [supportedFinalCheck(recovered.bookId, ['evidence_2'], 'демоны находятся внутри героя')] },
   ];
   const retrievals = [];
   try {
     const result = await runAskResearch({
-      db, question: 'Демоны внутри героя', providerName: 'mock', provider: { model: 'mock' },
+      db, question: 'Что находится внутри героя?', providerName: 'mock', provider: { model: 'mock' },
       providerClient: { chatCompletion: async () => responses.shift() },
       retrievalFn: async ({ question, scope }) => {
         retrievals.push({ question, scope });

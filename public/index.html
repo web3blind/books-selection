@@ -528,6 +528,31 @@
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Фрагмент ${chunkIndex}`,
         answerHeading: 'Ответ',
         checkedHeading: 'Книги, представленные в найденных фрагментах',
+        cycleCoverageHeading: 'Охват первых книг по циклам',
+        cycleCoverageIndexSummary: (values) => `В индексе: ${values.cycles} циклов, ${values.books} книг. В подборке для ответа фрагментов: ${values.snippets}, из книг: ${values.representedBooks}.`,
+        cycleCoverageSearched: (value, total) => `Поиск по первым книгам выполнен: ${value} из ${total}.`,
+        cycleCoverageReviewed: (value, total) => `ИИ проверил отрывки первых книг: ${value} из ${total}.`,
+        cycleCoverageExpanded: (value) => `Расширенный поиск: ${value} циклов.`,
+        cycleCoverageNoEvidence: (value) => `Без найденных отрывков в первой книге: ${value} циклов.`,
+        cycleCoverageIncomplete: (value) => `Не завершено: ${value} циклов.`,
+        cycleCoverageDetails: (shown, total) => `Записей с деталями: ${shown} из ${total}. Проверка по циклам`,
+        cycleCoverageCycle: 'Цикл',
+        cycleCoverageFirstBook: 'Первая книга',
+        cycleCoverageStatus: 'Статус',
+        cycleCoverageSearchState: 'Поиск первой книги',
+        cycleCoverageReviewState: 'Проверка первой книги ИИ',
+        cycleCoverageExpansionState: 'Расширение поиска',
+        cycleCoverageDone: 'выполнено',
+        cycleCoverageNotDone: 'не выполнено',
+        cycleCoverageExpandedDone: 'выполнено',
+        cycleCoverageExpandedNotDone: 'не выполнялось',
+        cycleCoverageStatusSupported: 'Подтверждено',
+        cycleCoverageStatusUncertain: 'Неопределённо — не отклонено',
+        cycleCoverageStatusRejected: 'Отклонено',
+        cycleCoverageStatusNoEvidence: 'Подтверждения не найдены — не отклонено',
+        cycleCoverageStatusUnreviewed: 'Не проверено ИИ',
+        cycleCoverageStatusUnknown: 'Статус не указан',
+        cycleCoverageNotReported: 'не указано',
         coverageSummary: (coverage) => coverage.indexReady === false || (!coverage.indexReady && !coverage.searchComplete)
           ? `Индекс ещё не готов полностью. Отобрано фрагментов: ${coverage.retrievedChunks ?? 0}. Полнота сюжетной проверки не установлена.`
           : coverage.searchComplete
@@ -757,6 +782,31 @@
         candidateExcerptLabel: (source, chunkIndex) => `[${source}] Snippet ${chunkIndex}`,
         answerHeading: 'Answer',
         checkedHeading: 'Books represented in retrieved evidence',
+        cycleCoverageHeading: 'First-book coverage by series',
+        cycleCoverageIndexSummary: (values) => `Index size: ${values.cycles} series, ${values.books} books. Selected evidence: ${values.snippets} snippets from ${values.representedBooks} books.`,
+        cycleCoverageSearched: (value, total) => `First books searched: ${value} of ${total}.`,
+        cycleCoverageReviewed: (value, total) => `First-book excerpts reviewed by AI: ${value} of ${total}.`,
+        cycleCoverageExpanded: (value) => `Expanded search: ${value} series.`,
+        cycleCoverageNoEvidence: (value) => `No evidence in the first book: ${value} series.`,
+        cycleCoverageIncomplete: (value) => `Incomplete: ${value} series.`,
+        cycleCoverageDetails: (shown, total) => `Detailed records: ${shown} of ${total}. Per-series details`,
+        cycleCoverageCycle: 'Series',
+        cycleCoverageFirstBook: 'First book',
+        cycleCoverageStatus: 'Status',
+        cycleCoverageSearchState: 'First-book search',
+        cycleCoverageReviewState: 'First-book AI review',
+        cycleCoverageExpansionState: 'Search expansion',
+        cycleCoverageDone: 'completed',
+        cycleCoverageNotDone: 'not completed',
+        cycleCoverageExpandedDone: 'completed',
+        cycleCoverageExpandedNotDone: 'not performed',
+        cycleCoverageStatusSupported: 'Supported',
+        cycleCoverageStatusUncertain: 'Uncertain — not rejected',
+        cycleCoverageStatusRejected: 'Rejected',
+        cycleCoverageStatusNoEvidence: 'No evidence — not rejected',
+        cycleCoverageStatusUnreviewed: 'Not reviewed by AI',
+        cycleCoverageStatusUnknown: 'Status not reported',
+        cycleCoverageNotReported: 'not reported',
         coverageSummary: (coverage) => coverage.indexReady === false || (!coverage.indexReady && !coverage.searchComplete)
           ? `The index is not fully ready. Selected passages: ${coverage.retrievedChunks ?? 0}. Plot coverage has not been established.`
           : coverage.searchComplete
@@ -1418,6 +1468,56 @@
       `).join('') || `<li>${escapeHtml(t('nothingFound'))}</li>`}</ul>`;
     }
 
+    function renderCycleCoverage(coverage, cycleCoverage) {
+      if (!cycleCoverage || typeof cycleCoverage !== 'object' || Array.isArray(cycleCoverage)) return '';
+      const cycles = Array.isArray(cycleCoverage.cycles) ? cycleCoverage.cycles : [];
+      const reported = (value) => Number.isFinite(value) ? String(value) : t('cycleCoverageNotReported');
+      const totalCycles = reported(cycleCoverage.totalCycles);
+      const indexValues = {
+        cycles: reported(coverage?.totalCycles ?? cycleCoverage.totalCycles),
+        books: reported(coverage?.totalBooks),
+        snippets: reported(coverage?.retrievedChunks),
+        representedBooks: reported(coverage?.representedBooks),
+      };
+      const statusKeys = {
+        supported: 'cycleCoverageStatusSupported',
+        uncertain: 'cycleCoverageStatusUncertain',
+        rejected: 'cycleCoverageStatusRejected',
+        no_evidence: 'cycleCoverageStatusNoEvidence',
+        unreviewed: 'cycleCoverageStatusUnreviewed',
+      };
+      return `
+        <section aria-labelledby="cycleCoverageHeading">
+          <h3 id="cycleCoverageHeading">${escapeHtml(t('cycleCoverageHeading'))}</h3>
+          <p>${escapeHtml(t('cycleCoverageIndexSummary', indexValues))}</p>
+          <ul>
+            <li>${escapeHtml(t('cycleCoverageSearched', reported(cycleCoverage.firstBooksSearched), totalCycles))}</li>
+            <li>${escapeHtml(t('cycleCoverageReviewed', reported(cycleCoverage.firstBooksReviewed), totalCycles))}</li>
+            <li>${escapeHtml(t('cycleCoverageExpanded', reported(cycleCoverage.expandedCycles)))}</li>
+            <li>${escapeHtml(t('cycleCoverageNoEvidence', reported(cycleCoverage.noEvidenceCycles)))}</li>
+            <li>${escapeHtml(t('cycleCoverageIncomplete', reported(cycleCoverage.incompleteCycles)))}</li>
+          </ul>
+          <details>
+            <summary>${escapeHtml(t('cycleCoverageDetails', cycles.length, totalCycles))}</summary>
+            <ol>${cycles.map((item) => {
+              const statusKey = statusKeys[item?.status] || 'cycleCoverageStatusUnknown';
+              const cycleName = item?.cycle || t('cycleCoverageNotReported');
+              const firstBook = item?.firstBookTitle || item?.firstBookId || t('cycleCoverageNotReported');
+              return `<li>
+                <p><strong>${escapeHtml(t('cycleCoverageCycle'))}:</strong> ${escapeHtml(cycleName)}. <strong>${escapeHtml(t('cycleCoverageFirstBook'))}:</strong> ${escapeHtml(firstBook)}.</p>
+                <ul>
+                  <li><strong>${escapeHtml(t('cycleCoverageStatus'))}:</strong> ${escapeHtml(t(statusKey))}</li>
+                  <li><strong>${escapeHtml(t('cycleCoverageSearchState'))}:</strong> ${escapeHtml(t(item?.searched === true ? 'cycleCoverageDone' : 'cycleCoverageNotDone'))}</li>
+                  <li><strong>${escapeHtml(t('cycleCoverageReviewState'))}:</strong> ${escapeHtml(t(item?.reviewed === true ? 'cycleCoverageDone' : 'cycleCoverageNotDone'))}</li>
+                  <li><strong>${escapeHtml(t('cycleCoverageExpansionState'))}:</strong> ${escapeHtml(t(item?.expanded === true ? 'cycleCoverageExpandedDone' : 'cycleCoverageExpandedNotDone'))}</li>
+                </ul>
+              </li>`;
+            }).join('')}</ol>
+          </details>
+        </section>
+      `;
+    }
+
     function renderAskResult(result) {
       const setup = result.setup || null;
       const evidence = result.evidence || [];
@@ -1426,13 +1526,15 @@
       const cycleGroups = result.cycleGroups || [];
       const checkedBooks = (result.checked && result.checked.books) || [];
       const answer = result.answer || result.message || '';
+      const cycleCoverage = result.research?.cycleCoverage || null;
       aiResultsNode.innerHTML = `
         ${renderAiProcessingStatus(result)}
         ${renderSetupStatus(setup)}
         ${answer ? `<h3>${escapeHtml(t('answerHeading'))}</h3><p>${escapeHtml(answer)}</p>` : ''}
         ${result.confidence && !result.research ? `<p><strong>${escapeHtml(t('confidenceLabel'))}</strong> ${escapeHtml(result.confidence)}</p>` : ''}
         ${result.uncertainty ? `<p><strong>${escapeHtml(t('uncertaintyLabel'))}</strong> ${escapeHtml(result.uncertainty)}</p>` : ''}
-        ${coverage ? `<p>${escapeHtml(t('coverageSummary', coverage))}</p>` : ''}
+        ${coverage && !cycleCoverage ? `<p>${escapeHtml(t('coverageSummary', coverage))}</p>` : ''}
+        ${renderCycleCoverage(coverage, cycleCoverage)}
         ${result.research ? `<details><summary>${escapeHtml(t('researchHeading'))}</summary><p>${escapeHtml(t('researchSummary', result.research))}</p><ul>${(result.research.searches || []).map((item) => `<li>${escapeHtml(item.query)}</li>`).join('')}</ul></details>` : ''}
         ${citedEvidence.length > 0 ? `<h3>${escapeHtml(t('citedEvidenceHeading'))}</h3>${renderEvidenceList(citedEvidence)}` : ''}
         ${renderCycleGroups(cycleGroups)}

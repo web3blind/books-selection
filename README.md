@@ -7,9 +7,13 @@ Books Selection can run in two modes:
 - desktop release: opens its own application window and does not require Node.js, npm, or git;
 - developer/server mode: `npm start` keeps the old behavior and opens the web UI in your normal browser.
 
-## Guided plot search (v0.5.0)
+## Guided plot search (v0.5.4)
 
-Ask now plans complementary queries, retrieves locally, checks candidates, optionally refines by book/series, and produces a cited answer. It uses three chat phases and at most five query-embedding requests; existing provider budget checks and cancellation still apply. These are selective recommendations, not a proof that every passage in a series was read. Search details show the queries and saved observations. No full-library chat analysis runs during preparation.
+For recommendations and plot discovery, Ask searches the first book of every indexed cycle in the selected library. First books follow natural filename order (01, 2, 10). The model reviews query-related passages in small batches, then search expands into later volumes of promising or uncertain cycles. Missing first-book evidence is unknown, not rejection. Ordinary question answering retains its complementary-query workflow.
+
+Search details separately report first books searched, passages actually reviewed by AI, expanded cycles, and incomplete reviews. Chat-call limits scale with cycle count; query embeddings are reused across cycle searches. More cycles can therefore require more time and provider credit. Existing budget guards and cancellation still apply. These are passage-based recommendations, not a claim that every book or entire cycle was read. No full-library chat analysis runs during preparation.
+
+Updating from v0.5.3 does not require deleting SQLite or rebuilding embeddings; keep your existing data and provider settings.
 
 After updating to v0.5.0, run **Prepare search and embeddings** once. SQLite now retains section headings/order and previously omitted supplemental text and notes. Existing unchanged chunk IDs and embeddings are retained; newly recovered passages may require additional embeddings, with the existing volume/consent check. The schema upgrade creates a backup before migration. Favorites and reading marks remain intact. Observations are stored with original chunk references and hashes; retrieval rechecks the original text rather than treating model-written facts as proof.
 

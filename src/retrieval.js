@@ -366,10 +366,21 @@ async function collectSemanticRows({
   semanticSearchFn = semanticSearchChunks,
   semanticLimit,
   scope,
+  queryEmbeddingCache,
 }) {
-  const embeddingResult = await embedFn({ query: question, providerOverrides, env, fetchImpl, providerClient, signal });
+  const cacheKey = String(question || '');
+  let embeddingResult;
+  let queryEmbeddingReused = false;
+  if (queryEmbeddingCache?.has(cacheKey)) {
+    embeddingResult = await queryEmbeddingCache.get(cacheKey);
+    queryEmbeddingReused = true;
+  } else {
+    const pending = embedFn({ query: question, providerOverrides, env, fetchImpl, providerClient, signal });
+    queryEmbeddingCache?.set(cacheKey, pending);
+    embeddingResult = await pending;
+  }
   if (embeddingResult.status !== 'embedded') {
-    return { status: embeddingResult.status, rows: [], setup: embeddingResult.setup };
+    return { status: embeddingResult.status, rows: [], setup: embeddingResult.setup, queryEmbeddingReused };
   }
 
   const normalizedScope = normalizeScope(scope);
@@ -394,6 +405,7 @@ async function collectSemanticRows({
     queryEmbeddingDimension: embeddingResult.embedding.length,
     rows,
     coverage,
+    queryEmbeddingReused,
   };
 }
 
@@ -419,6 +431,7 @@ async function collectHybridEvidence({
   includeNeighbors = false,
   neighborRadius = 1,
   maxExcerptChars = 4000,
+  queryEmbeddingCache,
 } = {}) {
   const trimmedQuestion = String(question || '').trim();
   if (!trimmedQuestion) {
@@ -442,6 +455,7 @@ async function collectHybridEvidence({
     semanticSearchFn,
     semanticLimit,
     scope,
+    queryEmbeddingCache,
   });
   const factRows = collectFactRows(db, {
     factFilters,
@@ -478,6 +492,7 @@ async function collectHybridEvidence({
       queryEmbeddingDimension: semantic.queryEmbeddingDimension,
       setup: semantic.setup,
       coverage: semantic.coverage,
+      queryEmbeddingReused: semantic.queryEmbeddingReused,
     },
   };
 }
