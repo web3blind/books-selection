@@ -23,6 +23,14 @@ function networkLimits(provider) {
   return { timeoutMs: provider.requestTimeoutMs, maxResponseBytes: provider.maxResponseBytes };
 }
 
+function providerHttpError(operation, status) {
+  const error = new Error(`${operation} failed with HTTP ${status}`);
+  error.code = 'PROVIDER_HTTP_ERROR';
+  error.status = Number(status);
+  error.providerOperation = operation;
+  return error;
+}
+
 function withProviderResponse(value, metadata) {
   Object.defineProperty(value, '_providerResponse', {
     value: metadata,
@@ -107,7 +115,7 @@ function createOpenAiCompatibleClient({
       }, 'Provider embeddings request', networkLimits(provider));
 
       if (!response.ok) {
-        throw new Error(`Provider embeddings request failed with HTTP ${response.status}`);
+        throw providerHttpError('Provider embeddings request', response.status);
       }
 
       const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider embeddings response', { ...networkLimits(provider), signal });
@@ -155,7 +163,7 @@ function createOpenAiCompatibleClient({
         }, 'Provider chat completion', networkLimits(provider));
 
         if (!response.ok) {
-          throw new Error(`Provider chat completion failed with HTTP ${response.status}`);
+          throw providerHttpError('Provider chat completion', response.status);
         }
 
         const payload = await readJsonWithProviderContext(response, requestUrl, 'Provider chat response', { ...networkLimits(provider), signal });

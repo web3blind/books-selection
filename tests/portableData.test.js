@@ -31,7 +31,7 @@ test('Windows ZIP build stores all writable data beside the executable', () => {
   assert.equal(paths.dataDir, path.win32.join('C:\\Apps\\Books Selection', 'data'));
   assert.equal(paths.configPath, path.win32.join(paths.dataDir, 'config.json'));
   assert.equal(paths.dbPath, path.win32.join(paths.dataDir, 'books-selection.sqlite'));
-  assert.equal(paths.logPath, path.win32.join(paths.dataDir, 'books-selection.log'));
+  assert.equal(paths.logPath, path.win32.join(paths.dataDir, 'errors.log'));
 });
 
 test('Windows portable EXE uses electron-builder portable launch directory instead of extraction temp', () => {
@@ -68,11 +68,11 @@ test('portable environment respects explicit overrides and fills all portable de
   configurePortableEnvironment(env, {
     configPath: '/portable/data/config.json',
     dbPath: '/portable/data/books-selection.sqlite',
-    logPath: '/portable/data/books-selection.log',
+    logPath: '/portable/data/errors.log',
   });
   assert.equal(env.BOOKS_SELECTION_CONFIG_PATH, '/portable/data/config.json');
   assert.equal(env.BOOKS_SELECTION_DB_PATH, '/custom/books.sqlite');
-  assert.equal(env.BOOKS_SELECTION_LOG_PATH, '/portable/data/books-selection.log');
+  assert.equal(env.BOOKS_SELECTION_LOG_PATH, '/portable/data/errors.log');
 });
 
 test('path comparison is case-insensitive only on Windows', () => {

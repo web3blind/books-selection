@@ -25,7 +25,7 @@ function resolvePortablePaths({ isPackaged, platform, execPath, env = {}, userDa
     dataDir,
     configPath: pathApi.join(dataDir, 'config.json'),
     dbPath: pathApi.join(dataDir, 'books-selection.sqlite'),
-    logPath: pathApi.join(dataDir, 'books-selection.log'),
+    logPath: pathApi.join(dataDir, 'errors.log'),
     legacyConfigPath: pathApi.join(homeDir, '.books-selection', 'config.json'),
     legacyDbPath: pathApi.join(userDataPath, 'data', 'books-selection.sqlite'),
     legacyLogPath: pathApi.join(homeDir, '.books-selection', 'logs', 'books-selection.log'),

@@ -101,17 +101,17 @@ The renderer page does not get full Node.js access:
 
 Default writable paths:
 
-- packaged Windows desktop builds: `data/config.json`, `data/books-selection.sqlite`, and `data/books-selection.log` beside the portable application;
+- packaged Windows desktop builds: `data/config.json`, `data/books-selection.sqlite`, and shareable `data/errors.log` beside the portable application;
 - Windows folder ZIP: `data` is beside `Books Selection.exe` in the extracted folder;
 - Windows portable EXE: `data` is beside the downloaded portable EXE, not in Electron's temporary extraction directory;
 - packaged macOS/Linux and source/npm config: `~/.books-selection/config.json`, or `BOOKS_SELECTION_CONFIG_PATH` if set;
 - packaged macOS/Linux SQLite index: the Electron user-data directory; source/npm SQLite index: project-local `data/books-selection.sqlite`; either can be overridden with `BOOKS_SELECTION_DB_PATH`;
-- diagnostics can be overridden with `BOOKS_SELECTION_LOG_PATH`.
+- `errors.log` is also placed beside the default SQLite database on macOS/Linux desktop and source/server runs; its path can be overridden with `BOOKS_SELECTION_LOG_PATH`.
 
 On the first packaged Windows v0.3.8 launch, Books Selection copies the earlier user-profile config, SQLite database, and diagnostic log into the portable `data` folder when the destination files do not exist. SQLite is copied through its backup API and read back before use. Legacy files are retained as a fallback and existing portable files are never overwritten. A deliberately configured custom database path remains unchanged.
 
 The portable `data/config.json` can contain an API key entered in Settings. Keep the whole portable folder private and do not publish or commit its `data` directory.
-The diagnostic log records only the failed provider stage, endpoint, safe network error code, and API route. It does not record API keys, authorization headers, questions, prompts, excerpts, or response bodies. Desktop provider requests use Electron's Chromium network stack so they follow the desktop session's proxy and VPN routing.
+`errors.log` records timestamp, app version, failed operation, provider/model, and safe error metadata. It includes model HTTP/protocol failures (including exhausted invalid-answer recovery), indexing/embedding failures, and desktop startup failures. It does not record API keys, authorization headers, questions, prompts, book text, or provider response bodies. The file rotates at 1 MiB to `errors.log.1`; send these files when reporting a problem. Desktop provider requests use Electron's Chromium network stack so they follow the desktop session's proxy and VPN routing.
 
 ## Current features
 

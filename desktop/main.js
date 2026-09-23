@@ -4,6 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, net, shell } = electron;
 const { startServer } = require('../src/server');
 const { isAllowedExternalUrl, isTrustedRendererUrl } = require('./security');
 const { readAppConfig } = require('../src/appConfig');
+const { writeErrorLog } = require('../src/diagnostics');
 const {
   configurePortableEnvironment,
   migrateLegacyData,
@@ -53,6 +54,7 @@ async function configureDesktopEnvironment() {
   } else if (!process.env.BOOKS_SELECTION_DB_PATH) {
     process.env.BOOKS_SELECTION_DB_PATH = path.join(app.getPath('userData'), 'data', 'books-selection.sqlite');
   }
+  process.env.BOOKS_SELECTION_LOG_PATH ||= path.join(path.dirname(process.env.BOOKS_SELECTION_DB_PATH), 'errors.log');
 }
 
 async function ensureServer() {
@@ -140,8 +142,9 @@ function registerAppLifecycle() {
     return { canceled: false, path: result.filePaths[0] };
   });
 
-  app.whenReady().then(createMainWindow).catch((error) => {
+  app.whenReady().then(createMainWindow).catch(async (error) => {
     console.error(error);
+    await writeErrorLog(error, { operation: 'desktop-startup' }, process.env);
     const prefix = app.getLocale().toLowerCase().startsWith('ru')
       ? 'Не удалось запустить приложение'
       : 'Could not start the application';
@@ -158,8 +161,9 @@ function registerAppLifecycle() {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow().catch((error) => {
+      createMainWindow().catch(async (error) => {
         console.error(error);
+        await writeErrorLog(error, { operation: 'desktop-window-startup' }, process.env);
         app.quit();
       });
     }

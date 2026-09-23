@@ -33,7 +33,7 @@ const { scanBooks } = require('./scan');
 const { cardsCachePath, loadCycleCards } = require('./bookCards');
 const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
-const { writeProviderNetworkDiagnostic } = require('./diagnostics');
+const { writeErrorLog } = require('./diagnostics');
 
 const publicDir = path.join(__dirname, '..', 'public');
 const API_COOKIE_NAME = 'books_selection_api_token';
@@ -202,7 +202,10 @@ function createRequestHandler(options = {}) {
   const updateCheckOptions = options.updateCheckOptions || {};
   const providerFetchImpl = options.providerFetchImpl;
   const authorTodayFetchImpl = options.authorTodayFetchImpl;
-  const diagnosticWriter = options.diagnosticWriter || writeProviderNetworkDiagnostic;
+  const configuredErrorWriter = options.errorWriter || options.diagnosticWriter || writeErrorLog;
+  const errorWriter = async (...args) => {
+    try { return await configuredErrorWriter(...args); } catch { return ''; }
+  };
   const apiToken = options.apiToken || randomBytes(32).toString('base64url');
   const embeddingOperations = new Map();
   const requestedRetentionMs = Number(options.embeddingOperationRetentionMs ?? 60_000);
@@ -225,6 +228,7 @@ function createRequestHandler(options = {}) {
 
   return async function handleRequest(request, response) {
   let route = '';
+  let errorContext = {};
   const requestAbort = new AbortController();
   request.once('aborted', () => requestAbort.abort());
   response.once('close', () => {
@@ -245,6 +249,12 @@ function createRequestHandler(options = {}) {
     const configState = await readAppConfig(process.env);
     const appConfig = configState.config;
     const providerOverrides = toProviderOverrides(appConfig);
+    const activeProvider = appConfig.providers?.[appConfig.activeProvider] || {};
+    errorContext = {
+      provider: appConfig.activeProvider,
+      model: activeProvider.model,
+      secrets: Object.values(appConfig.providers || {}).map((provider) => provider?.apiKey).filter(Boolean),
+    };
 
     if (url.pathname === '/api/config') {
       if (request.method === 'GET') {
@@ -325,6 +335,11 @@ function createRequestHandler(options = {}) {
       }
 
       const result = await withSearchDatabase(databasePath, (db) => indexLibrary(db, root));
+      if (result.errors > 0) {
+        await errorWriter(new Error(`Indexing completed with ${result.errors} unreadable file(s).`), {
+          ...errorContext, operation: 'index', route, code: 'INDEX_PARTIAL_FAILURE',
+        }, process.env);
+      }
       return sendJson(response, 200, { root, db: databasePath, result });
     }
 
@@ -395,6 +410,11 @@ function createRequestHandler(options = {}) {
         }
         return answer;
       });
+      if (result?.ai?.used === false && result.ai.error) {
+        await errorWriter(new Error(String(result.ai.error)), {
+          ...errorContext, operation: 'ask', route, code: 'AI_FALLBACK_ERROR',
+        }, process.env);
+      }
       return sendJson(response, 200, { query, result });
     }
 
@@ -606,6 +626,12 @@ function createRequestHandler(options = {}) {
     }
 
     if (url.pathname === '/api/embed-index') {
+      const embeddingProvider = appConfig.providers?.[appConfig.activeEmbeddingsProvider] || {};
+      errorContext = {
+        ...errorContext,
+        provider: appConfig.activeEmbeddingsProvider,
+        model: embeddingProvider.embeddingModel,
+      };
       if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
       requireJsonRequest(request);
       const payload = await readJsonBody(request);
@@ -718,14 +744,11 @@ function createRequestHandler(options = {}) {
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   } catch (error) {
-    let diagnosticLog = '';
-    if (error.code === 'PROVIDER_NETWORK_ERROR') {
-      try {
-        diagnosticLog = await diagnosticWriter(error, { route }, process.env);
-      } catch {
-        // Never hide the original provider error if local diagnostics cannot be written.
-      }
-    }
+    const cancelled = error?.name === 'AbortError' || error?.code === 'PROVIDER_ABORTED';
+    const clientError = error instanceof HttpError && error.statusCode < 500;
+    const diagnosticLog = (!cancelled && !clientError)
+      ? await errorWriter(error, { ...errorContext, operation: route.replace(/^\/api\//, '') || 'request', route }, process.env)
+      : '';
     const logHint = diagnosticLog ? ` Diagnostic log: ${diagnosticLog}` : '';
     sendJson(response, error.statusCode || 500, { error: `${error.message}${logHint}` });
   }
@@ -744,6 +767,7 @@ function startServer(options = {}) {
     providerFetchImpl: options.providerFetchImpl,
     authorTodayFetchImpl: options.authorTodayFetchImpl,
     diagnosticWriter: options.diagnosticWriter,
+    errorWriter: options.errorWriter,
     embeddingOperationRetentionMs: options.embeddingOperationRetentionMs,
   }));
 

@@ -653,6 +653,7 @@ async function runAskResearch({
         ? 'Модель не смогла вернуть полный ответ с проверяемыми ссылками даже после повторной попытки. Это ошибка ответа модели, а не отсутствие подходящих книг.'
         : 'The model could not return a complete answer with valid references after one retry. This is a model response error, not evidence that no books match.');
       error.code = 'PROVIDER_PROTOCOL_ERROR';
+      error.providerOperation = 'final-recovery';
       throw error;
     }
   }
