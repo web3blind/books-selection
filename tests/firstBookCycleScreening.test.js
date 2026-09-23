@@ -31,6 +31,96 @@ function finalCheck(bookId, evidenceId) {
     criteria: [{ criterion: 'requested topic', verdict: 'supported', reason: 'Direct passage.', evidence: [evidenceId] }] };
 }
 
+function uncertainFinalCheck(bookId, evidenceId, overrides = {}) {
+  return { bookId, verdict: 'uncertain', evidence: [evidenceId], reason: 'The cited passage is inconclusive.',
+    entities: [], criteria: [{ criterion: 'requested topic', verdict: 'uncertain', reason: 'Not established.', evidence: [evidenceId] }],
+    ...overrides };
+}
+
+test('cited all-inconclusive final assessments return honest insufficiency without recovery', async () => {
+  for (const [includeRecommendation, criterionVerdict] of [[true, 'uncertain'], [false, 'uncertain'], [false, 'rejected']]) {
+  const db = initializeSearchDatabase(':memory:');
+  try {
+    const first = addBook(db, 'A', '1.fb2', 'A1', 'possible shared activity');
+    const second = addBook(db, 'B', '1.fb2', 'B1', 'another possible activity');
+    let calls = 0;
+    const result = await runAskResearch({
+      db, question: 'Герой и героиня всё делают вместе', providerName: 'mock', provider: { model: 'mock' },
+      providerClient: { chatCompletion: async ({ messages }) => {
+        calls += 1;
+        const phase = messages[0].content;
+        if (phase.includes('plan phase')) return { intentType: 'question_answer', queries: [{ query: 'герой героиня вместе' }] };
+        const refs = refsByBook(messages[1].content);
+        if (phase.includes('screening a small batch')) return { candidateChecks: [...refs].map(([bookId, id]) => ({ bookId, verdict: 'uncertain', evidence: [id], reason: 'Needs proof.' })) };
+        return {
+          status: 'answered', answer: 'Явного подтверждения нет.', evidence: [...refs.values()],
+          recommendations: includeRecommendation ? [{ bookId: second.bookId, evidence: [refs.get(second.bookId)] }] : [],
+          finalCandidateChecks: [uncertainFinalCheck(second.bookId, refs.get(second.bookId)), uncertainFinalCheck(first.bookId, refs.get(first.bookId))].map(check => ({...check, criteria: check.criteria.map(c => ({...c, verdict: criterionVerdict}))})),
+        };
+      } },
+      retrievalFn: async () => ({ evidence: [evidenceRow(first), evidenceRow(second)], semantic: { status: 'searched' } }),
+    });
+    assert.equal(result.status, 'evidence_insufficient');
+    assert.deepEqual(result.candidates, []);
+    assert.match(result.uncertainty, /не означает, что подходящих книг нет/);
+    assert.equal(calls, 3, 'valid uncertainty must not spend a recovery call');
+    assert.deepEqual(result.research.phases, ['plan', 'retrieve', 'cycle-screen', 'final']);
+  } finally { db.close(); }
+  }
+});
+
+test('inconclusive shortcut rejects malformed, missing, or contradictory checks and does not swallow supported checks', async () => {
+  for (const scenario of ['malformed', 'missing', 'contradiction', 'mixed']) {
+    const db = initializeSearchDatabase(':memory:');
+    try {
+      const first = addBook(db, 'A', '1.fb2', 'A1', 'possible topic');
+      const second = addBook(db, 'B', '1.fb2', 'B1', 'direct topic');
+      let calls = 0;
+      const result = await runAskResearch({
+        db, question: 'Найди книги про нужную тему', providerName: 'mock', provider: { model: 'mock' },
+        providerClient: { chatCompletion: async ({ messages }) => {
+          calls += 1;
+          const phase = messages[0].content;
+          if (phase.includes('plan phase')) return { intentType: 'recommendation', queries: [] };
+          const refs = refsByBook(messages[1].content);
+          if (phase.includes('screening a small batch')) return { candidateChecks: [...refs].map(([bookId, id]) => ({ bookId, verdict: 'uncertain', evidence: [id], reason: 'Needs proof.' })) };
+          if (phase.includes('final-recovery')) return { status: 'evidence_insufficient', recommendations: [] };
+          if (scenario === 'malformed') return {
+            status: 'answered', answer: 'Подтверждения нет.', evidence: [refs.get(first.bookId)],
+            recommendations: [{ bookId: first.bookId, evidence: [refs.get(first.bookId)] }],
+            finalCandidateChecks: [uncertainFinalCheck(first.bookId, 'invented-evidence')],
+          };
+          if (scenario === 'missing') return {
+            status: 'answered', answer: 'Подтверждения нет.', evidence: [refs.get(first.bookId)],
+            recommendations: [{ bookId: first.bookId, evidence: [refs.get(first.bookId)] }], finalCandidateChecks: [],
+          };
+          if (scenario === 'contradiction') return {
+            status: 'answered', answer: 'Подтверждения нет.', evidence: [refs.get(first.bookId)],
+            recommendations: [{ bookId: first.bookId, evidence: [refs.get(first.bookId)] }],
+            finalCandidateChecks: [uncertainFinalCheck(first.bookId, refs.get(first.bookId), {
+              criteria: [{ criterion: 'requested topic', verdict: 'supported', reason: 'Positive criterion contradicts uncertain verdict.', evidence: [refs.get(first.bookId)] }],
+            })],
+          };
+          return {
+            status: 'answered', answer: 'Подходит B.', evidence: [refs.get(second.bookId)],
+            recommendations: [{ bookId: second.bookId, evidence: [refs.get(second.bookId)] }],
+            finalCandidateChecks: [finalCheck(second.bookId, refs.get(second.bookId)), uncertainFinalCheck(first.bookId, refs.get(first.bookId))],
+          };
+        } },
+        retrievalFn: async ({ scope }) => ({ evidence: (scope.bookIds.length ? [first, second].filter(book => scope.bookIds.includes(book.bookId)) : [first, second]).map(evidenceRow), semantic: { status: 'searched' } }),
+      });
+      if (scenario !== 'mixed') {
+        assert.equal(result.status, 'evidence_insufficient');
+        assert.equal(calls, 4, 'invalid uncertainty must use normal recovery');
+      } else {
+        assert.equal(result.status, 'answered');
+        assert.deepEqual(result.candidates.map(item => item.bookId), [second.bookId]);
+        assert.equal(calls, 3);
+      }
+    } finally { db.close(); }
+  }
+});
+
 test('recommendation screens every first book across 23 cycles, uses natural file order, and can expand a no-evidence cycle', async () => {
   const db = initializeSearchDatabase(':memory:');
   try {

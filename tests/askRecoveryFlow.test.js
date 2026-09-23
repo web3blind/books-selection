@@ -64,6 +64,13 @@ for (const mode of ['fenced', 'missing-citations', 'truncated', 'insufficient', 
         assert.equal(record.model, 'fixture');
         assert.equal(record.code, mode === 'http-failure' ? 'PROVIDER_HTTP_ERROR' : 'PROVIDER_PROTOCOL_ERROR');
         if (mode === 'http-failure') assert.equal(record.status, 401);
+        if (mode.endsWith('-twice')) {
+          assert.deepEqual(record.ask.validationReasons, [mode === 'truncated-twice' ? 'truncated' : 'invalid_evidence']);
+          assert.equal(record.ask.finishReason, mode === 'truncated-twice' ? 'length' : 'stop');
+          assert.equal(record.ask.intent, 'question_answer');
+          assert.equal(record.ask.chatCalls, 4);
+          assert.equal(record.ask.retrievedChunks > 0, true);
+        }
         assert.doesNotMatch(errorLog, /Unsupported output|Лира|Марк|fixture-key/i);
       } else {
         assert.equal(result.status, 200, JSON.stringify(result.body));

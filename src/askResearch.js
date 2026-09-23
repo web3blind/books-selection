@@ -616,6 +616,42 @@ async function runAskResearch({
       return { insufficient: true, rejected };
     }
     const finalChecks = normalizeChecks(value?.finalCandidateChecks, synthesisEvidence, { requireDetails: true });
+
+    // An "answered" response can still be an explicit, useful negative
+    // assessment. Accept that only when every raw check is structurally valid,
+    // cited and uniformly nonpositive (uncertain or rejected). This is deliberately separate from the
+    // positive recommendation path, whose entity requirements stay strict.
+    const rawChecks = Array.isArray(value?.finalCandidateChecks) ? value.finalCandidateChecks : [];
+    const exactRefs = (refs, allowed) => {
+      if (!Array.isArray(refs) || refs.length === 0) return false;
+      const ids = refs.map(ref => cleanText(typeof ref === 'string' ? ref : ref?.evidenceId ?? ref?.id ?? ref?.ref, 80));
+      return ids.every(Boolean) && new Set(ids).size === ids.length && resolveEvidenceIds(refs, allowed).length === ids.length;
+    };
+    const inconclusiveChecks = rawChecks.map((row) => {
+      const bookId = Number(row?.bookId);
+      const bookEvidence = synthesisEvidence.filter(item => item.bookId === bookId);
+      const cycle = bookEvidence[0]?.cycle;
+      const allowed = synthesisEvidence.filter(item => item.bookId === bookId || (cycle && item.cycle === cycle));
+      const criteria = Array.isArray(row?.criteria) ? row.criteria : [];
+      const entities = Array.isArray(row?.entities) ? row.entities : [];
+      const valid = Number.isSafeInteger(bookId) && bookEvidence.length > 0 && ['uncertain', 'rejected'].includes(row?.verdict)
+        && hasMeaningfulText(row?.reason) && exactRefs(row?.evidence, allowed)
+        && criteria.length > 0 && criteria.every(criterion => ['uncertain', 'rejected'].includes(criterion?.verdict)
+          && hasMeaningfulText(criterion?.criterion) && hasMeaningfulText(criterion?.reason) && exactRefs(criterion?.evidence, allowed))
+        && entities.every(entity => hasMeaningfulText(entity?.name) && exactRefs(entity?.evidence, allowed));
+      return valid ? { bookId } : null;
+    });
+    const inconclusiveBookIds = new Set(inconclusiveChecks.filter(Boolean).map(item => item.bookId));
+    const validRecommendations = Array.isArray(value?.recommendations) && recommendations.every(row => {
+      const bookId = Number(row?.bookId);
+      return Number.isSafeInteger(bookId) && inconclusiveBookIds.has(bookId)
+        && exactRefs(row?.evidence, synthesisEvidence.filter(item => item.bookId === bookId));
+    });
+    const topEvidenceValid = exactRefs(value?.evidence, synthesisEvidence);
+    if (intentType === 'recommendation' && value?.status === 'answered' && answer && topEvidenceValid && rawChecks.length > 0
+      && inconclusiveChecks.every(Boolean) && validRecommendations) {
+      return { insufficient: true, rejected };
+    }
     const priorByBook = new Map(checkedCandidates.map((item) => [item.bookId, item]));
     const effectiveChecks = finalChecks.filter((item) => {
       if (item.verdict !== 'supported' || item.criteria.some((criterion) => criterion.verdict !== 'supported')) return true;
@@ -639,6 +675,7 @@ async function runAskResearch({
   };
   let final = await chat('final', finalPrompt, 2800);
   let validated = validateFinal(final);
+  const validationReasons = validated.problem ? [validated.problem] : [];
   if (validated.problem) {
     phases.push('final-recovery');
     final = await chat('final-recovery', [
@@ -648,12 +685,26 @@ async function runAskResearch({
     ].join('\n\n'), 1800);
     validated = validateFinal(final);
     if (validated.problem) {
+      if (!validationReasons.includes(validated.problem)) validationReasons.push(validated.problem);
       const russian = /[А-Яа-яЁё]/.test(String(question || ''));
       const error = new Error(russian
         ? 'Модель не смогла вернуть полный ответ с проверяемыми ссылками даже после повторной попытки. Это ошибка ответа модели, а не отсутствие подходящих книг.'
         : 'The model could not return a complete answer with valid references after one retry. This is a model response error, not evidence that no books match.');
       error.code = 'PROVIDER_PROTOCOL_ERROR';
       error.providerOperation = 'final-recovery';
+      error.askResult = {
+        research: {
+          intentType, phases, chatCalls, embeddingQueries, cycleCoverage,
+          validationReasons,
+          finishReason: final?._providerResponse?.finishReason,
+        },
+        coverage: {
+          totalCycles: cycleCatalog.length,
+          totalBooks: catalogInfo.total,
+          retrievedChunks: evidence.length,
+          representedBooks: new Set(evidence.map(item => item.bookId)).size,
+        },
+      };
       throw error;
     }
   }

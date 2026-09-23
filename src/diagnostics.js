@@ -73,6 +73,10 @@ function askSummary(result) {
   const pick = (value, allowed) => allowed.includes(value) ? value : 'unknown';
   const research = result?.research;
   const coverage = research?.cycleCoverage;
+  const validationReasons = [...new Set((Array.isArray(research?.validationReasons) ? research.validationReasons : [])
+    .filter(value => ['truncated', 'invalid_json', 'invalid_evidence'].includes(value)))];
+  const finishReason = ['stop', 'length', 'content_filter', 'tool_calls'].includes(research?.finishReason)
+    ? research.finishReason : 'unknown';
   return {
     status: pick(result?.status, ['answered', 'evidence_insufficient', 'no_evidence', 'corpus_not_ready', 'needs_provider_setup']),
     intent: pick(research?.intentType, ['recommendation', 'question_answer']),
@@ -92,6 +96,8 @@ function askSummary(result) {
     noEvidenceCycles: number(coverage?.noEvidenceCycles),
     incompleteCycles: number(coverage?.incompleteCycles),
     initialScreenComplete: typeof coverage?.complete === 'boolean' ? coverage.complete : null,
+    validationReasons,
+    finishReason,
   };
 }
 
@@ -120,7 +126,7 @@ async function writeErrorLog(error, context = {}, env = process.env) {
       message: error?.code === 'PROVIDER_NETWORK_ERROR' ? 'Provider network request failed' : redact(error?.message || context.message || 'Unknown error', secrets),
     };
     if (context.omitMessage) delete record.message;
-    if (context.category === 'ask_diagnostic') record.ask = askSummary(context.askResult);
+    if (context.category === 'ask_diagnostic' || error?.askResult) record.ask = askSummary(context.askResult || error.askResult);
     for (const key of Object.keys(record)) {
       if (record[key] === '' || record[key] === undefined) delete record[key];
       else if (typeof record[key] === 'string') record[key] = safeText(redact(record[key], secrets));
