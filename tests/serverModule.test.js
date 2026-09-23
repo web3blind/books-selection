@@ -325,7 +325,7 @@ test('desktop provider fetch is injected through the server and network failures
       assert.match(response.body.error, /OpenRouter credits check/);
       assert.match(response.body.error, /books-selection\.log/);
     }
-    assert.equal(log.trim().split('\n').length, routes.length);
+    assert.equal(log.trim().split('\n').map(JSON.parse).filter(row => row.category !== 'ask_diagnostic').length, routes.length);
     for (const [route] of routes) assert.match(log, new RegExp(route.replace('/', '\\/')));
     assert.doesNotMatch(log, /test-key|private prompt|private question/);
   } finally {

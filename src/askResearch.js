@@ -527,7 +527,7 @@ async function runAskResearch({
     return {
       answer: '', confidence: 'unknown', uncertainty: 'No matching local evidence was found.', evidence: [], citedEvidence: [], candidates: [], cycleGroups: [],
       semantic: primaryRetrieval?.semantic || { status: 'unavailable' },
-      research: { mode: 'model_guided', phases, chatCalls, embeddingQueries, searches, plannedQueries, refinedQueries, checkedCandidates, rejectedCycles, cycleCoverage, persistedFacts: 0, partial: true, catalog: { total: catalogInfo.total, included: catalog.length, truncated: catalogInfo.truncated }, limits: LIMITS },
+      research: { mode: 'model_guided', intentType, phases, chatCalls, embeddingQueries, searches, plannedQueries, refinedQueries, checkedCandidates, rejectedCycles, cycleCoverage, persistedFacts: 0, partial: true, catalog: { total: catalogInfo.total, included: catalog.length, truncated: catalogInfo.truncated }, limits: LIMITS },
     };
   }
 
@@ -680,7 +680,7 @@ async function runAskResearch({
       cycleGroups: [],
       semantic: primaryRetrieval?.semantic || { status: 'unavailable' },
       research: {
-        mode: 'model_guided', phases, chatCalls, embeddingQueries, searches,
+        mode: 'model_guided', intentType, phases, chatCalls, embeddingQueries, searches,
         plannedQueries, refinedQueries, checkedCandidates, rejectedCycles, cycleCoverage, persistedFacts: 0,
         partial: true,
         catalog: { total: catalogInfo.total, included: catalog.length, truncated: catalogInfo.truncated },
@@ -702,7 +702,7 @@ async function runAskResearch({
     cycleGroups: groupCandidatesByCycle(candidates),
     semantic: primaryRetrieval?.semantic || { status: 'unavailable' },
     research: {
-      mode: 'model_guided', phases, chatCalls, embeddingQueries, searches,
+      mode: 'model_guided', intentType, phases, chatCalls, embeddingQueries, searches,
       plannedQueries, refinedQueries, checkedCandidates, finalCandidateChecks: validated.finalChecks || [], rejectedCycles, cycleCoverage, persistedFacts,
       partial: true,
       catalog: { total: catalogInfo.total, included: catalog.length, truncated: catalogInfo.truncated },

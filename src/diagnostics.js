@@ -68,6 +68,37 @@ async function appendRecord(record, env) {
   return logPath;
 }
 
+function askSummary(result) {
+  const number = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const pick = (value, allowed) => allowed.includes(value) ? value : 'unknown';
+  const research = result?.research;
+  const coverage = research?.cycleCoverage;
+  return {
+    status: pick(result?.status, ['answered', 'evidence_insufficient', 'no_evidence', 'corpus_not_ready', 'needs_provider_setup']),
+    intent: pick(research?.intentType, ['recommendation', 'question_answer']),
+    researchPresent: Boolean(research),
+    cycleCoveragePresent: Boolean(coverage),
+    phases: (Array.isArray(research?.phases) ? research.phases : []).filter(x => ['plan', 'retrieve', 'cycle-screen', 'check', 'refine', 'final', 'final-recovery', 'preflight'].includes(x)).slice(0, 256),
+    chatCalls: number(research?.chatCalls),
+    embeddingQueries: number(research?.embeddingQueries),
+    indexedCycles: number(result?.coverage?.totalCycles),
+    indexedBooks: number(result?.coverage?.totalBooks),
+    retrievedChunks: number(result?.coverage?.retrievedChunks),
+    representedBooks: number(result?.coverage?.representedBooks),
+    totalCycles: number(coverage?.totalCycles),
+    firstBooksSearched: number(coverage?.firstBooksSearched),
+    firstBooksReviewed: number(coverage?.firstBooksReviewed),
+    expandedCycles: number(coverage?.expandedCycles),
+    noEvidenceCycles: number(coverage?.noEvidenceCycles),
+    incompleteCycles: number(coverage?.incompleteCycles),
+    initialScreenComplete: typeof coverage?.complete === 'boolean' ? coverage.complete : null,
+  };
+}
+
+async function writeAskDiagnostic(result, context = {}, env = process.env) {
+  return writeErrorLog(null, { ...context, category: 'ask_diagnostic', operation: 'ask-completed', omitMessage: true, askResult: result }, env);
+}
+
 async function writeErrorLog(error, context = {}, env = process.env) {
   try {
     const secrets = [...(Array.isArray(context.secrets) ? context.secrets : []),
@@ -89,6 +120,7 @@ async function writeErrorLog(error, context = {}, env = process.env) {
       message: error?.code === 'PROVIDER_NETWORK_ERROR' ? 'Provider network request failed' : redact(error?.message || context.message || 'Unknown error', secrets),
     };
     if (context.omitMessage) delete record.message;
+    if (context.category === 'ask_diagnostic') record.ask = askSummary(context.askResult);
     for (const key of Object.keys(record)) {
       if (record[key] === '' || record[key] === undefined) delete record[key];
       else if (typeof record[key] === 'string') record[key] = safeText(redact(record[key], secrets));
@@ -112,5 +144,6 @@ module.exports = {
   getDiagnosticLogPath: getErrorLogPath,
   getErrorLogPath,
   writeErrorLog,
+  writeAskDiagnostic,
   writeProviderNetworkDiagnostic,
 };

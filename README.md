@@ -111,6 +111,8 @@ Default writable paths:
 On the first packaged Windows v0.3.8 launch, Books Selection copies the earlier user-profile config, SQLite database, and diagnostic log into the portable `data` folder when the destination files do not exist. SQLite is copied through its backup API and read back before use. Legacy files are retained as a fallback and existing portable files are never overwritten. A deliberately configured custom database path remains unchanged.
 
 The portable `data/config.json` can contain an API key entered in Settings. Keep the whole portable folder private and do not publish or commit its `data` directory.
+`errors.log` also records every completed Ask request, even without an error, as `ask_diagnostic`: runtime version, actual recommendation/QA mode, phases, and numeric first-book/search/review/expansion coverage. Missing coverage is recorded explicitly, not treated as zero or complete. No question, book titles, passages, answer text or file paths are included in these summaries. This diagnostic addition does not change search behavior.
+
 `errors.log` records timestamp, app version, failed operation, provider/model, and safe error metadata. It includes model HTTP/protocol failures (including exhausted invalid-answer recovery), indexing/embedding failures, and desktop startup failures. It does not record API keys, authorization headers, questions, prompts, book text, or provider response bodies. The file rotates at 1 MiB to `errors.log.1`; send these files when reporting a problem. Desktop provider requests use Electron's Chromium network stack so they follow the desktop session's proxy and VPN routing.
 
 ## Current features

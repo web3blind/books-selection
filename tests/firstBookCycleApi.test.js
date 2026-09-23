@@ -41,12 +41,12 @@ test('connected Ask API screens 22 cycles, reports a missing review, and finds a
       const body = JSON.parse(options.body || '{}');
       if (String(url).endsWith('/embeddings')) {
         const inputs = Array.isArray(body.input) ? body.input : [body.input];
-        return new Response(JSON.stringify({ data: inputs.map((text, index) => ({ index, embedding: text === 'Find a series with topic' ? [0, 1] : [1, 0] })) }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify({ data: inputs.map((text, index) => ({ index, embedding: text === 'Герой и героиня всё делают вместе' ? [0, 1] : [1, 0] })) }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       if (!String(url).endsWith('/chat/completions')) throw new Error(`Unexpected provider URL: ${url}`);
       const phase = body.messages[0].content;
       const prompt = body.messages.at(-1).content;
-      if (phase.includes('plan phase')) return chatResponse({ intentType: 'recommendation', queries: [] });
+      if (phase.includes('plan phase')) return chatResponse({ intentType: 'question_answer', queries: [] });
       if (phase.includes('screening a small batch')) {
         screenCalls += 1;
         const rows = passages(prompt);
@@ -69,7 +69,7 @@ test('connected Ask API screens 22 cycles, reports a missing review, and finds a
     const embeddingStatus = await (await fetch(started.url + '/api/embedding-status', { headers: { cookie } })).json();
     const embedded = await post('/api/embed-index', { allRemaining: true, expectedProvider: 'local', expectedRemaining: embeddingStatus.result.remaining });
     assert.equal(embedded.status, 200, JSON.stringify(embedded.body));
-    const response = await post('/api/ask', { q: 'Find a series with topic' });
+    const response = await post('/api/ask', { q: 'Герой и героиня всё делают вместе' });
     assert.equal(response.status, 200, JSON.stringify(response.body));
     const coverage = response.body.result.research.cycleCoverage;
     assert.equal(coverage.totalCycles, 22);
@@ -82,6 +82,16 @@ test('connected Ask API screens 22 cycles, reports a missing review, and finds a
     assert.equal(coverage.complete, false);
     assert.equal(coverage.cycles.find((row) => row.cycle === 'Missing Review').status, 'unreviewed');
     assert.equal(coverage.cycles.find((row) => row.cycle === 'Later Match').status, 'supported');
+    const log = await fs.readFile(process.env.BOOKS_SELECTION_LOG_PATH, 'utf8');
+    const diagnostic = log.trim().split('\n').map(JSON.parse).find(row => row.category === 'ask_diagnostic');
+    assert.equal(diagnostic.version, require('../package.json').version);
+    assert.equal(diagnostic.ask.intent, 'recommendation');
+    assert.equal(diagnostic.ask.cycleCoveragePresent, true);
+    assert.equal(diagnostic.ask.firstBooksSearched, coverage.firstBooksSearched);
+    assert.equal(diagnostic.ask.firstBooksReviewed, coverage.firstBooksReviewed);
+    assert.equal(diagnostic.ask.incompleteCycles, coverage.incompleteCycles);
+    assert.equal(diagnostic.ask.representedBooks, response.body.result.coverage.representedBooks);
+    assert.doesNotMatch(log, /fixture-key|topic evidence|Later Match fits|Герой и героиня/);
     assert.equal(screenCalls, 6);
     assert.ok(providerCalls < 40, `provider call budget unexpectedly high: ${providerCalls}`);
   } finally {

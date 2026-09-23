@@ -33,7 +33,7 @@ const { scanBooks } = require('./scan');
 const { cardsCachePath, loadCycleCards } = require('./bookCards');
 const { initializeSearchDatabase } = require('./searchDb');
 const { checkForUpdates } = require('./updateChecker');
-const { writeErrorLog } = require('./diagnostics');
+const { writeErrorLog, writeAskDiagnostic } = require('./diagnostics');
 
 const publicDir = path.join(__dirname, '..', 'public');
 const API_COOKIE_NAME = 'books_selection_api_token';
@@ -415,6 +415,7 @@ function createRequestHandler(options = {}) {
           ...errorContext, operation: 'ask', route, code: 'AI_FALLBACK_ERROR',
         }, process.env);
       }
+      await writeAskDiagnostic(result, errorContext, process.env);
       return sendJson(response, 200, { query, result });
     }
 
